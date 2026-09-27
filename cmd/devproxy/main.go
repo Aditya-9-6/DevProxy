@@ -48,11 +48,53 @@ func main() {
 	caCertPath := flag.String("ca-cert", "", "Path to custom Root CA certificate (PEM)")
 	caKeyPath := flag.String("ca-key", "", "Path to custom Root CA private key (PEM)")
 	showEBPF := flag.Bool("ebpf", false, "Display eBPF and container transparent redirection guide")
+	showVersion := flag.Bool("version", false, "Print DevProxy version and build info")
+	showInstallCA := flag.Bool("install-ca", false, "Display instructions to install and trust the Root CA")
 	flag.Parse()
+
+	if *showVersion {
+		fmt.Println("DevProxy v1.0.0 - Zero-Latency Decoupled Development Security Proxy")
+		fmt.Println("Repository: https://github.com/Aditya-9-6/DevProxy")
+		return
+	}
 
 	if *showEBPF {
 		ebpfMgr := proxy.NewEBPFManager(*proxyPort)
 		fmt.Println(ebpfMgr.GenerateEBPFInstructions())
+		return
+	}
+
+	if *showInstallCA {
+		ca, err := certs.NewCertificateAuthority(*caCertPath, *caKeyPath)
+		if err != nil {
+			log.Fatalf("Failed to initialize CA: %v", err)
+		}
+		_ = ca
+		fmt.Println(`
+================================================================================
+ DEVPROXY ROOT CA INSTALLATION INSTRUCTIONS
+================================================================================
+DevProxy uses dynamic TLS bumping to decrypt and inspect HTTPS traffic.
+To prevent SSL certificate warnings in curl, browsers, and mobile emulators:
+
+[ Windows - PowerShell (Run as Administrator) ]
+  Import-Certificate -FilePath ~/.devproxy/devproxy-ca.crt -CertStoreLocation Cert:\LocalMachine\Root
+
+[ macOS ]
+  sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain ~/.devproxy/devproxy-ca.crt
+
+[ Linux - Ubuntu / Debian ]
+  sudo cp ~/.devproxy/devproxy-ca.crt /usr/local/share/ca-certificates/devproxy-ca.crt
+  sudo update-ca-certificates
+
+[ Node.js & Python Development ]
+  export NODE_EXTRA_CA_CERTS="$HOME/.devproxy/devproxy-ca.crt"
+  export SSL_CERT_FILE="$HOME/.devproxy/devproxy-ca.crt"
+  export REQUESTS_CA_BUNDLE="$HOME/.devproxy/devproxy-ca.crt"
+
+[ Curl One-Liner ]
+  curl -x http://localhost:8080 --cacert ~/.devproxy/devproxy-ca.crt https://httpbin.org/get
+================================================================================`)
 		return
 	}
 
