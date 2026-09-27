@@ -3,6 +3,7 @@ package ringbuffer
 import (
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -83,24 +84,28 @@ func TestRingBuffer_ConcurrentLoad(t *testing.T) {
 	}
 
 	// Concurrent consumer
-	consumedCount := 0
+	var consumedCount atomic.Int64
 	done := make(chan bool)
+	var consumerWg sync.WaitGroup
+	consumerWg.Add(1)
+
 	go func() {
+		defer consumerWg.Done()
 		for {
 			item := rb.TryPop()
 			if item != nil {
-				consumedCount++
-			} else {
-				time.Sleep(100 * time.Microsecond)
+				consumedCount.Add(1)
+				continue
 			}
 			select {
 			case <-done:
 				// Drain remainder
 				for rb.TryPop() != nil {
-					consumedCount++
+					consumedCount.Add(1)
 				}
 				return
 			default:
+				time.Sleep(10 * time.Microsecond)
 			}
 		}
 	}()
@@ -108,10 +113,11 @@ func TestRingBuffer_ConcurrentLoad(t *testing.T) {
 	wg.Wait()
 	time.Sleep(10 * time.Millisecond)
 	close(done)
+	consumerWg.Wait()
 
 	_, dropped, total := rb.Stats()
 	if total == 0 {
 		t.Fatalf("Expected events to be pushed, got 0")
 	}
-	t.Logf("Concurrent Test: Pushed=%d, Dropped=%d, Consumed=%d", total, dropped, consumedCount)
+	t.Logf("Concurrent Test: Pushed=%d, Dropped=%d, Consumed=%d", total, dropped, consumedCount.Load())
 }
