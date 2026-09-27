@@ -1,0 +1,20 @@
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+bin/
+dist/
+
+# Test artifacts & keys
+*.crt
+*.key
+*.pem
+*.test
+
+# OS & IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

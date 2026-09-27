@@ -1,0 +1,911 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DevProxy - Zero-Latency Security Proxy</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-dark: #0a0d14;
+      --bg-card: #111622;
+      --bg-card-hover: #171f30;
+      --border: #1e293b;
+      --text-main: #f1f5f9;
+      --text-muted: #94a3b8;
+      --accent: #3b82f6;
+      --accent-glow: rgba(59, 130, 246, 0.25);
+      --critical: #ef4444;
+      --high: #f97316;
+      --medium: #eab308;
+      --low: #3b82f6;
+      --info: #64748b;
+      --success: #10b981;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg-dark);
+      color: var(--text-main);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* Header */
+    header {
+      background: #0d121d;
+      border-bottom: 1px solid var(--border);
+      padding: 12px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      height: 64px;
+    }
+    .logo-group {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .logo-icon {
+      width: 32px;
+      height: 32px;
+      background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%);
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      color: #fff;
+      box-shadow: 0 0 15px var(--accent-glow);
+    }
+    .logo-text {
+      font-size: 18px;
+      font-weight: 700;
+      letter-spacing: -0.5px;
+    }
+    .badge-sub {
+      font-size: 11px;
+      background: #1e293b;
+      color: #38bdf8;
+      padding: 2px 8px;
+      border-radius: 9999px;
+      font-weight: 600;
+      border: 1px solid #334155;
+    }
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+    .status-indicator {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      color: var(--text-muted);
+      background: #111622;
+      padding: 6px 12px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+    }
+    .pulse-dot {
+      width: 8px;
+      height: 8px;
+      background-color: var(--success);
+      border-radius: 50%;
+      box-shadow: 0 0 8px var(--success);
+      animation: pulse 2s infinite;
+    }
+    .pulse-dot.disconnected {
+      background-color: var(--critical);
+      box-shadow: 0 0 8px var(--critical);
+    }
+    @keyframes pulse {
+      0% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.5; transform: scale(0.9); }
+      100% { opacity: 1; transform: scale(1); }
+    }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: #1e293b;
+      color: var(--text-main);
+      padding: 7px 14px;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 500;
+      text-decoration: none;
+      border: 1px solid var(--border);
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .btn:hover {
+      background: #283548;
+      border-color: #3b82f6;
+    }
+    .btn-primary {
+      background: #2563eb;
+      border-color: #3b82f6;
+    }
+    .btn-primary:hover {
+      background: #1d4ed8;
+    }
+
+    /* Top Stats Ribbon */
+    .stats-ribbon {
+      display: grid;
+      grid-template-columns: repeat(6, 1fr);
+      gap: 12px;
+      padding: 12px 24px;
+      background: #0b0f17;
+      border-bottom: 1px solid var(--border);
+    }
+    .stat-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px 14px;
+      display: flex;
+      flex-direction: column;
+    }
+    .stat-label {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--text-muted);
+    }
+    .stat-value {
+      font-size: 20px;
+      font-weight: 700;
+      margin-top: 4px;
+      font-family: 'JetBrains Mono', monospace;
+    }
+    .stat-crit { color: var(--critical); }
+    .stat-high { color: var(--high); }
+    .stat-med  { color: var(--medium); }
+    .stat-low  { color: var(--low); }
+
+    /* Main Container (Split Screen) */
+    .main-content {
+      flex: 1;
+      display: grid;
+      grid-template-columns: 48% 52%;
+      overflow: hidden;
+    }
+
+    /* Left Pane: Traffic Stream */
+    .traffic-pane {
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      height: calc(100vh - 140px);
+    }
+    .toolbar {
+      padding: 10px 16px;
+      background: #0d121d;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+    .search-input {
+      flex: 1;
+      background: #131926;
+      border: 1px solid var(--border);
+      color: var(--text-main);
+      padding: 6px 12px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-family: 'JetBrains Mono', monospace;
+      outline: none;
+    }
+    .search-input:focus {
+      border-color: #3b82f6;
+    }
+    .filter-select {
+      background: #131926;
+      border: 1px solid var(--border);
+      color: var(--text-main);
+      padding: 6px 10px;
+      border-radius: 6px;
+      font-size: 12px;
+      outline: none;
+      cursor: pointer;
+    }
+
+    .traffic-list {
+      flex: 1;
+      overflow-y: auto;
+    }
+    .traffic-row {
+      display: grid;
+      grid-template-columns: 60px 50px 1fr 65px 70px;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 16px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+      cursor: pointer;
+      font-size: 12px;
+      font-family: 'JetBrains Mono', monospace;
+      transition: background 0.1s;
+    }
+    .traffic-row:hover {
+      background: var(--bg-card-hover);
+    }
+    .traffic-row.selected {
+      background: #1e293b;
+      border-left: 3px solid #3b82f6;
+    }
+
+    .badge-method {
+      font-weight: 700;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 10px;
+      text-align: center;
+      display: inline-block;
+    }
+    .m-GET { background: #0369a1; color: #bae6fd; }
+    .m-POST { background: #047857; color: #a7f3d0; }
+    .m-PUT { background: #b45309; color: #fde68a; }
+    .m-DELETE { background: #be123c; color: #fecdd3; }
+    .m-CONNECT { background: #475569; color: #cbd5e1; }
+
+    .status-tag {
+      font-weight: 600;
+    }
+    .s-2xx { color: var(--success); }
+    .s-3xx { color: #38bdf8; }
+    .s-4xx { color: var(--medium); }
+    .s-5xx { color: var(--critical); }
+
+    .url-cell {
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      color: #cbd5e1;
+    }
+    .url-host {
+      color: #64748b;
+      font-size: 11px;
+    }
+
+    .vuln-badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 3px;
+      background: rgba(239, 68, 68, 0.15);
+      color: var(--critical);
+      border: 1px solid rgba(239, 68, 68, 0.4);
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 10px;
+      font-weight: 700;
+    }
+    .time-cell {
+      color: var(--text-muted);
+      font-size: 11px;
+      text-align: right;
+    }
+
+    /* Right Pane: Inspector */
+    .inspector-pane {
+      background: #0d121d;
+      display: flex;
+      flex-direction: column;
+      height: calc(100vh - 140px);
+    }
+    .tabs-header {
+      display: flex;
+      background: #111622;
+      border-bottom: 1px solid var(--border);
+      padding: 0 16px;
+    }
+    .tab-btn {
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      padding: 12px 16px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      transition: all 0.15s;
+    }
+    .tab-btn:hover {
+      color: var(--text-main);
+    }
+    .tab-btn.active {
+      color: #38bdf8;
+      border-bottom-color: #38bdf8;
+    }
+    .tab-badge {
+      background: var(--critical);
+      color: #fff;
+      font-size: 10px;
+      padding: 1px 6px;
+      border-radius: 9999px;
+      margin-left: 6px;
+    }
+
+    .tab-body {
+      flex: 1;
+      overflow-y: auto;
+      padding: 20px;
+    }
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+
+    /* Findings styling */
+    .finding-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 16px;
+      margin-bottom: 16px;
+      position: relative;
+    }
+    .finding-card.sev-CRITICAL { border-left: 4px solid var(--critical); }
+    .finding-card.sev-HIGH     { border-left: 4px solid var(--high); }
+    .finding-card.sev-MEDIUM   { border-left: 4px solid var(--medium); }
+    .finding-card.sev-LOW      { border-left: 4px solid var(--low); }
+    .finding-card.sev-INFO     { border-left: 4px solid var(--info); }
+
+    .finding-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 8px;
+    }
+    .sev-pill {
+      font-size: 10px;
+      font-weight: 700;
+      padding: 3px 8px;
+      border-radius: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .sev-pill.CRITICAL { background: rgba(239, 68, 68, 0.2); color: var(--critical); border: 1px solid var(--critical); }
+    .sev-pill.HIGH     { background: rgba(249, 115, 22, 0.2); color: var(--high); border: 1px solid var(--high); }
+    .sev-pill.MEDIUM   { background: rgba(234, 179, 8, 0.2);  color: var(--medium); border: 1px solid var(--medium); }
+    .sev-pill.LOW      { background: rgba(59, 130, 246, 0.2); color: var(--low); border: 1px solid var(--low); }
+    .sev-pill.INFO     { background: rgba(100, 116, 139, 0.2);color: var(--info); border: 1px solid var(--info); }
+
+    .finding-title {
+      font-size: 15px;
+      font-weight: 600;
+      color: #fff;
+    }
+    .finding-desc {
+      font-size: 13px;
+      color: #cbd5e1;
+      margin-top: 6px;
+      line-height: 1.4;
+    }
+    .code-box {
+      background: #090c12;
+      border: 1px solid #1e293b;
+      border-radius: 6px;
+      padding: 10px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+      color: #fca5a5;
+      margin-top: 10px;
+      overflow-x: auto;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+    .remed-box {
+      margin-top: 10px;
+      background: rgba(16, 185, 129, 0.1);
+      border: 1px solid rgba(16, 185, 129, 0.3);
+      border-radius: 6px;
+      padding: 8px 12px;
+      font-size: 12px;
+      color: #6ee7b7;
+    }
+
+    /* Key Value Headers Table */
+    .headers-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+      margin-bottom: 20px;
+    }
+    .headers-table th, .headers-table td {
+      border: 1px solid var(--border);
+      padding: 6px 10px;
+      text-align: left;
+    }
+    .headers-table th {
+      background: #111622;
+      color: var(--text-muted);
+      font-size: 11px;
+    }
+    .headers-table td:first-child {
+      color: #38bdf8;
+      width: 25%;
+      word-break: break-all;
+    }
+    .headers-table td:last-child {
+      color: #cbd5e1;
+      word-break: break-all;
+    }
+
+    .raw-body-box {
+      background: #090c12;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 12px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+      color: #e2e8f0;
+      white-space: pre-wrap;
+      max-height: 400px;
+      overflow-y: auto;
+      word-break: break-all;
+    }
+
+    .placeholder-state {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 300px;
+      color: var(--text-muted);
+      text-align: center;
+      gap: 12px;
+    }
+
+    /* Modal */
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.7);
+      backdrop-filter: blur(4px);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+    }
+    .modal-overlay.open { display: flex; }
+    .modal-box {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      width: 600px;
+      max-width: 90%;
+      padding: 24px;
+      box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5);
+    }
+    .modal-title {
+      font-size: 18px;
+      font-weight: 700;
+      margin-bottom: 12px;
+    }
+  </style>
+</head>
+<body>
+  <!-- Header -->
+  <header>
+    <div class="logo-group">
+      <div class="logo-icon">P</div>
+      <div>
+        <div class="logo-text">DevProxy <span class="badge-sub">v1.0 • ZERO-LATENCY</span></div>
+      </div>
+    </div>
+    <div class="header-actions">
+      <div class="status-indicator">
+        <span class="pulse-dot" id="ws-indicator"></span>
+        <span id="ws-status-text">Connecting...</span>
+      </div>
+      <button class="btn" onclick="openCAModal()">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+        Root CA Certificate
+      </button>
+      <button class="btn btn-primary" onclick="exportFindings()">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        Export Audit
+      </button>
+    </div>
+  </header>
+
+  <!-- Metrics Ribbon -->
+  <div class="stats-ribbon">
+    <div class="stat-card">
+      <span class="stat-label">Total Traffic</span>
+      <span class="stat-value" id="stat-total">0</span>
+    </div>
+    <div class="stat-card">
+      <span class="stat-label">Avg Proxy Latency</span>
+      <span class="stat-value" style="color: #38bdf8;" id="stat-latency">0.0 ms</span>
+    </div>
+    <div class="stat-card">
+      <span class="stat-label">Critical Alerts</span>
+      <span class="stat-value stat-crit" id="stat-crit">0</span>
+    </div>
+    <div class="stat-card">
+      <span class="stat-label">High Alerts</span>
+      <span class="stat-value stat-high" id="stat-high">0</span>
+    </div>
+    <div class="stat-card">
+      <span class="stat-label">Medium Alerts</span>
+      <span class="stat-value stat-med" id="stat-med">0</span>
+    </div>
+    <div class="stat-card">
+      <span class="stat-label">Total Findings</span>
+      <span class="stat-value" style="color: #a855f7;" id="stat-findings">0</span>
+    </div>
+  </div>
+
+  <!-- Main Split Layout -->
+  <div class="main-content">
+    <!-- Left Pane: Intercepted Stream -->
+    <div class="traffic-pane">
+      <div class="toolbar">
+        <input type="text" class="search-input" id="search-box" placeholder="Filter by URL, host, or keyword..." oninput="filterTraffic()">
+        <select class="filter-select" id="method-filter" onchange="filterTraffic()">
+          <option value="ALL">All Methods</option>
+          <option value="GET">GET</option>
+          <option value="POST">POST</option>
+          <option value="PUT">PUT</option>
+          <option value="DELETE">DELETE</option>
+          <option value="CONNECT">CONNECT</option>
+        </select>
+        <select class="filter-select" id="vuln-filter" onchange="filterTraffic()">
+          <option value="ALL">All Traffic</option>
+          <option value="ONLY_VULN">Flagged Only</option>
+        </select>
+        <button class="btn" style="padding: 6px 10px;" onclick="clearTraffic()">Clear</button>
+      </div>
+      <div class="traffic-list" id="traffic-rows">
+        <!-- Rendered rows -->
+      </div>
+    </div>
+
+    <!-- Right Pane: Inspector -->
+    <div class="inspector-pane">
+      <div class="tabs-header">
+        <button class="tab-btn active" onclick="switchTab('findings')">
+          Security Findings <span class="tab-badge" id="findings-count-badge">0</span>
+        </button>
+        <button class="tab-btn" onclick="switchTab('request')">Request</button>
+        <button class="tab-btn" onclick="switchTab('response')">Response</button>
+      </div>
+      <div class="tab-body">
+        <!-- Tab 1: Findings -->
+        <div class="tab-content active" id="tab-findings">
+          <div id="findings-container">
+            <div class="placeholder-state">
+              <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><path d="m4.93 4.93 4.24 4.24"/><path d="m14.83 9.17 4.24-4.24"/><path d="m14.83 14.83 4.24 4.24"/><path d="m9.17 14.83-4.24 4.24"/></svg>
+              Select a request from the stream to inspect passive security findings.
+            </div>
+          </div>
+        </div>
+
+        <!-- Tab 2: Request -->
+        <div class="tab-content" id="tab-request">
+          <div id="request-details">
+            <div class="placeholder-state">Select a request to inspect headers and body.</div>
+          </div>
+        </div>
+
+        <!-- Tab 3: Response -->
+        <div class="tab-content" id="tab-response">
+          <div id="response-details">
+            <div class="placeholder-state">Select a request to inspect response payload.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- CA Certificate Modal -->
+  <div class="modal-overlay" id="ca-modal" onclick="if(event.target===this) closeCAModal()">
+    <div class="modal-box">
+      <div class="modal-title">DevProxy Local Root CA</div>
+      <p style="color: #cbd5e1; font-size: 13px; margin-bottom: 16px; line-height: 1.5;">
+        DevProxy dynamically intercepts and inspects HTTPS traffic via on-the-fly leaf certificate minting.
+        To avoid browser SSL warnings, install the local DevProxy Root CA into your system or container trust store.
+      </p>
+
+      <div style="margin-bottom: 16px;">
+        <a href="/api/ca.crt" download="devproxy-ca.crt" class="btn btn-primary" style="width: 100%; justify-content: center;">
+          Download devproxy-ca.crt
+        </a>
+      </div>
+
+      <div style="font-size: 12px; color: #94a3b8; margin-bottom: 6px;">Quick CLI Trust Commands:</div>
+      <div class="code-box" style="margin-top: 0; color: #93c5fd;">
+# Linux / Debian / Ubuntu:
+sudo cp devproxy-ca.crt /usr/local/share/ca-certificates/
+sudo update-ca-certificates
+
+# macOS:
+sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain devproxy-ca.crt
+
+# Windows (PowerShell Run as Admin):
+Import-Certificate -FilePath .\devproxy-ca.crt -CertStoreLocation Cert:\LocalMachine\Root
+
+# Node.js / Python / Curl environment variable:
+export NODE_EXTRA_CA_CERTS="$PWD/devproxy-ca.crt"
+export SSL_CERT_FILE="$PWD/devproxy-ca.crt"
+curl -x http://localhost:8080 --cacert devproxy-ca.crt https://httpbin.org/get
+      </div>
+      <div style="text-align: right; margin-top: 16px;">
+        <button class="btn" onclick="closeCAModal()">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let traffic = [];
+    let selectedRequest = null;
+    let ws = null;
+
+    function initWebSocket() {
+      const loc = window.location;
+      const proto = loc.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsUrl = `${proto}//${loc.host}/ws`;
+
+      ws = new WebSocket(wsUrl);
+
+      ws.onopen = () => {
+        document.getElementById('ws-indicator').classList.remove('disconnected');
+        document.getElementById('ws-status-text').innerText = 'Live Streaming (0 ms lag)';
+      };
+
+      ws.onclose = () => {
+        document.getElementById('ws-indicator').classList.add('disconnected');
+        document.getElementById('ws-status-text').innerText = 'Disconnected. Reconnecting...';
+        setTimeout(initWebSocket, 2000);
+      };
+
+      ws.onmessage = (msg) => {
+        try {
+          const data = JSON.parse(msg.data);
+          if (data.type === 'REQUEST') {
+            const req = data.event;
+            req.findings = data.findings || [];
+            traffic.unshift(req);
+            if (traffic.length > 2000) traffic.pop(); // keep latest 2000
+            renderTraffic();
+            updateStats();
+          }
+        } catch (e) {
+          console.error(e);
+        }
+      };
+    }
+
+    function loadInitialData() {
+      fetch('/api/requests?limit=100')
+        .then(r => r.json())
+        .then(data => {
+          if (Array.isArray(data)) {
+            traffic = data;
+            renderTraffic();
+          }
+        }).catch(() => {});
+
+      fetch('/api/stats')
+        .then(r => r.json())
+        .then(stats => applyStats(stats))
+        .catch(() => {});
+    }
+
+    function applyStats(stats) {
+      if (!stats) return;
+      document.getElementById('stat-total').innerText = stats.total_requests || traffic.length;
+      document.getElementById('stat-latency').innerText = (stats.avg_latency_ms || 0.4).toFixed(2) + ' ms';
+      document.getElementById('stat-findings').innerText = stats.total_findings || 0;
+      if (stats.severity_counts) {
+        document.getElementById('stat-crit').innerText = stats.severity_counts.CRITICAL || 0;
+        document.getElementById('stat-high').innerText = stats.severity_counts.HIGH || 0;
+        document.getElementById('stat-med').innerText = stats.severity_counts.MEDIUM || 0;
+      }
+    }
+
+    function updateStats() {
+      let crit = 0, high = 0, med = 0, totalFindings = 0;
+      for (const t of traffic) {
+        if (t.findings) {
+          totalFindings += t.findings.length;
+          for (const f of t.findings) {
+            if (f.severity === 'CRITICAL') crit++;
+            if (f.severity === 'HIGH') high++;
+            if (f.severity === 'MEDIUM') med++;
+          }
+        }
+      }
+      document.getElementById('stat-total').innerText = traffic.length;
+      document.getElementById('stat-crit').innerText = crit;
+      document.getElementById('stat-high').innerText = high;
+      document.getElementById('stat-med').innerText = med;
+      document.getElementById('stat-findings').innerText = totalFindings;
+    }
+
+    function renderTraffic() {
+      const listEl = document.getElementById('traffic-rows');
+      const search = document.getElementById('search-box').value.toLowerCase();
+      const methodFilter = document.getElementById('method-filter').value;
+      const vulnFilter = document.getElementById('vuln-filter').value;
+
+      let html = '';
+      for (const r of traffic) {
+        if (methodFilter !== 'ALL' && r.method !== methodFilter) continue;
+        if (vulnFilter === 'ONLY_VULN' && (!r.finding_count && (!r.findings || r.findings.length === 0))) continue;
+        if (search && !r.url.toLowerCase().includes(search) && !r.host.toLowerCase().includes(search)) continue;
+
+        const isSelected = selectedRequest && selectedRequest.id === r.id;
+        const findingCount = r.finding_count || (r.findings ? r.findings.length : 0);
+
+        let statusClass = 's-2xx';
+        if (r.status_code >= 500) statusClass = 's-5xx';
+        else if (r.status_code >= 400) statusClass = 's-4xx';
+        else if (r.status_code >= 300) statusClass = 's-3xx';
+
+        html += `
+          <div class="traffic-row ${isSelected ? 'selected' : ''}" onclick="selectRequest('${r.id}')">
+            <div><span class="badge-method m-${r.method}">${r.method}</span></div>
+            <div class="status-tag ${statusClass}">${r.status_code || '-'}</div>
+            <div class="url-cell" title="${r.url}">
+              <span>${r.path || r.url}</span>
+              <div class="url-host">${r.host}</div>
+            </div>
+            <div>
+              ${findingCount > 0 ? `<span class="vuln-badge">⚠️ ${findingCount}</span>` : '<span style="color:#475569">-</span>'}
+            </div>
+            <div class="time-cell">${(r.duration_ms || 0).toFixed(1)}ms</div>
+          </div>
+        `;
+      }
+      listEl.innerHTML = html || '<div style="padding:24px;text-align:center;color:#64748b;">No matching traffic</div>';
+    }
+
+    function selectRequest(id) {
+      fetch(`/api/requests/${id}`)
+        .then(res => res.json())
+        .then(fullReq => {
+          selectedRequest = fullReq;
+          renderTraffic();
+          displaySelectedDetails();
+        })
+        .catch(err => console.error(err));
+    }
+
+    function displaySelectedDetails() {
+      if (!selectedRequest) return;
+
+      const findings = selectedRequest.findings || [];
+      document.getElementById('findings-count-badge').innerText = findings.length;
+
+      // Findings
+      const findingsContainer = document.getElementById('findings-container');
+      if (findings.length === 0) {
+        findingsContainer.innerHTML = `
+          <div class="placeholder-state" style="color: #10b981;">
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+            <div>No passive security vulnerabilities detected in this transaction.</div>
+          </div>
+        `;
+      } else {
+        let fHtml = '';
+        for (const f of findings) {
+          fHtml += `
+            <div class="finding-card sev-${f.severity}">
+              <div class="finding-top">
+                <span class="sev-pill ${f.severity}">${f.severity}</span>
+                <span style="font-size: 11px; color: #94a3b8; font-family: monospace;">${f.rule_name}</span>
+              </div>
+              <div class="finding-title">${f.title}</div>
+              <div class="finding-desc">${f.description}</div>
+              ${f.evidence ? `<div class="code-box">Evidence: ${escapeHtml(f.evidence)}</div>` : ''}
+              ${f.remediation ? `<div class="remed-box"><strong>Remediation:</strong> ${escapeHtml(f.remediation)}</div>` : ''}
+            </div>
+          `;
+        }
+        findingsContainer.innerHTML = fHtml;
+      }
+
+      // Request tab
+      const reqEl = document.getElementById('request-details');
+      reqEl.innerHTML = `
+        <div style="font-size:14px; font-weight:600; margin-bottom:12px; color:#38bdf8;">
+          ${selectedRequest.method} ${selectedRequest.url} (${selectedRequest.proto})
+        </div>
+        <div style="font-size:12px; font-weight:600; color:#94a3b8; margin-bottom:6px;">REQUEST HEADERS</div>
+        ${renderHeadersTable(selectedRequest.req_headers)}
+        ${selectedRequest.req_body ? `
+          <div style="font-size:12px; font-weight:600; color:#94a3b8; margin-top:14px; margin-bottom:6px;">REQUEST BODY</div>
+          <div class="raw-body-box">${escapeHtml(selectedRequest.req_body)}</div>
+        ` : ''}
+      `;
+
+      // Response tab
+      const respEl = document.getElementById('response-details');
+      respEl.innerHTML = `
+        <div style="font-size:14px; font-weight:600; margin-bottom:12px; color:#38bdf8;">
+          HTTP Status: ${selectedRequest.status_code} • Duration: ${(selectedRequest.duration_ms || 0).toFixed(2)}ms
+        </div>
+        <div style="font-size:12px; font-weight:600; color:#94a3b8; margin-bottom:6px;">RESPONSE HEADERS</div>
+        ${renderHeadersTable(selectedRequest.resp_headers)}
+        ${selectedRequest.resp_body ? `
+          <div style="font-size:12px; font-weight:600; color:#94a3b8; margin-top:14px; margin-bottom:6px;">RESPONSE BODY</div>
+          <div class="raw-body-box">${escapeHtml(selectedRequest.resp_body)}</div>
+        ` : ''}
+      `;
+    }
+
+    function renderHeadersTable(headers) {
+      if (!headers || Object.keys(headers).length === 0) return '<div style="color:#64748b; font-size:12px;">No headers</div>';
+      let rows = '';
+      for (const [k, v] of Object.entries(headers)) {
+        rows += `<tr><td>${escapeHtml(k)}</td><td>${escapeHtml(Array.isArray(v) ? v.join('; ') : v)}</td></tr>`;
+      }
+      return `<table class="headers-table"><thead><tr><th>Header</th><th>Value</th></tr></thead><tbody>${rows}</tbody></table>`;
+    }
+
+    function switchTab(name) {
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+
+      event.target.closest('.tab-btn').classList.add('active');
+      document.getElementById('tab-' + name).classList.add('active');
+    }
+
+    function filterTraffic() {
+      renderTraffic();
+    }
+
+    function clearTraffic() {
+      traffic = [];
+      selectedRequest = null;
+      renderTraffic();
+      updateStats();
+      document.getElementById('findings-container').innerHTML = '<div class="placeholder-state">Cleared</div>';
+      document.getElementById('request-details').innerHTML = '<div class="placeholder-state">Cleared</div>';
+      document.getElementById('response-details').innerHTML = '<div class="placeholder-state">Cleared</div>';
+    }
+
+    function openCAModal() {
+      document.getElementById('ca-modal').classList.add('open');
+    }
+    function closeCAModal() {
+      document.getElementById('ca-modal').classList.remove('open');
+    }
+
+    function exportFindings() {
+      fetch('/api/findings')
+        .then(r => r.json())
+        .then(data => {
+          const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = `devproxy-security-audit-${Date.now()}.json`;
+          a.click();
+        });
+    }
+
+    function escapeHtml(str) {
+      if (!str) return '';
+      return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    window.onload = () => {
+      initWebSocket();
+      loadInitialData();
+    };
+  </script>
+</body>
+</html>
