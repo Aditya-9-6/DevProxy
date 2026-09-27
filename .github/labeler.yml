@@ -1,0 +1,19 @@
+area/backend:
+  - changed-files:
+      - any-glob-to-any-file: ['pkg/**/*.go', 'cmd/**/*.go', 'go.mod', 'go.sum']
+
+area/frontend:
+  - changed-files:
+      - any-glob-to-any-file: ['web/**']
+
+area/documentation:
+  - changed-files:
+      - any-glob-to-any-file: ['*.md', 'docs/**']
+
+area/ci-cd:
+  - changed-files:
+      - any-glob-to-any-file: ['.github/**']
+
+area/testing:
+  - changed-files:
+      - any-glob-to-any-file: ['**/*_test.go']

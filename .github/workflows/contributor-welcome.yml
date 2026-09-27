@@ -1,0 +1,35 @@
+name: "Contributor Welcome Bot"
+
+on:
+  pull_request_target:
+    types: [opened]
+  issues:
+    types: [opened]
+
+permissions:
+  pull-requests: write
+  issues: write
+
+jobs:
+  welcome:
+    name: Welcome First-Time Contributors
+    runs-on: ubuntu-latest
+    steps:
+      - name: Greet Contributor
+        uses: actions/first-interaction@v1
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          issue-message: |
+            👋 **Welcome to DevProxy!** Thank you for opening your first issue in this repository. 
+            
+            Our maintainers and community will review this soon. In the meantime, please feel free to check out our [README](https://github.com/Aditya-9-6/DevProxy#readme) and existing discussions! 🚀
+          pr-message: |
+            🎉 **Welcome to the DevProxy open-source community!** Thank you for submitting your first Pull Request!
+            
+            Here's a quick checklist to help ensure a smooth review:
+            - [ ] Code formatted with `gofmt -w .`
+            - [ ] Static analysis passes with `go vet ./...`
+            - [ ] Unit & race detector tests pass with `go test -race ./...`
+            - [ ] CodeRabbit AI will automatically review your changes below and offer feedback or autofixes.
+            
+            Happy Hacking & welcome to Hacktoberfest! 🎃⚡
