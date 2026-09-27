@@ -7,11 +7,13 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Aditya-9-6/DevProxy/pkg/analysis"
 	"github.com/Aditya-9-6/DevProxy/pkg/certs"
 	"github.com/Aditya-9-6/DevProxy/pkg/contract"
 	"github.com/Aditya-9-6/DevProxy/pkg/mock"
+	"github.com/Aditya-9-6/DevProxy/pkg/replay"
 	"github.com/Aditya-9-6/DevProxy/pkg/storage"
 	"github.com/Aditya-9-6/DevProxy/web"
 )
@@ -25,6 +27,7 @@ type Server struct {
 	httpSrv           *http.Server
 	mockEngine        *mock.Engine
 	contractValidator *contract.Validator
+	replayer          *replay.Replayer
 }
 
 // NewServer creates a new dashboard Server instance.
@@ -36,6 +39,7 @@ func NewServer(addr string, store *storage.Store, hub *Hub, ca *certs.Certificat
 		addr:              addr,
 		mockEngine:        mock.NewEngine(),
 		contractValidator: contract.NewValidator(),
+		replayer:          replay.NewReplayer(15*time.Second, true),
 	}
 }
 
@@ -47,6 +51,11 @@ func (s *Server) SetMockEngine(eng *mock.Engine) {
 // SetContractValidator configures the OpenAPI contract validator.
 func (s *Server) SetContractValidator(cv *contract.Validator) {
 	s.contractValidator = cv
+}
+
+// SetReplayer configures the request replay & diff engine.
+func (s *Server) SetReplayer(r *replay.Replayer) {
+	s.replayer = r
 }
 
 // Start launches the HTTP server for the dashboard.
@@ -72,6 +81,8 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/mocks/local", s.handleAddMapLocal)
 	mux.HandleFunc("/api/mocks/remote", s.handleAddMapRemote)
 	mux.HandleFunc("/api/mocks/chaos", s.handleAddChaos)
+	mux.HandleFunc("/api/mocks/throttling", s.handleMockThrottling)
+	mux.HandleFunc("/api/replay", s.handleReplay)
 	mux.HandleFunc("/api/contract/openapi", s.handleContractOpenAPI)
 	mux.HandleFunc("/api/jwt/inspect", s.handleJWTInspect)
 
@@ -342,4 +353,92 @@ func (s *Server) handleJWTInspect(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(details)
+}
+
+func (s *Server) handleReplay(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var payload struct {
+		RequestID string              `json:"request_id"`
+		Method    string              `json:"method,omitempty"`
+		URL       string              `json:"url,omitempty"`
+		Headers   map[string][]string `json:"headers,omitempty"`
+		Body      string              `json:"body,omitempty"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		http.Error(w, "invalid json request body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if payload.RequestID == "" {
+		http.Error(w, "missing request_id in request body", http.StatusBadRequest)
+		return
+	}
+
+	orig, err := s.store.GetRequestByID(payload.RequestID)
+	if err != nil || orig == nil {
+		http.Error(w, "original request not found: "+payload.RequestID, http.StatusNotFound)
+		return
+	}
+
+	var override *replay.ReplayOverride
+	if payload.Method != "" || payload.URL != "" || payload.Headers != nil || payload.Body != "" {
+		override = &replay.ReplayOverride{
+			Method:  payload.Method,
+			URL:     payload.URL,
+			Headers: payload.Headers,
+			Body:    payload.Body,
+		}
+	}
+
+	if s.replayer == nil {
+		s.replayer = replay.NewReplayer(15*time.Second, true)
+	}
+
+	result, err := s.replayer.Replay(orig, override)
+	if err != nil {
+		http.Error(w, "replay execution failed: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(result)
+}
+
+func (s *Server) handleMockThrottling(w http.ResponseWriter, r *http.Request) {
+	if s.mockEngine == nil {
+		http.Error(w, "mock engine not initialized", http.StatusInternalServerError)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"profile": s.mockEngine.GetThrottlingProfile(),
+		})
+	case http.MethodPost:
+		var req struct {
+			Profile string `json:"profile"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "invalid json: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := s.mockEngine.SetThrottlingProfile(req.Profile); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"status":  "ok",
+			"profile": s.mockEngine.GetThrottlingProfile(),
+		})
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
 }

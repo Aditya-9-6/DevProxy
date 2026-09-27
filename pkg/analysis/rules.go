@@ -38,6 +38,8 @@ func NewSecurityRulesEngine() *SecurityRulesEngine {
 		NewCORSRule(),
 		NewInsecureAuthRule(),
 		NewIPBlocklistRule(trie),
+		NewGraphQLRule(),
+		NewPIIRule(),
 	}
 
 	return engine
