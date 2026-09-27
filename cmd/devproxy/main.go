@@ -11,7 +11,9 @@ import (
 
 	"github.com/Aditya-9-6/DevProxy/pkg/analysis"
 	"github.com/Aditya-9-6/DevProxy/pkg/certs"
+	"github.com/Aditya-9-6/DevProxy/pkg/contract"
 	"github.com/Aditya-9-6/DevProxy/pkg/dashboard"
+	"github.com/Aditya-9-6/DevProxy/pkg/mock"
 	"github.com/Aditya-9-6/DevProxy/pkg/proxy"
 	"github.com/Aditya-9-6/DevProxy/pkg/ringbuffer"
 	"github.com/Aditya-9-6/DevProxy/pkg/storage"
@@ -48,6 +50,7 @@ func main() {
 	caCertPath := flag.String("ca-cert", "", "Path to custom Root CA certificate (PEM)")
 	caKeyPath := flag.String("ca-key", "", "Path to custom Root CA private key (PEM)")
 	rulesPath := flag.String("rules", "", "Path to custom YAML rules file (defaults to ./devproxy.yaml if present)")
+	openapiPath := flag.String("openapi", "", "Path to OpenAPI 3.0 / Swagger specification file (JSON/YAML)")
 	showEBPF := flag.Bool("ebpf", false, "Display eBPF and container transparent redirection guide")
 	showVersion := flag.Bool("version", false, "Print DevProxy version and build info")
 	showInstallCA := flag.Bool("install-ca", false, "Display instructions to install and trust the Root CA")
@@ -142,6 +145,28 @@ To prevent SSL certificate warnings in curl, browsers, and mobile emulators:
 		}
 	}
 
+	// 5. Initialize Mock & Chaos Engine + OpenAPI Contract Validator
+	mockEngine := mock.NewEngine()
+	contractValidator := contract.NewValidator()
+	engine.AddRule(contractValidator)
+
+	// Auto-load OpenAPI specification if provided or found
+	specPath := *openapiPath
+	if specPath == "" {
+		if _, err := os.Stat("openapi.yaml"); err == nil {
+			specPath = "openapi.yaml"
+		} else if _, err := os.Stat("swagger.json"); err == nil {
+			specPath = "swagger.json"
+		}
+	}
+	if specPath != "" {
+		if data, err := os.ReadFile(specPath); err == nil {
+			if err := contractValidator.LoadSpec(data); err == nil {
+				log.Printf(" Loaded OpenAPI contract specification from %s", specPath)
+			}
+		}
+	}
+
 	hub := dashboard.NewHub()
 	go hub.Run()
 
@@ -154,18 +179,21 @@ To prevent SSL certificate warnings in curl, browsers, and mobile emulators:
 	workerPool.Start()
 	defer workerPool.Stop()
 
-	// 5. Initialize & Start Dashboard Server
+	// 6. Initialize & Start Dashboard Server
 	webAddr := fmt.Sprintf(":%d", *webPort)
 	dashServer := dashboard.NewServer(webAddr, store, hub, ca)
+	dashServer.SetMockEngine(mockEngine)
+	dashServer.SetContractValidator(contractValidator)
 	go func() {
 		if err := dashServer.Start(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("Dashboard server error: %v", err)
 		}
 	}()
 
-	// 6. Initialize & Start Primary Proxy Server
+	// 7. Initialize & Start Primary Proxy Server
 	proxyAddr := fmt.Sprintf(":%d", *proxyPort)
 	proxyServer := proxy.NewProxyServer(proxyAddr, certManager, ringBuf)
+	proxyServer.SetMockEngine(mockEngine)
 	go func() {
 		if err := proxyServer.Start(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("Proxy server error: %v", err)

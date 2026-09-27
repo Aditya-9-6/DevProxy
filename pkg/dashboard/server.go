@@ -3,32 +3,50 @@ package dashboard
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
 
+	"github.com/Aditya-9-6/DevProxy/pkg/analysis"
 	"github.com/Aditya-9-6/DevProxy/pkg/certs"
+	"github.com/Aditya-9-6/DevProxy/pkg/contract"
+	"github.com/Aditya-9-6/DevProxy/pkg/mock"
 	"github.com/Aditya-9-6/DevProxy/pkg/storage"
 	"github.com/Aditya-9-6/DevProxy/web"
 )
 
 // Server provides the embedded HTTP management console and REST/WebSocket API.
 type Server struct {
-	store   *storage.Store
-	hub     *Hub
-	ca      *certs.CertificateAuthority
-	addr    string
-	httpSrv *http.Server
+	store             *storage.Store
+	hub               *Hub
+	ca                *certs.CertificateAuthority
+	addr              string
+	httpSrv           *http.Server
+	mockEngine        *mock.Engine
+	contractValidator *contract.Validator
 }
 
 // NewServer creates a new dashboard Server instance.
 func NewServer(addr string, store *storage.Store, hub *Hub, ca *certs.CertificateAuthority) *Server {
 	return &Server{
-		store: store,
-		hub:   hub,
-		ca:    ca,
-		addr:  addr,
+		store:             store,
+		hub:               hub,
+		ca:                ca,
+		addr:              addr,
+		mockEngine:        mock.NewEngine(),
+		contractValidator: contract.NewValidator(),
 	}
+}
+
+// SetMockEngine configures the mock & chaos engine.
+func (s *Server) SetMockEngine(eng *mock.Engine) {
+	s.mockEngine = eng
+}
+
+// SetContractValidator configures the OpenAPI contract validator.
+func (s *Server) SetContractValidator(cv *contract.Validator) {
+	s.contractValidator = cv
 }
 
 // Start launches the HTTP server for the dashboard.
@@ -48,6 +66,14 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/findings", s.handleFindings)
 	mux.HandleFunc("/api/export/har", s.handleExportHAR)
 	mux.HandleFunc("/api/ca.crt", s.handleDownloadCACert)
+
+	// Developer Superpower APIs
+	mux.HandleFunc("/api/mocks", s.handleMocks)
+	mux.HandleFunc("/api/mocks/local", s.handleAddMapLocal)
+	mux.HandleFunc("/api/mocks/remote", s.handleAddMapRemote)
+	mux.HandleFunc("/api/mocks/chaos", s.handleAddChaos)
+	mux.HandleFunc("/api/contract/openapi", s.handleContractOpenAPI)
+	mux.HandleFunc("/api/jwt/inspect", s.handleJWTInspect)
 
 	s.httpSrv = &http.Server{
 		Addr:    s.addr,
@@ -183,4 +209,137 @@ func (s *Server) Close() error {
 		return s.httpSrv.Close()
 	}
 	return nil
+}
+
+func (s *Server) handleMocks(w http.ResponseWriter, r *http.Request) {
+	if s.mockEngine == nil {
+		http.Error(w, "mock engine not initialized", http.StatusInternalServerError)
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(s.mockEngine.GetRulesSummary())
+	case http.MethodDelete:
+		id := r.URL.Query().Get("id")
+		if id != "" {
+			s.mockEngine.DeleteRule(id)
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`{"status":"deleted","id":"` + id + `"}`))
+		} else {
+			s.mockEngine.ClearAll()
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`{"status":"all_cleared"}`))
+		}
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Server) handleAddMapLocal(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var rule mock.MapLocalRule
+	if err := json.NewDecoder(r.Body).Decode(&rule); err != nil {
+		http.Error(w, "invalid json body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := s.mockEngine.AddMapLocal(&rule); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(rule)
+}
+
+func (s *Server) handleAddMapRemote(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var rule mock.MapRemoteRule
+	if err := json.NewDecoder(r.Body).Decode(&rule); err != nil {
+		http.Error(w, "invalid json body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := s.mockEngine.AddMapRemote(&rule); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(rule)
+}
+
+func (s *Server) handleAddChaos(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var rule mock.ChaosRule
+	if err := json.NewDecoder(r.Body).Decode(&rule); err != nil {
+		http.Error(w, "invalid json body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := s.mockEngine.AddChaosRule(&rule); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(rule)
+}
+
+func (s *Server) handleContractOpenAPI(w http.ResponseWriter, r *http.Request) {
+	if s.contractValidator == nil {
+		http.Error(w, "contract validator not initialized", http.StatusInternalServerError)
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(s.contractValidator.GetInfo())
+	case http.MethodPost:
+		body, err := io.ReadAll(r.Body)
+		if err != nil || len(body) == 0 {
+			http.Error(w, "empty specification body", http.StatusBadRequest)
+			return
+		}
+		if err := s.contractValidator.LoadSpec(body); err != nil {
+			http.Error(w, "failed to parse spec: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(s.contractValidator.GetInfo())
+	case http.MethodDelete:
+		s.contractValidator.ClearSpec()
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"status":"cleared"}`))
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Server) handleJWTInspect(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		Token string `json:"token"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Token == "" {
+		http.Error(w, "missing or invalid 'token' in request body", http.StatusBadRequest)
+		return
+	}
+	details, _ := analysis.ParseAndInspectJWT(req.Token, "inspect", "manual", "POST", "JWT Inspector")
+	if details == nil {
+		http.Error(w, "failed to parse JWT token (invalid structure)", http.StatusBadRequest)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(details)
 }

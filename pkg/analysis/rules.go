@@ -30,6 +30,8 @@ func NewSecurityRulesEngine() *SecurityRulesEngine {
 
 	engine.rules = []Rule{
 		NewSecretsRule(),
+		NewAhoCorasickSecretsRule(),
+		NewJWTSecurityRule(),
 		NewCookieSecurityRule(),
 		NewStackTraceRule(),
 		NewSecurityHeadersRule(),
