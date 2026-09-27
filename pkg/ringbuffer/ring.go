@@ -8,16 +8,16 @@ import (
 // RingBuffer is a high-throughput bounded circular ring buffer designed to decouple
 // the real-time proxy data path from the asynchronous security analysis path.
 type RingBuffer struct {
-	buffer     []*TrafficEvent
-	capacity   uint64
-	mask       uint64
-	head       atomic.Uint64 // write pointer
-	tail       atomic.Uint64 // read pointer
-	dropped    atomic.Uint64 // count of dropped events if analysis lags
+	buffer      []*TrafficEvent
+	capacity    uint64
+	mask        uint64
+	head        atomic.Uint64 // write pointer
+	tail        atomic.Uint64 // read pointer
+	dropped     atomic.Uint64 // count of dropped events if analysis lags
 	totalPushed atomic.Uint64
-	mu         sync.Mutex    // lightweight mutex for multi-consumer synchronization & cond
-	cond       *sync.Cond
-	closed     atomic.Bool
+	mu          sync.Mutex // lightweight mutex for multi-consumer synchronization & cond
+	cond        *sync.Cond
+	closed      atomic.Bool
 }
 
 // NewRingBuffer creates a circular ring buffer with the given size (rounded up to power of 2).
