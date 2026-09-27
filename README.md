@@ -67,10 +67,17 @@ Traditional security scanning proxies insert synchronous inspection into the req
   - 🌲 **Bitwise Radix Trie for IP/CIDR Matching:** $O(1)$ zero-allocation trie for detecting dangerous outbound destinations, such as Cloud Instance Metadata Service (`169.254.169.254` SSRF risk) and RFC 1918 internal networks.
   - 🛡️ **Security Headers & CORS Audit:** Detects missing `Content-Security-Policy`, `X-Content-Type-Options: nosniff`, `Strict-Transport-Security`, clickjacking exposure, and overly permissive CORS (`*` with credentials).
 
-### 3. Ephemeral Storage & Real-Time Dashboard
+### 3. Developer Superpowers (Productivity & Resilience)
+* 🎭 **Map Local & Map Remote Mocking:** Intercept matched requests with local files, fixtures, or custom responses without hitting backend APIs. Rewrite upstream targets (e.g. forward staging to `localhost:3000`) for seamless debugging.
+* ⚡ **Chaos Engineering & Resilience Simulation:** Inject deterministic or probabilistic latency (with configurable jitter) and HTTP error faults (500, 502, 503) directly in the proxy to test client retry logic and circuit breakers.
+* 🔍 **Aho-Corasick Streaming Secret Scanner:** Pure-Go $O(N + M)$ multi-pattern automaton scanning live HTTP request/response payloads for leaked credentials (AWS, GitHub, Slack, OpenAI, Stripe, private keys) with zero backtracking.
+* 🛡️ **JWT Security Linter & Passive Inspector:** Automatically detects Bearer tokens, cookies, and JSON payloads; flags dangerous `alg: "none"` algorithms, expired tokens, excessive lifetimes (>1 year), and unencrypted sensitive PII or credentials in claims.
+* 📜 **OpenAPI Contract Drift & Shadow API Detection:** Passively validates intercepted HTTP traffic against OpenAPI 3.0 / Swagger 2.0 schemas. Instantly flags undocumented endpoints (Shadow APIs), invalid HTTP verbs, and undocumented response codes.
+
+### 4. Ephemeral Storage & Real-Time Dashboard
 * **In-Memory SQLite Datastore:** Uses pure-Go SQLite (`modernc.org/sqlite`) running in-memory with shared cache mode. No CGO or external C compiler needed on Windows, macOS, or Linux.
 * **WebSocket Stream:** Embedded server pushes new traffic events and flagged vulnerabilities over `/ws` with sub-millisecond dispatch.
-* **Embedded Dark-Mode Dashboard:** A responsive, self-contained web console embedded directly into the binary with `go:embed`. Features live search, status filtering, one-click Root CA download, and full request/response body inspectors.
+* **Embedded Dark-Mode Dashboard:** A responsive, self-contained web console embedded directly into the binary with `go:embed`. Features live search, status filtering, one-click Root CA download, HAR export, Copy as cURL, JWT inspector, Mocks modal, and OpenAPI validator.
 
 ---
 
@@ -125,6 +132,8 @@ Open `http://localhost:8081` in your browser to inspect live traffic and real-ti
 | `-web-port` | `8081` | Port for the web dashboard and REST/WebSocket API |
 | `-buffer-size` | `16384` | Capacity of the lock-free circular ring buffer |
 | `-workers` | `4` | Number of concurrent background analysis workers |
+| `-rules` | `devproxy.yaml` | Path to custom YAML security rules file |
+| `-openapi` | `openapi.yaml` | Path to OpenAPI 3.0 / Swagger schema for contract validation |
 | `-ca-cert` | `~/.devproxy/devproxy-ca.crt` | Custom Root CA certificate path |
 | `-ca-key` | `~/.devproxy/devproxy-ca.key` | Custom Root CA private key path |
 | `-ebpf` | `false` | Show transparent eBPF / container redirection guide |

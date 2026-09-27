@@ -12,6 +12,7 @@ import (
 
 	"github.com/Aditya-9-6/DevProxy/pkg/analysis"
 	"github.com/Aditya-9-6/DevProxy/pkg/certs"
+	"github.com/Aditya-9-6/DevProxy/pkg/mock"
 	"github.com/Aditya-9-6/DevProxy/pkg/ringbuffer"
 	"github.com/Aditya-9-6/DevProxy/pkg/storage"
 )
@@ -115,5 +116,80 @@ func TestProxy_EndToEnd_AnalysisDecoupled(t *testing.T) {
 	requests, err := store.GetRecentRequests(10, "")
 	if err != nil || len(requests) == 0 {
 		t.Fatalf("Expected request to be stored in SQLite, got %d records", len(requests))
+	}
+}
+
+func TestProxy_MapLocalAndChaos(t *testing.T) {
+	tempDir := t.TempDir()
+	ca, _ := certs.NewCertificateAuthority(filepath.Join(tempDir, "ca.crt"), filepath.Join(tempDir, "ca.key"))
+	cm := certs.NewCertificateManager(ca)
+	rb := ringbuffer.NewRingBuffer(64)
+
+	proxySrv := NewProxyServer("127.0.0.1:0", cm, rb)
+	mockEng := proxySrv.GetMockEngine()
+
+	// 1. Configure Map Local
+	_ = mockEng.AddMapLocal(&mock.MapLocalRule{
+		Enabled:     true,
+		Pattern:     `.*/mocked-api/users`,
+		StatusCode:  http.StatusOK,
+		ContentType: "application/json",
+		InlineBody:  `{"mocked": true, "count": 42}`,
+	})
+
+	// 2. Configure Chaos Rule
+	_ = mockEng.AddChaosRule(&mock.ChaosRule{
+		Enabled:     true,
+		Pattern:     `.*/chaos-api/fail`,
+		ErrorRate:   1.0,
+		ErrorStatus: http.StatusServiceUnavailable,
+		ErrorBody:   `{"error": "Simulated Outage"}`,
+	})
+
+	testProxy := httptest.NewServer(http.HandlerFunc(proxySrv.ServeHTTP))
+	defer testProxy.Close()
+
+	proxyURL, _ := url.Parse(testProxy.URL)
+	client := &http.Client{
+		Transport: &http.Transport{
+			Proxy: http.ProxyURL(proxyURL),
+		},
+		Timeout: 3 * time.Second,
+	}
+
+	// Test 1: Map Local Interception
+	resp, err := client.Get("http://example.org/mocked-api/users")
+	if err != nil {
+		t.Fatalf("Map local request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	if string(body) != `{"mocked": true, "count": 42}` {
+		t.Fatalf("unexpected body: %s", string(body))
+	}
+	if resp.Header.Get("X-DevProxy-Mock") != "MapLocal" {
+		t.Fatalf("expected X-DevProxy-Mock header")
+	}
+
+	// Test 2: Chaos Interception
+	respChaos, err := client.Get("http://example.org/chaos-api/fail")
+	if err != nil {
+		t.Fatalf("Chaos request failed: %v", err)
+	}
+	defer respChaos.Body.Close()
+
+	chaosBody, _ := io.ReadAll(respChaos.Body)
+	if respChaos.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d", respChaos.StatusCode)
+	}
+	if string(chaosBody) != `{"error": "Simulated Outage"}` {
+		t.Fatalf("unexpected chaos body: %s", string(chaosBody))
+	}
+	if respChaos.Header.Get("X-DevProxy-Chaos") != "true" {
+		t.Fatalf("expected X-DevProxy-Chaos header")
 	}
 }
