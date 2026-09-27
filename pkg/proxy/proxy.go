@@ -22,13 +22,14 @@ import (
 
 // ProxyServer is the high-throughput asynchronous proxy engine.
 type ProxyServer struct {
-	addr        string
-	certManager *certs.CertificateManager
-	ringBuffer  *ringbuffer.RingBuffer
-	transport   *http.Transport
-	httpServer  *http.Server
-	reqCounter  atomic.Uint64
-	mockEngine  *mock.Engine
+	addr             string
+	certManager      *certs.CertificateManager
+	ringBuffer       *ringbuffer.RingBuffer
+	transport        *http.Transport
+	httpServer       *http.Server
+	reqCounter       atomic.Uint64
+	mockEngine       *mock.Engine
+	insecureUpstream bool
 }
 
 // NewProxyServer creates a new ProxyServer.
@@ -64,6 +65,14 @@ func NewProxyServer(addr string, cm *certs.CertificateManager, rb *ringbuffer.Ri
 	}
 
 	return p
+}
+
+// SetInsecureUpstreamTLS enables or disables skipping certificate verification on upstream endpoints.
+func (p *ProxyServer) SetInsecureUpstreamTLS(insecure bool) {
+	p.insecureUpstream = insecure
+	if insecure {
+		p.transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+	}
 }
 
 // SetMockEngine configures the mock & chaos engine.
@@ -145,8 +154,9 @@ func (p *ProxyServer) bumpTLSConnection(clientConn net.Conn, targetHostPort stri
 	defer tlsClientConn.Close()
 
 	upstreamTLSConfig := &tls.Config{
-		ServerName: host,
-		MinVersion: tls.VersionTLS12,
+		ServerName:         host,
+		MinVersion:         tls.VersionTLS12,
+		InsecureSkipVerify: p.insecureUpstream,
 	}
 	targetAddr := targetHostPort
 	if !strings.Contains(targetAddr, ":") {
@@ -473,7 +483,9 @@ func (p *ProxyServer) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	tee := io.TeeReader(resp.Body, capWriter)
 
 	flusher, canFlush := w.(http.Flusher)
-	buf := make([]byte, 32*1024)
+	bufPtr := GetBuffer()
+	defer PutBuffer(bufPtr)
+	buf := *bufPtr
 	for {
 		n, err := tee.Read(buf)
 		if n > 0 {

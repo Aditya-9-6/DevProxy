@@ -687,6 +687,7 @@ curl -x http://localhost:8080 --cacert devproxy-ca.crt https://httpbin.org/get
         <button class="btn btn-primary" id="subtab-btn-local" onclick="switchMockSubtab('local')" style="font-size:12px; padding:4px 10px;">Map Local</button>
         <button class="btn" id="subtab-btn-remote" onclick="switchMockSubtab('remote')" style="font-size:12px; padding:4px 10px;">Map Remote</button>
         <button class="btn" id="subtab-btn-chaos" onclick="switchMockSubtab('chaos')" style="font-size:12px; padding:4px 10px;">Chaos Faults</button>
+        <button class="btn" id="subtab-btn-throttle" onclick="switchMockSubtab('throttle')" style="font-size:12px; padding:4px 10px;">Network Throttling</button>
       </div>
 
       <!-- Panel 1: Map Local -->
@@ -732,8 +733,61 @@ curl -x http://localhost:8080 --cacert devproxy-ca.crt https://httpbin.org/get
         <div id="ch-rules-list" style="max-height: 140px; overflow-y: auto;"></div>
       </div>
 
+      <!-- Panel 4: Network Throttling -->
+      <div id="mock-panel-throttle" style="display:none;">
+        <div style="font-size:12px; color:var(--text-muted); margin-bottom:12px;">Simulate real-world mobile network conditions or complete offline mode across all requests:</div>
+        <div style="display: flex; gap: 10px; align-items: center; margin-bottom: 16px;">
+          <label style="font-size: 12px; font-weight: 600; min-width: 110px; color: var(--text-muted);">ACTIVE PROFILE:</label>
+          <select id="throttle-profile-select" class="search-input" style="flex: 1; padding: 6px 10px; background: #0b0f17;" onchange="applyThrottlingProfile(this.value)">
+            <option value="none">No Throttling (Direct Connection)</option>
+            <option value="slow-3g">Slow 3G (400kbps, 400ms latency, ±50ms jitter)</option>
+            <option value="fast-3g">Fast 3G (1.6Mbps, 150ms latency, ±20ms jitter)</option>
+            <option value="lte">LTE / 4G (10Mbps, 40ms latency, ±10ms jitter)</option>
+            <option value="offline">Offline (Simulate complete network disconnect)</option>
+          </select>
+        </div>
+        <div id="throttle-profile-status" style="font-size: 12px; padding: 10px; border-radius: 6px; background: rgba(59, 130, 246, 0.1); border: 1px solid rgba(59, 130, 246, 0.2); color: #93c5fd;">
+          Profile active: <strong id="throttle-status-text">No Throttling</strong>
+        </div>
+      </div>
+
       <div style="text-align: right; margin-top: 14px; border-top: 1px solid var(--border); padding-top: 12px;">
         <button class="btn" onclick="closeMocksModal()">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Request Replay & Diff Modal -->
+  <div class="modal-overlay" id="replay-modal" onclick="if(event.target===this) closeReplayModal()">
+    <div class="modal-box" style="width: 820px; max-height: 85vh; display: flex; flex-direction: column;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+        <div class="modal-title" style="margin-bottom:0;">⚡ Request Replay &amp; Semantic Diff</div>
+        <button class="btn btn-primary" id="btn-run-replay" onclick="executeReplay()">Re-execute Request</button>
+      </div>
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px; flex: 1; overflow-y: auto;">
+        <!-- Left Column: Request & Overrides -->
+        <div>
+          <div style="font-size:11px; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:6px;">Target Parameters &amp; Overrides</div>
+          <div style="display: flex; gap: 6px; margin-bottom: 8px;">
+            <input type="text" id="replay-method" class="search-input" style="width: 80px;" placeholder="GET">
+            <input type="text" id="replay-url" class="search-input" style="flex: 1;" placeholder="https://...">
+          </div>
+          <div style="font-size:11px; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:4px;">Request Headers (JSON)</div>
+          <textarea id="replay-headers" class="search-input" style="width: 100%; height: 90px; font-size: 11px; font-family: 'JetBrains Mono', monospace; margin-bottom: 8px; resize: vertical;"></textarea>
+          <div style="font-size:11px; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:4px;">Request Body</div>
+          <textarea id="replay-body" class="search-input" style="width: 100%; height: 90px; font-size: 11px; font-family: 'JetBrains Mono', monospace; resize: vertical;"></textarea>
+        </div>
+
+        <!-- Right Column: Replay Outcome & Semantic Diff -->
+        <div>
+          <div style="font-size:11px; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:6px;">Replay Outcome &amp; Diff</div>
+          <div id="replay-diff-container" style="background: #090d16; border: 1px solid var(--border); border-radius: 6px; padding: 10px; font-size: 12px; min-height: 250px; font-family: 'JetBrains Mono', monospace;">
+            <div style="color: var(--text-muted); text-align: center; margin-top: 80px;">Click &quot;Re-execute Request&quot; to test upstream server and compute diff.</div>
+          </div>
+        </div>
+      </div>
+      <div style="text-align: right; margin-top: 14px; border-top: 1px solid var(--border); padding-top: 12px;">
+        <button class="btn" onclick="closeReplayModal()">Close</button>
       </div>
     </div>
   </div>
@@ -936,9 +990,14 @@ curl -x http://localhost:8080 --cacert devproxy-ca.crt https://httpbin.org/get
           <div style="font-size:14px; font-weight:600; color:#38bdf8; word-break: break-all;">
             ${selectedRequest.method} ${selectedRequest.url} (${selectedRequest.proto})
           </div>
-          <button class="btn" id="btn-curl" onclick="copyAsCurl()" style="padding: 4px 10px; font-size: 11px; white-space: nowrap;">
-            📋 Copy cURL
-          </button>
+          <div style="display:flex; gap:6px;">
+            <button class="btn btn-primary" onclick="openReplayModal()" style="padding: 4px 10px; font-size: 11px; white-space: nowrap;">
+              ⚡ Replay &amp; Diff
+            </button>
+            <button class="btn" id="btn-curl" onclick="copyAsCurl()" style="padding: 4px 10px; font-size: 11px; white-space: nowrap;">
+              📋 Copy cURL
+            </button>
+          </div>
         </div>
         <div style="font-size:12px; font-weight:600; color:#94a3b8; margin-bottom:6px;">REQUEST HEADERS</div>
         ${renderHeadersTable(selectedRequest.req_headers)}
@@ -1148,9 +1207,11 @@ curl -x http://localhost:8080 --cacert devproxy-ca.crt https://httpbin.org/get
       document.getElementById('subtab-btn-local').className = tab === 'local' ? 'btn btn-primary' : 'btn';
       document.getElementById('subtab-btn-remote').className = tab === 'remote' ? 'btn btn-primary' : 'btn';
       document.getElementById('subtab-btn-chaos').className = tab === 'chaos' ? 'btn btn-primary' : 'btn';
+      document.getElementById('subtab-btn-throttle').className = tab === 'throttle' ? 'btn btn-primary' : 'btn';
       document.getElementById('mock-panel-local').style.display = tab === 'local' ? 'block' : 'none';
       document.getElementById('mock-panel-remote').style.display = tab === 'remote' ? 'block' : 'none';
       document.getElementById('mock-panel-chaos').style.display = tab === 'chaos' ? 'block' : 'none';
+      document.getElementById('mock-panel-throttle').style.display = tab === 'throttle' ? 'block' : 'none';
     }
     function refreshMocks() {
       fetch('/api/mocks')
@@ -1159,7 +1220,20 @@ curl -x http://localhost:8080 --cacert devproxy-ca.crt https://httpbin.org/get
           renderMockList('ml-rules-list', data.map_local, r => `Pattern: ${r.pattern} -> HTTP ${r.status_code} (${r.content_type})`);
           renderMockList('mr-rules-list', data.map_remote, r => `Pattern: ${r.pattern} -> ${r.target_host}`);
           renderMockList('ch-rules-list', data.chaos_rules, r => `Pattern: ${r.pattern} -> Delay: ${r.delay_ms}ms, Fail: ${(r.error_rate*100).toFixed(0)}% (${r.error_status})`);
+          const prof = data.throttling_profile || 'none';
+          document.getElementById('throttle-profile-select').value = prof;
+          document.getElementById('throttle-status-text').innerText = prof === 'none' ? 'No Throttling' : prof.toUpperCase();
         }).catch(() => {});
+    }
+    function applyThrottlingProfile(prof) {
+      fetch('/api/mocks/throttling', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ profile: prof })
+      }).then(r => r.json()).then(res => {
+        const active = res.profile || prof;
+        document.getElementById('throttle-status-text').innerText = active === 'none' ? 'No Throttling' : active.toUpperCase();
+      }).catch(err => alert('Failed to update throttling: ' + err));
     }
     function renderMockList(elId, rules, formatFn) {
       const el = document.getElementById(elId);
@@ -1273,6 +1347,120 @@ curl -x http://localhost:8080 --cacert devproxy-ca.crt https://httpbin.org/get
         document.getElementById('openapi-spec-input').value = '';
         refreshOpenAPI();
       });
+    }
+
+    // Request Replay & Semantic Diff
+    let replayingReqID = null;
+
+    function openReplayModal() {
+      if (!selectedRequest) return;
+      replayingReqID = selectedRequest.id;
+      document.getElementById('replay-modal').classList.add('open');
+      document.getElementById('replay-method').value = selectedRequest.method || 'GET';
+      document.getElementById('replay-url').value = selectedRequest.url || '';
+      document.getElementById('replay-headers').value = JSON.stringify(selectedRequest.req_headers || {}, null, 2);
+      document.getElementById('replay-body').value = selectedRequest.req_body || '';
+      document.getElementById('replay-diff-container').innerHTML = `
+        <div style="color: var(--text-muted); text-align: center; margin-top: 80px;">Click &quot;Re-execute Request&quot; to test upstream server and compute diff.</div>
+      `;
+    }
+
+    function closeReplayModal() {
+      document.getElementById('replay-modal').classList.remove('open');
+    }
+
+    function executeReplay() {
+      if (!replayingReqID) return;
+      const btn = document.getElementById('btn-run-replay');
+      btn.innerText = 'Replaying...';
+      btn.disabled = true;
+
+      let headers = null;
+      try {
+        const val = document.getElementById('replay-headers').value.trim();
+        if (val) headers = JSON.parse(val);
+      } catch (e) {
+        alert('Invalid JSON in request headers: ' + e.message);
+        btn.innerText = 'Re-execute Request';
+        btn.disabled = false;
+        return;
+      }
+
+      const payload = {
+        request_id: replayingReqID,
+        method: document.getElementById('replay-method').value.trim(),
+        url: document.getElementById('replay-url').value.trim(),
+        headers: headers,
+        body: document.getElementById('replay-body').value
+      };
+
+      fetch('/api/replay', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      })
+      .then(r => {
+        if (!r.ok) return r.text().then(t => { throw new Error(t); });
+        return r.json();
+      })
+      .then(res => {
+        btn.innerText = 'Re-execute Request';
+        btn.disabled = false;
+        renderReplayDiff(res);
+      })
+      .catch(err => {
+        btn.innerText = 'Re-execute Request';
+        btn.disabled = false;
+        document.getElementById('replay-diff-container').innerHTML = `
+          <div style="color: var(--critical); padding: 12px; background: rgba(239,68,68,0.1); border-radius: 6px; border: 1px solid var(--critical);">
+            <strong>Replay Failed:</strong><br>${escapeHtml(err.message)}
+          </div>
+        `;
+      });
+    }
+
+    function renderReplayDiff(res) {
+      const diff = res.diff;
+      const rep = res.replayed;
+      const orig = res.original;
+      const container = document.getElementById('replay-diff-container');
+
+      const statusBadge = diff.status_changed
+        ? `<span style="background: rgba(239,68,68,0.2); color: var(--critical); padding: 2px 6px; border-radius: 4px;">Status Changed: ${diff.old_status} ➔ ${diff.new_status}</span>`
+        : `<span style="background: rgba(16,185,129,0.2); color: var(--success); padding: 2px 6px; border-radius: 4px;">Status Identical: ${diff.new_status}</span>`;
+
+      const latencyBadge = `<span style="color: #94a3b8;">Latency: ${(orig.duration_ms || 0).toFixed(1)}ms ➔ ${(rep.duration_ms || 0).toFixed(1)}ms (${diff.latency_diff_ms >= 0 ? '+' : ''}${diff.latency_diff_ms.toFixed(1)}ms)</span>`;
+
+      let hdrDiffHtml = '';
+      if (diff.headers_added && diff.headers_added.length > 0) {
+        hdrDiffHtml += `<div style="color: var(--success); font-size: 11px;">+ Added Headers: ${escapeHtml(diff.headers_added.join(', '))}</div>`;
+      }
+      if (diff.headers_removed && diff.headers_removed.length > 0) {
+        hdrDiffHtml += `<div style="color: var(--critical); font-size: 11px;">- Removed Headers: ${escapeHtml(diff.headers_removed.join(', '))}</div>`;
+      }
+      if (diff.headers_modified && diff.headers_modified.length > 0) {
+        hdrDiffHtml += `<div style="color: var(--medium); font-size: 11px;">~ Modified Headers: ${escapeHtml(diff.headers_modified.join(', '))}</div>`;
+      }
+      if (!hdrDiffHtml) {
+        hdrDiffHtml = `<div style="color: var(--text-muted); font-size: 11px;">Headers identical.</div>`;
+      }
+
+      container.innerHTML = `
+        <div style="display: flex; gap: 8px; align-items: center; margin-bottom: 8px; flex-wrap: wrap;">
+          ${statusBadge}
+          ${latencyBadge}
+        </div>
+        <div style="font-size: 11px; font-weight: 600; color: #94a3b8; margin-top: 8px; margin-bottom: 4px;">HEADER VARIATIONS</div>
+        <div style="background: #0b0f17; padding: 6px; border-radius: 4px; border: 1px solid var(--border); margin-bottom: 8px;">
+          ${hdrDiffHtml}
+        </div>
+        <div style="font-size: 11px; font-weight: 600; color: #94a3b8; margin-top: 8px; margin-bottom: 4px;">BODY DIFF SUMMARY</div>
+        <div style="color: ${diff.body_changed ? '#f97316' : '#10b981'}; font-size: 11px; margin-bottom: 8px;">
+          ${escapeHtml(diff.body_summary)}
+        </div>
+        <div style="font-size: 11px; font-weight: 600; color: #94a3b8; margin-top: 8px; margin-bottom: 4px;">REPLAYED RESPONSE BODY PREVIEW</div>
+        <div class="raw-body-box" style="max-height: 140px; margin-top: 0; font-size: 11px;">${escapeHtml(rep.body || '(empty body)')}</div>
+      `;
     }
 
     window.onload = () => {

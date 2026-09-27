@@ -6,8 +6,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/Aditya-9-6/DevProxy/pkg/mock"
+	"github.com/Aditya-9-6/DevProxy/pkg/ringbuffer"
 	"github.com/Aditya-9-6/DevProxy/pkg/storage"
 )
 
@@ -156,5 +158,102 @@ func TestServer_JWTInspect(t *testing.T) {
 	findings := res["findings"].([]interface{})
 	if len(findings) == 0 {
 		t.Fatal("expected security finding for alg none")
+	}
+}
+
+func TestServer_ThrottlingAPI(t *testing.T) {
+	srv := setupTestServer(t)
+
+	// 1. GET initial profile
+	req := httptest.NewRequest(http.MethodGet, "/api/mocks/throttling", nil)
+	w := httptest.NewRecorder()
+	srv.handleMockThrottling(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	var res map[string]string
+	_ = json.Unmarshal(w.Body.Bytes(), &res)
+	if res["profile"] != "none" {
+		t.Fatalf("expected 'none', got %s", res["profile"])
+	}
+
+	// 2. Set profile to slow-3g
+	req = httptest.NewRequest(http.MethodPost, "/api/mocks/throttling", bytes.NewReader([]byte(`{"profile": "slow-3g"}`)))
+	w = httptest.NewRecorder()
+	srv.handleMockThrottling(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	_ = json.Unmarshal(w.Body.Bytes(), &res)
+	if res["profile"] != "slow-3g" {
+		t.Fatalf("expected 'slow-3g', got %s", res["profile"])
+	}
+
+	// 3. Set invalid profile -> 400
+	req = httptest.NewRequest(http.MethodPost, "/api/mocks/throttling", bytes.NewReader([]byte(`{"profile": "fake-network"}`)))
+	w = httptest.NewRecorder()
+	srv.handleMockThrottling(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for invalid profile, got %d", w.Code)
+	}
+}
+
+func TestServer_ReplayAPI(t *testing.T) {
+	srv := setupTestServer(t)
+
+	// Mock target upstream server
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"replayed": true, "auth": "` + r.Header.Get("Authorization") + `"}`))
+	}))
+	defer upstream.Close()
+
+	// Seed store with a past transaction
+	reqID := "req-test-replay-1"
+	event := &ringbuffer.TrafficEvent{
+		ID:          reqID,
+		Timestamp:   time.Now().Add(-1 * time.Minute),
+		Duration:    25 * time.Millisecond,
+		Method:      "GET",
+		URL:         upstream.URL + "/data",
+		Path:        "/data",
+		StatusCode:  200,
+		ReqHeaders:  http.Header{"Authorization": []string{"Bearer old-token"}},
+		RespHeaders: http.Header{"Content-Type": []string{"application/json"}},
+		RespBody:    []byte(`{"replayed": true, "auth": "Bearer old-token"}`),
+	}
+	if err := srv.store.SaveTransaction(event, nil); err != nil {
+		t.Fatalf("failed to save seed transaction: %v", err)
+	}
+
+	// 1. Replay with header override
+	payload := `{"request_id": "` + reqID + `", "headers": {"Authorization": ["Bearer new-token"]}}`
+	req := httptest.NewRequest(http.MethodPost, "/api/replay", bytes.NewReader([]byte(payload)))
+	w := httptest.NewRecorder()
+	srv.handleReplay(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var replayResult map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &replayResult); err != nil {
+		t.Fatalf("failed to decode replay result: %v", err)
+	}
+	if replayResult["request_id"] != reqID {
+		t.Fatalf("expected request_id %s, got %v", reqID, replayResult["request_id"])
+	}
+	diff := replayResult["diff"].(map[string]interface{})
+	if diff == nil {
+		t.Fatal("expected diff object in replay result")
+	}
+
+	// 2. Replay non-existent request -> 404
+	badReq := httptest.NewRequest(http.MethodPost, "/api/replay", bytes.NewReader([]byte(`{"request_id": "non-existent"}`)))
+	badW := httptest.NewRecorder()
+	srv.handleReplay(badW, badReq)
+	if badW.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", badW.Code)
 	}
 }

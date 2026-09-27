@@ -54,6 +54,7 @@ func main() {
 	showEBPF := flag.Bool("ebpf", false, "Display eBPF and container transparent redirection guide")
 	showVersion := flag.Bool("version", false, "Print DevProxy version and build info")
 	showInstallCA := flag.Bool("install-ca", false, "Display instructions to install and trust the Root CA")
+	insecureUpstream := flag.Bool("insecure-upstream", false, "Allow upstream HTTPS connections to skip TLS verification (for local self-signed dev microservices)")
 	flag.Parse()
 
 	if *showVersion {
@@ -194,6 +195,10 @@ To prevent SSL certificate warnings in curl, browsers, and mobile emulators:
 	proxyAddr := fmt.Sprintf(":%d", *proxyPort)
 	proxyServer := proxy.NewProxyServer(proxyAddr, certManager, ringBuf)
 	proxyServer.SetMockEngine(mockEngine)
+	if *insecureUpstream {
+		proxyServer.SetInsecureUpstreamTLS(true)
+		log.Println(" Upstream TLS verification: INSECURE/SKIP (dev microservices mode)")
+	}
 	go func() {
 		if err := proxyServer.Start(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("Proxy server error: %v", err)

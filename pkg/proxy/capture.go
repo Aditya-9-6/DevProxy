@@ -63,3 +63,25 @@ type wrappedReadCloser struct {
 	io.Reader
 	io.Closer
 }
+
+// StreamBufferSize defines the buffer size used for streaming data chunks (32 KB).
+const StreamBufferSize = 32 * 1024
+
+var bufferPool = sync.Pool{
+	New: func() interface{} {
+		buf := make([]byte, StreamBufferSize)
+		return &buf
+	},
+}
+
+// GetBuffer retrieves a recycled 32KB buffer from the memory pool.
+func GetBuffer() *[]byte {
+	return bufferPool.Get().(*[]byte)
+}
+
+// PutBuffer returns a buffer to the memory pool.
+func PutBuffer(b *[]byte) {
+	if b != nil {
+		bufferPool.Put(b)
+	}
+}

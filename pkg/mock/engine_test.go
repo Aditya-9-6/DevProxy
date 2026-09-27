@@ -150,3 +150,49 @@ func TestDeleteAndClearRules(t *testing.T) {
 		t.Fatal("expected all rules cleared")
 	}
 }
+
+func TestThrottlingProfiles(t *testing.T) {
+	eng := NewEngine()
+
+	// Initial profile is "none"
+	if p := eng.GetThrottlingProfile(); p != "none" {
+		t.Fatalf("expected initial profile none, got %s", p)
+	}
+
+	// Set invalid profile
+	if err := eng.SetThrottlingProfile("ultra-5g-unknown"); err == nil {
+		t.Fatal("expected error for invalid throttling profile")
+	}
+
+	// Set valid profile: slow-3g
+	if err := eng.SetThrottlingProfile("slow-3g"); err != nil {
+		t.Fatalf("unexpected error setting slow-3g: %v", err)
+	}
+	if p := eng.GetThrottlingProfile(); p != "slow-3g" {
+		t.Fatalf("expected slow-3g, got %s", p)
+	}
+
+	// Offline simulation
+	if err := eng.SetThrottlingProfile("offline"); err != nil {
+		t.Fatalf("unexpected error setting offline: %v", err)
+	}
+	injected, status, body := eng.ApplyChaos("https://api.example.com/test")
+	if !injected {
+		t.Fatal("expected offline profile to inject error")
+	}
+	if status != http.StatusBadGateway {
+		t.Fatalf("expected status 502, got %d", status)
+	}
+	if body == "" {
+		t.Fatal("expected non-empty body for offline error")
+	}
+
+	// Reset to none
+	if err := eng.SetThrottlingProfile("none"); err != nil {
+		t.Fatalf("unexpected error setting none: %v", err)
+	}
+	injected2, _, _ := eng.ApplyChaos("https://api.example.com/test")
+	if injected2 {
+		t.Fatal("did not expect error when profile is none")
+	}
+}

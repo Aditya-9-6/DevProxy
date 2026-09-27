@@ -50,20 +50,63 @@ type ChaosRule struct {
 	ErrorBody   string         `json:"error_body"`
 }
 
-// Engine coordinates Map Local, Map Remote, and Chaos injection.
+// ThrottlingProfile defines network condition simulation parameters.
+type ThrottlingProfile struct {
+	Name        string `json:"name"`
+	DownloadBps int64  `json:"download_bps"`
+	UploadBps   int64  `json:"upload_bps"`
+	LatencyMs   int    `json:"latency_ms"`
+	JitterMs    int    `json:"jitter_ms"`
+	Offline     bool   `json:"offline"`
+}
+
+var StandardProfiles = map[string]ThrottlingProfile{
+	"slow-3g": {
+		Name:        "slow-3g",
+		DownloadBps: 50 * 1024,
+		UploadBps:   50 * 1024,
+		LatencyMs:   400,
+		JitterMs:    50,
+		Offline:     false,
+	},
+	"fast-3g": {
+		Name:        "fast-3g",
+		DownloadBps: 200 * 1024,
+		UploadBps:   90 * 1024,
+		LatencyMs:   150,
+		JitterMs:    20,
+		Offline:     false,
+	},
+	"lte": {
+		Name:        "lte",
+		DownloadBps: 1250 * 1024,
+		UploadBps:   625 * 1024,
+		LatencyMs:   40,
+		JitterMs:    10,
+		Offline:     false,
+	},
+	"offline": {
+		Name:    "offline",
+		Offline: true,
+	},
+}
+
+// Engine coordinates Map Local, Map Remote, Chaos injection, and Network Throttling.
 type Engine struct {
-	mu         sync.RWMutex
-	mapLocal   []*MapLocalRule
-	mapRemote  []*MapRemoteRule
-	chaosRules []*ChaosRule
+	mu                sync.RWMutex
+	mapLocal          []*MapLocalRule
+	mapRemote         []*MapRemoteRule
+	chaosRules        []*ChaosRule
+	throttlingProfile string
 }
 
 // NewEngine initializes an empty mock & chaos engine.
 func NewEngine() *Engine {
 	return &Engine{
-		mapLocal:   make([]*MapLocalRule, 0),
-		mapRemote:  make([]*MapRemoteRule, 0),
-		chaosRules: make([]*ChaosRule, 0),
+		mapLocal:          make([]*MapLocalRule, 0),
+		mapRemote:         make([]*MapRemoteRule, 0),
+		chaosRules:        make([]*ChaosRule, 0),
+		throttlingProfile: "none",
 	}
 }
 
@@ -162,17 +205,67 @@ func (e *Engine) ClearAll() {
 	e.chaosRules = make([]*ChaosRule, 0)
 }
 
-// ApplyChaos checks if latency or error simulation applies to the given URL.
+// SetThrottlingProfile configures the active global network condition preset.
+func (e *Engine) SetThrottlingProfile(name string) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	clean := strings.ToLower(strings.TrimSpace(name))
+	if clean == "" || clean == "none" {
+		e.throttlingProfile = "none"
+		return nil
+	}
+
+	if _, ok := StandardProfiles[clean]; !ok {
+		return fmt.Errorf("unknown throttling profile: %s (supported: slow-3g, fast-3g, lte, offline, none)", name)
+	}
+
+	e.throttlingProfile = clean
+	return nil
+}
+
+// GetThrottlingProfile returns the name of the currently active profile.
+func (e *Engine) GetThrottlingProfile() string {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	if e.throttlingProfile == "" {
+		return "none"
+	}
+	return e.throttlingProfile
+}
+
+// ApplyChaos checks if network throttling, latency, or error simulation applies to the given URL.
 func (e *Engine) ApplyChaos(rawURL string) (injectedError bool, status int, body string) {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 
+	// 1. Check Global Network Throttling / Offline simulation
+	if e.throttlingProfile != "" && e.throttlingProfile != "none" {
+		if prof, ok := StandardProfiles[e.throttlingProfile]; ok {
+			if prof.Offline {
+				return true, http.StatusBadGateway, fmt.Sprintf(`{"error": "Simulated Network Offline (%s)", "target": "%s"}`, prof.Name, rawURL)
+			}
+			if prof.LatencyMs > 0 {
+				delay := prof.LatencyMs
+				if prof.JitterMs > 0 {
+					j, _ := rand.Int(rand.Reader, big.NewInt(int64(prof.JitterMs*2)))
+					delay += int(j.Int64()) - prof.JitterMs
+					if delay < 0 {
+						delay = 0
+					}
+				}
+				time.Sleep(time.Duration(delay) * time.Millisecond)
+			}
+		}
+	}
+
+	// 2. Check Targeted Chaos Rules
 	for _, rule := range e.chaosRules {
 		if !rule.Enabled || rule.regex == nil {
 			continue
 		}
 		if rule.regex.MatchString(rawURL) {
-			// 1. Check Latency Delay
+			// Check Latency Delay
 			if rule.DelayMs > 0 {
 				delay := rule.DelayMs
 				if rule.JitterMs > 0 {
@@ -185,7 +278,7 @@ func (e *Engine) ApplyChaos(rawURL string) (injectedError bool, status int, body
 				time.Sleep(time.Duration(delay) * time.Millisecond)
 			}
 
-			// 2. Check Simulated Error Rate
+			// Check Simulated Error Rate
 			if rule.ErrorRate > 0 {
 				n, _ := rand.Int(rand.Reader, big.NewInt(1000))
 				prob := float64(n.Int64()) / 1000.0
@@ -255,9 +348,15 @@ func (e *Engine) GetRulesSummary() map[string]interface{} {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 
+	prof := e.throttlingProfile
+	if prof == "" {
+		prof = "none"
+	}
+
 	return map[string]interface{}{
-		"map_local":   e.mapLocal,
-		"map_remote":  e.mapRemote,
-		"chaos_rules": e.chaosRules,
+		"map_local":          e.mapLocal,
+		"map_remote":         e.mapRemote,
+		"chaos_rules":        e.chaosRules,
+		"throttling_profile": prof,
 	}
 }
