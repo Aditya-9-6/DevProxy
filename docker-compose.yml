@@ -1,0 +1,32 @@
+services:
+  devproxy:
+    build: .
+    ports:
+      - "8080:8080" # Proxy listener
+      - "8081:8081" # Web Dashboard & WebSocket
+    environment:
+      - GODEBUG=netdns=go
+    volumes:
+      - devproxy-ca:/root/.devproxy
+    restart: unless-stopped
+
+  # Example vulnerable demo service to showcase DevProxy passive detection
+  vulnerable-api:
+    image: python:3.11-alpine
+    command: >
+      sh -c "python3 -c '
+      import http.server, socketserver
+      class H(http.server.SimpleHTTPRequestHandler):
+          def do_GET(self):
+              self.send_response(500)
+              self.send_header(\"Set-Cookie\", \"auth_token=supersecret123; Path=/\")
+              self.send_header(\"Server\", \"Apache/2.4.49 (Debian)\")
+              self.end_headers()
+              self.wfile.write(b\"Traceback (most recent call last):\\n  File \\\"app.py\\\", line 42, in get_user\\n    raise KeyError(\\\"leaked database connection\\\")\")
+      socketserver.TCPServer((\"\", 5000), H).serve_forever()
+      '"
+    ports:
+      - "5000:5000"
+
+volumes:
+  devproxy-ca:
