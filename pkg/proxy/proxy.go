@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -29,14 +30,13 @@ type ProxyServer struct {
 
 // NewProxyServer creates a new ProxyServer.
 func NewProxyServer(addr string, cm *certs.CertificateManager, rb *ringbuffer.RingBuffer) *ProxyServer {
-	// Optimized HTTP transport with connection pooling and fast keep-alives
 	transport := &http.Transport{
 		Proxy: http.ProxyFromEnvironment,
 		DialContext: (&net.Dialer{
 			Timeout:   10 * time.Second,
 			KeepAlive: 30 * time.Second,
 		}).DialContext,
-		ForceAttemptHTTP2:     true,
+		ForceAttemptHTTP2:     false, // Ensure clean HTTP/1.1 wire protocol for proxying
 		MaxIdleConns:          500,
 		MaxIdleConnsPerHost:   100,
 		IdleConnTimeout:       90 * time.Second,
@@ -81,7 +81,7 @@ func (p *ProxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleConnect performs on-the-fly TLS bumping (MITM decryption, cloning, re-encryption).
+// handleConnect performs on-the-fly TLS bumping (MITM decryption, streaming, re-encryption).
 func (p *ProxyServer) handleConnect(w http.ResponseWriter, r *http.Request) {
 	destHost := r.Host
 	hijacker, ok := w.(http.Hijacker)
@@ -96,27 +96,24 @@ func (p *ProxyServer) handleConnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Tell client the tunnel is established
+	// Acknowledge connection
 	_, err = clientConn.Write([]byte("HTTP/1.1 200 Connection Established\r\n\r\n"))
 	if err != nil {
 		clientConn.Close()
 		return
 	}
 
-	// Run TLS Bumping in a separate goroutine
 	go p.bumpTLSConnection(clientConn, destHost)
 }
 
 func (p *ProxyServer) bumpTLSConnection(clientConn net.Conn, targetHostPort string) {
 	defer clientConn.Close()
 
-	// Extract clean host
 	host := targetHostPort
 	if h, _, err := net.SplitHostPort(targetHostPort); err == nil {
 		host = h
 	}
 
-	// Get dynamically minted TLS certificate
 	tlsCert, err := p.certManager.GetOrCreateCertificate(host)
 	if err != nil {
 		return
@@ -127,14 +124,12 @@ func (p *ProxyServer) bumpTLSConnection(clientConn net.Conn, targetHostPort stri
 		MinVersion:   tls.VersionTLS12,
 	}
 
-	// Wrap client connection with TLS server
 	tlsClientConn := tls.Server(clientConn, tlsConfig)
 	if err := tlsClientConn.Handshake(); err != nil {
 		return
 	}
 	defer tlsClientConn.Close()
 
-	// Dial upstream target via TLS
 	upstreamTLSConfig := &tls.Config{
 		ServerName: host,
 		MinVersion: tls.VersionTLS12,
@@ -150,7 +145,6 @@ func (p *ProxyServer) bumpTLSConnection(clientConn net.Conn, targetHostPort stri
 	}
 	defer upstreamConn.Close()
 
-	// Process HTTP requests inside the decrypted TLS tunnel
 	clientReader := bufio.NewReader(tlsClientConn)
 	upstreamReader := bufio.NewReader(upstreamConn)
 
@@ -165,43 +159,69 @@ func (p *ProxyServer) bumpTLSConnection(clientConn net.Conn, targetHostPort stri
 		req.URL.Scheme = "https"
 		req.URL.Host = host
 
-		// Clone request body for analysis without blocking forwarding
-		var reqBodyBytes []byte
-		if req.Body != nil {
-			var bodyBuf bytes.Buffer
-			tee := io.TeeReader(req.Body, &bodyBuf)
-			req.Body = io.NopCloser(tee)
-			// Read body for forwarding
-			reqBodyBytes, _ = io.ReadAll(req.Body)
-			req.Body = io.NopCloser(bytes.NewReader(reqBodyBytes))
+		// Check for WebSocket or Upgrade inside TLS tunnel
+		if isWebSocketUpgrade(req) {
+			if err := req.Write(upstreamConn); err != nil {
+				break
+			}
+			resp, err := http.ReadResponse(upstreamReader, req)
+			if err != nil {
+				break
+			}
+			if err := resp.Write(tlsClientConn); err != nil {
+				break
+			}
+
+			event := &ringbuffer.TrafficEvent{
+				ID:          reqID,
+				Timestamp:   reqStart,
+				Duration:    time.Since(reqStart),
+				ClientIP:    clientConn.RemoteAddr().String(),
+				Scheme:      "wss",
+				Host:        host,
+				Method:      req.Method,
+				Path:        req.URL.Path,
+				URL:         "wss://" + host + req.URL.Path,
+				Proto:       "WebSocket",
+				StatusCode:  resp.StatusCode,
+				ReqHeaders:  cloneHeaders(req.Header),
+				RespHeaders: cloneHeaders(resp.Header),
+				TLS:         true,
+				TLSServer:   host,
+			}
+			p.ringBuffer.Push(event)
+
+			// Splice raw WebSocket streams
+			p.splice(tlsClientConn, upstreamConn)
+			return
 		}
 
-		// Forward request to upstream immediately
+		// Stream request body with bounded capture for analysis
+		reqBodyReader, reqCap := ReadAndCapture(req.Body, DefaultMaxBodyCaptureBytes)
+		req.Body = reqBodyReader
+
+		// Forward to upstream
 		if err := req.Write(upstreamConn); err != nil {
 			break
 		}
 
-		// Read response from upstream
+		// Read response
 		resp, err := http.ReadResponse(upstreamReader, req)
 		if err != nil {
 			break
 		}
 
-		// Tee response body: stream directly to client while capturing for analysis
-		var respBodyBytes []byte
-		if resp.Body != nil {
-			respBodyBytes, _ = io.ReadAll(resp.Body)
-			resp.Body = io.NopCloser(bytes.NewReader(respBodyBytes))
-		}
+		// Stream response body with bounded capture (avoids freezing SSE / LLM streams and OOM)
+		respBodyReader, respCap := ReadAndCapture(resp.Body, DefaultMaxBodyCaptureBytes)
+		resp.Body = respBodyReader
 
-		// Write response to client immediately (Primary Data Path)
+		// Streams chunks straight to tlsClientConn
 		if err := resp.Write(tlsClientConn); err != nil {
 			break
 		}
 
 		duration := time.Since(reqStart)
 
-		// Asynchronously hand off to zero-allocation analysis pipeline
 		event := &ringbuffer.TrafficEvent{
 			ID:          reqID,
 			Timestamp:   reqStart,
@@ -214,15 +234,14 @@ func (p *ProxyServer) bumpTLSConnection(clientConn net.Conn, targetHostPort stri
 			URL:         req.URL.String(),
 			Proto:       req.Proto,
 			ReqHeaders:  cloneHeaders(req.Header),
-			ReqBody:     reqBodyBytes,
+			ReqBody:     reqCap.Bytes(),
 			StatusCode:  resp.StatusCode,
 			RespHeaders: cloneHeaders(resp.Header),
-			RespBody:    respBodyBytes,
+			RespBody:    respCap.Bytes(),
 			TLS:         true,
 			TLSServer:   host,
 		}
 
-		// Completely non-blocking push: if ring buffer is full, drops instantly rather than stalling
 		p.ringBuffer.Push(event)
 
 		if req.Close || resp.Close {
@@ -231,33 +250,38 @@ func (p *ProxyServer) bumpTLSConnection(clientConn net.Conn, targetHostPort stri
 	}
 }
 
-// handleHTTP forwards plain HTTP traffic asynchronously.
+// handleHTTP forwards plain HTTP traffic, streaming SSE/chunked bodies and upgrading WebSockets.
 func (p *ProxyServer) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	reqStart := time.Now()
 	reqID := fmt.Sprintf("req-%d-%s", p.reqCounter.Add(1), uuid.NewString()[:8])
 
-	// Clone request body
-	var reqBodyBytes []byte
-	if r.Body != nil {
-		reqBodyBytes, _ = io.ReadAll(r.Body)
-		r.Body = io.NopCloser(bytes.NewReader(reqBodyBytes))
+	// Check for WebSocket Upgrade
+	if isWebSocketUpgrade(r) {
+		p.handleWebSocketUpgrade(w, r, reqID, reqStart)
+		return
 	}
 
-	// Prepare outbound request
+	// Capture bounded request body
+	var reqBodyBytes []byte
+	if r.Body != nil {
+		capWriter := NewBoundedCaptureWriter(DefaultMaxBodyCaptureBytes)
+		tee := io.TeeReader(r.Body, capWriter)
+		allBody, _ := io.ReadAll(tee)
+		reqBodyBytes = capWriter.Bytes()
+		r.Body = io.NopCloser(bytes.NewReader(allBody))
+	}
+
 	outReq := new(http.Request)
 	*outReq = *r
 	outReq.Body = io.NopCloser(bytes.NewReader(reqBodyBytes))
 
-	// Resolve destination URL
 	if !outReq.URL.IsAbs() {
 		outReq.URL.Scheme = "http"
 		outReq.URL.Host = r.Host
 	}
 
-	// Clean hop-by-hop headers
 	removeHopByHopHeaders(outReq.Header)
 
-	// Execute outbound request
 	resp, err := p.transport.RoundTrip(outReq)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Proxy Forwarding Error: %v", err), http.StatusBadGateway)
@@ -265,18 +289,30 @@ func (p *ProxyServer) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	defer resp.Body.Close()
 
-	// Clone response headers
 	copyHeaders(w.Header(), resp.Header)
 	w.WriteHeader(resp.StatusCode)
 
-	// Stream response body to client while capturing
-	var respBodyBuf bytes.Buffer
-	tee := io.TeeReader(resp.Body, &respBodyBuf)
-	_, _ = io.Copy(w, tee)
+	// Stream chunks immediately with flusher to support SSE / LLM tokens in real-time
+	capWriter := NewBoundedCaptureWriter(DefaultMaxBodyCaptureBytes)
+	tee := io.TeeReader(resp.Body, capWriter)
+
+	flusher, canFlush := w.(http.Flusher)
+	buf := make([]byte, 32*1024)
+	for {
+		n, err := tee.Read(buf)
+		if n > 0 {
+			_, _ = w.Write(buf[:n])
+			if canFlush {
+				flusher.Flush()
+			}
+		}
+		if err != nil {
+			break
+		}
+	}
 
 	duration := time.Since(reqStart)
 
-	// Dispatch to analysis ring buffer
 	event := &ringbuffer.TrafficEvent{
 		ID:          reqID,
 		Timestamp:   reqStart,
@@ -292,11 +328,88 @@ func (p *ProxyServer) handleHTTP(w http.ResponseWriter, r *http.Request) {
 		ReqBody:     reqBodyBytes,
 		StatusCode:  resp.StatusCode,
 		RespHeaders: cloneHeaders(resp.Header),
-		RespBody:    respBodyBuf.Bytes(),
+		RespBody:    capWriter.Bytes(),
 		TLS:         false,
 	}
 
 	p.ringBuffer.Push(event)
+}
+
+func (p *ProxyServer) handleWebSocketUpgrade(w http.ResponseWriter, r *http.Request, reqID string, reqStart time.Time) {
+	hijacker, ok := w.(http.Hijacker)
+	if !ok {
+		http.Error(w, "Hijacking not supported", http.StatusInternalServerError)
+		return
+	}
+	clientConn, _, err := hijacker.Hijack()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusServiceUnavailable)
+		return
+	}
+	defer clientConn.Close()
+
+	destAddr := r.Host
+	if !strings.Contains(destAddr, ":") {
+		destAddr = net.JoinHostPort(destAddr, "80")
+	}
+
+	upstreamConn, err := net.DialTimeout("tcp", destAddr, 10*time.Second)
+	if err != nil {
+		clientConn.Write([]byte("HTTP/1.1 502 Bad Gateway\r\n\r\n"))
+		return
+	}
+	defer upstreamConn.Close()
+
+	if err := r.Write(upstreamConn); err != nil {
+		return
+	}
+
+	event := &ringbuffer.TrafficEvent{
+		ID:         reqID,
+		Timestamp:  reqStart,
+		Duration:   time.Since(reqStart),
+		ClientIP:   r.RemoteAddr,
+		Scheme:     "ws",
+		Host:       r.Host,
+		Method:     r.Method,
+		Path:       r.URL.Path,
+		URL:        "ws://" + r.Host + r.URL.Path,
+		Proto:      "WebSocket",
+		StatusCode: http.StatusSwitchingProtocols,
+		ReqHeaders: cloneHeaders(r.Header),
+		TLS:        false,
+	}
+	p.ringBuffer.Push(event)
+
+	p.splice(clientConn, upstreamConn)
+}
+
+func (p *ProxyServer) splice(c1, c2 net.Conn) {
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	go func() {
+		defer wg.Done()
+		_, _ = io.Copy(c1, c2)
+		if tc, ok := c1.(*net.TCPConn); ok {
+			_ = tc.CloseWrite()
+		}
+	}()
+
+	go func() {
+		defer wg.Done()
+		_, _ = io.Copy(c2, c1)
+		if tc, ok := c2.(*net.TCPConn); ok {
+			_ = tc.CloseWrite()
+		}
+	}()
+
+	wg.Wait()
+}
+
+func isWebSocketUpgrade(r *http.Request) bool {
+	return strings.EqualFold(r.Header.Get("Upgrade"), "websocket") ||
+		strings.Contains(strings.ToLower(r.Header.Get("Connection")), "upgrade")
 }
 
 func copyHeaders(dst, src http.Header) {

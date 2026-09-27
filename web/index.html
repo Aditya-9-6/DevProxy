@@ -512,6 +512,10 @@
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
         Root CA Certificate
       </button>
+      <button class="btn" onclick="exportHAR()">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        Export HAR
+      </button>
       <button class="btn btn-primary" onclick="exportFindings()">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
         Export Audit
@@ -820,8 +824,13 @@ curl -x http://localhost:8080 --cacert devproxy-ca.crt https://httpbin.org/get
       // Request tab
       const reqEl = document.getElementById('request-details');
       reqEl.innerHTML = `
-        <div style="font-size:14px; font-weight:600; margin-bottom:12px; color:#38bdf8;">
-          ${selectedRequest.method} ${selectedRequest.url} (${selectedRequest.proto})
+        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; gap: 8px;">
+          <div style="font-size:14px; font-weight:600; color:#38bdf8; word-break: break-all;">
+            ${selectedRequest.method} ${selectedRequest.url} (${selectedRequest.proto})
+          </div>
+          <button class="btn" id="btn-curl" onclick="copyAsCurl()" style="padding: 4px 10px; font-size: 11px; white-space: nowrap;">
+            📋 Copy cURL
+          </button>
         </div>
         <div style="font-size:12px; font-weight:600; color:#94a3b8; margin-bottom:6px;">REQUEST HEADERS</div>
         ${renderHeadersTable(selectedRequest.req_headers)}
@@ -846,6 +855,37 @@ curl -x http://localhost:8080 --cacert devproxy-ca.crt https://httpbin.org/get
       `;
     }
 
+    function copyAsCurl() {
+      if (!selectedRequest) return;
+      let cmd = `curl -X ${selectedRequest.method} '${selectedRequest.url}'`;
+      if (selectedRequest.req_headers) {
+        for (const [k, v] of Object.entries(selectedRequest.req_headers)) {
+          if (['host', 'content-length'].includes(k.toLowerCase())) continue;
+          const val = Array.isArray(v) ? v.join('; ') : v;
+          cmd += ` \\\n  -H '${k}: ${val.replace(/'/g, "'\\''")}'`;
+        }
+      }
+      if (selectedRequest.req_body) {
+        cmd += ` \\\n  --data '${selectedRequest.req_body.replace(/'/g, "'\\''")}'`;
+      }
+      if (selectedRequest.tls) {
+        cmd += ` --insecure`;
+      }
+      navigator.clipboard.writeText(cmd).then(() => {
+        const b = document.getElementById('btn-curl');
+        if (b) {
+          b.innerText = '✅ Copied!';
+          setTimeout(() => { b.innerText = '📋 Copy cURL'; }, 2000);
+        }
+      }).catch(err => {
+        console.error('Failed to copy cURL:', err);
+      });
+    }
+
+    function exportHAR() {
+      window.location.href = '/api/export/har';
+    }
+
     function renderHeadersTable(headers) {
       if (!headers || Object.keys(headers).length === 0) return '<div style="color:#64748b; font-size:12px;">No headers</div>';
       let rows = '';
@@ -868,6 +908,7 @@ curl -x http://localhost:8080 --cacert devproxy-ca.crt https://httpbin.org/get
     }
 
     function clearTraffic() {
+      fetch('/api/requests', { method: 'DELETE' }).catch(() => {});
       traffic = [];
       selectedRequest = null;
       renderTraffic();
