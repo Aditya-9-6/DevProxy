@@ -46,6 +46,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/requests", s.handleRequests)
 	mux.HandleFunc("/api/requests/", s.handleRequestByID)
 	mux.HandleFunc("/api/findings", s.handleFindings)
+	mux.HandleFunc("/api/export/har", s.handleExportHAR)
 	mux.HandleFunc("/api/ca.crt", s.handleDownloadCACert)
 
 	s.httpSrv = &http.Server{
@@ -81,6 +82,16 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleRequests(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodDelete {
+		if err := s.store.ClearAll(); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"status":"cleared"}`))
+		return
+	}
+
 	limit := 50
 	if lStr := r.URL.Query().Get("limit"); lStr != "" {
 		if l, err := strconv.Atoi(lStr); err == nil && l > 0 {
@@ -135,6 +146,22 @@ func (s *Server) handleFindings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = json.NewEncoder(w).Encode(findings)
+}
+
+func (s *Server) handleExportHAR(w http.ResponseWriter, r *http.Request) {
+	records, err := s.store.GetRecentRequests(1000, "")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	harBytes, err := storage.GenerateHAR(records)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Disposition", "attachment; filename=\"devproxy-traffic.har\"")
+	w.Write(harBytes)
 }
 
 func (s *Server) handleDownloadCACert(w http.ResponseWriter, r *http.Request) {
