@@ -8,12 +8,14 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/Aditya-9-6/DevProxy/pkg/certs"
+	"github.com/Aditya-9-6/DevProxy/pkg/mock"
 	"github.com/Aditya-9-6/DevProxy/pkg/ringbuffer"
 	"github.com/google/uuid"
 )
@@ -26,6 +28,7 @@ type ProxyServer struct {
 	transport   *http.Transport
 	httpServer  *http.Server
 	reqCounter  atomic.Uint64
+	mockEngine  *mock.Engine
 }
 
 // NewProxyServer creates a new ProxyServer.
@@ -49,6 +52,7 @@ func NewProxyServer(addr string, cm *certs.CertificateManager, rb *ringbuffer.Ri
 		certManager: cm,
 		ringBuffer:  rb,
 		transport:   transport,
+		mockEngine:  mock.NewEngine(),
 	}
 
 	p.httpServer = &http.Server{
@@ -60,6 +64,16 @@ func NewProxyServer(addr string, cm *certs.CertificateManager, rb *ringbuffer.Ri
 	}
 
 	return p
+}
+
+// SetMockEngine configures the mock & chaos engine.
+func (p *ProxyServer) SetMockEngine(eng *mock.Engine) {
+	p.mockEngine = eng
+}
+
+// GetMockEngine returns the active mock & chaos engine.
+func (p *ProxyServer) GetMockEngine() *mock.Engine {
+	return p.mockEngine
 }
 
 // Start runs the proxy server listener.
@@ -196,6 +210,92 @@ func (p *ProxyServer) bumpTLSConnection(clientConn net.Conn, targetHostPort stri
 			return
 		}
 
+		rawURL := fmt.Sprintf("https://%s%s", host, req.URL.RequestURI())
+
+		// 1. Chaos Injection
+		if p.mockEngine != nil {
+			if injected, status, body := p.mockEngine.ApplyChaos(rawURL); injected {
+				resp := &http.Response{
+					StatusCode:    status,
+					ProtoMajor:    1,
+					ProtoMinor:    1,
+					Header:        make(http.Header),
+					Body:          io.NopCloser(bytes.NewReader([]byte(body))),
+					ContentLength: int64(len(body)),
+				}
+				resp.Header.Set("Content-Type", "application/json; charset=utf-8")
+				resp.Header.Set("X-DevProxy-Chaos", "true")
+				_ = resp.Write(tlsClientConn)
+				p.ringBuffer.Push(&ringbuffer.TrafficEvent{
+					ID:          reqID,
+					Timestamp:   reqStart,
+					Duration:    time.Since(reqStart),
+					ClientIP:    clientConn.RemoteAddr().String(),
+					Scheme:      "https",
+					Host:        host,
+					Method:      req.Method,
+					Path:        req.URL.Path,
+					URL:         rawURL,
+					Proto:       req.Proto,
+					ReqHeaders:  cloneHeaders(req.Header),
+					StatusCode:  status,
+					RespHeaders: cloneHeaders(resp.Header),
+					RespBody:    []byte(body),
+					TLS:         true,
+					TLSServer:   host,
+				})
+				continue
+			}
+		}
+
+		// 2. Map Local Mocking
+		if p.mockEngine != nil {
+			if rule, mockBody, err := p.mockEngine.MatchMapLocal(rawURL); rule != nil && err == nil {
+				resp := &http.Response{
+					StatusCode:    rule.StatusCode,
+					ProtoMajor:    1,
+					ProtoMinor:    1,
+					Header:        make(http.Header),
+					Body:          io.NopCloser(bytes.NewReader(mockBody)),
+					ContentLength: int64(len(mockBody)),
+				}
+				for k, v := range rule.Headers {
+					resp.Header.Set(k, v)
+				}
+				resp.Header.Set("Content-Type", rule.ContentType)
+				resp.Header.Set("X-DevProxy-Mock", "MapLocal")
+				_ = resp.Write(tlsClientConn)
+				p.ringBuffer.Push(&ringbuffer.TrafficEvent{
+					ID:          reqID,
+					Timestamp:   reqStart,
+					Duration:    time.Since(reqStart),
+					ClientIP:    clientConn.RemoteAddr().String(),
+					Scheme:      "https",
+					Host:        host,
+					Method:      req.Method,
+					Path:        req.URL.Path,
+					URL:         rawURL,
+					Proto:       req.Proto,
+					ReqHeaders:  cloneHeaders(req.Header),
+					StatusCode:  rule.StatusCode,
+					RespHeaders: cloneHeaders(resp.Header),
+					RespBody:    mockBody,
+					TLS:         true,
+					TLSServer:   host,
+				})
+				continue
+			}
+		}
+
+		// 3. Map Remote Rewriting
+		if p.mockEngine != nil {
+			if newURL, newHost, matched := p.mockEngine.MatchMapRemote(rawURL, host); matched {
+				host = newHost
+				req.URL.Host = newHost
+				rawURL = newURL
+			}
+		}
+
 		// Stream request body with bounded capture for analysis
 		reqBodyReader, reqCap := ReadAndCapture(req.Body, DefaultMaxBodyCaptureBytes)
 		req.Body = reqBodyReader
@@ -278,6 +378,82 @@ func (p *ProxyServer) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	if !outReq.URL.IsAbs() {
 		outReq.URL.Scheme = "http"
 		outReq.URL.Host = r.Host
+	}
+
+	targetURL := outReq.URL.String()
+	if !outReq.URL.IsAbs() {
+		targetURL = "http://" + r.Host + r.URL.RequestURI()
+	}
+
+	// 1. Chaos Injection
+	if p.mockEngine != nil {
+		if injected, status, body := p.mockEngine.ApplyChaos(targetURL); injected {
+			w.Header().Set("Content-Type", "application/json; charset=utf-8")
+			w.Header().Set("X-DevProxy-Chaos", "true")
+			w.WriteHeader(status)
+			_, _ = w.Write([]byte(body))
+			p.ringBuffer.Push(&ringbuffer.TrafficEvent{
+				ID:          reqID,
+				Timestamp:   reqStart,
+				Duration:    time.Since(reqStart),
+				ClientIP:    r.RemoteAddr,
+				Scheme:      "http",
+				Host:        r.Host,
+				Method:      r.Method,
+				Path:        r.URL.Path,
+				URL:         targetURL,
+				Proto:       r.Proto,
+				ReqHeaders:  cloneHeaders(r.Header),
+				ReqBody:     reqBodyBytes,
+				StatusCode:  status,
+				RespHeaders: cloneHeaders(w.Header()),
+				RespBody:    []byte(body),
+				TLS:         false,
+			})
+			return
+		}
+	}
+
+	// 2. Map Local Mocking
+	if p.mockEngine != nil {
+		if rule, mockBody, err := p.mockEngine.MatchMapLocal(targetURL); rule != nil && err == nil {
+			for k, v := range rule.Headers {
+				w.Header().Set(k, v)
+			}
+			w.Header().Set("Content-Type", rule.ContentType)
+			w.Header().Set("X-DevProxy-Mock", "MapLocal")
+			w.WriteHeader(rule.StatusCode)
+			_, _ = w.Write(mockBody)
+			p.ringBuffer.Push(&ringbuffer.TrafficEvent{
+				ID:          reqID,
+				Timestamp:   reqStart,
+				Duration:    time.Since(reqStart),
+				ClientIP:    r.RemoteAddr,
+				Scheme:      "http",
+				Host:        r.Host,
+				Method:      r.Method,
+				Path:        r.URL.Path,
+				URL:         targetURL,
+				Proto:       r.Proto,
+				ReqHeaders:  cloneHeaders(r.Header),
+				ReqBody:     reqBodyBytes,
+				StatusCode:  rule.StatusCode,
+				RespHeaders: cloneHeaders(w.Header()),
+				RespBody:    mockBody,
+				TLS:         false,
+			})
+			return
+		}
+	}
+
+	// 3. Map Remote Rewriting
+	if p.mockEngine != nil {
+		if newURL, newHost, matched := p.mockEngine.MatchMapRemote(targetURL, r.Host); matched {
+			outReq.Host = newHost
+			if parsed, parseErr := url.Parse(newURL); parseErr == nil {
+				outReq.URL = parsed
+			}
+		}
 	}
 
 	removeHopByHopHeaders(outReq.Header)
