@@ -39,3 +39,13 @@ New rules can be contributed in [`pkg/analysis/rules.go`](pkg/analysis/rules.go)
 2. Commit your changes with descriptive commit messages (`git commit -m 'Add Stripe secret key detection'`).
 3. Push to your branch (`git push origin feat/my-new-rule`).
 4. Open a Pull Request on GitHub.
+
+## Automated AI Reviews & CodeRabbit Autofix
+Every Pull Request is automatically reviewed by **CodeRabbit**:
+- CodeRabbit performs automated security, style, and bug checks.
+- If CodeRabbit suggests an improvement, you can apply it with 1 click using the review comment checkbox or by replying:
+  ```
+  @coderabbitai autofix
+  ```
+- CodeRabbit will commit the fix directly to your branch.
+
