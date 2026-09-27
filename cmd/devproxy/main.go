@@ -47,6 +47,7 @@ func main() {
 	workers := flag.Int("workers", 4, "Number of concurrent analysis worker goroutines")
 	caCertPath := flag.String("ca-cert", "", "Path to custom Root CA certificate (PEM)")
 	caKeyPath := flag.String("ca-key", "", "Path to custom Root CA private key (PEM)")
+	rulesPath := flag.String("rules", "", "Path to custom YAML rules file (defaults to ./devproxy.yaml if present)")
 	showEBPF := flag.Bool("ebpf", false, "Display eBPF and container transparent redirection guide")
 	showVersion := flag.Bool("version", false, "Print DevProxy version and build info")
 	showInstallCA := flag.Bool("install-ca", false, "Display instructions to install and trust the Root CA")
@@ -123,6 +124,24 @@ To prevent SSL certificate warnings in curl, browsers, and mobile emulators:
 	// 4. Initialize Rules Engine & Worker Pool
 	log.Printf("[4/5] Initializing High-Speed Rules Engine with %d background workers...", *workers)
 	engine := analysis.NewSecurityRulesEngine()
+
+	// Load custom rules if specified or if devproxy.yaml exists locally
+	customRulesFile := *rulesPath
+	if customRulesFile == "" {
+		if _, err := os.Stat("devproxy.yaml"); err == nil {
+			customRulesFile = "devproxy.yaml"
+		}
+	}
+	if customRulesFile != "" {
+		customRules, err := analysis.LoadCustomRulesFromFile(customRulesFile)
+		if err != nil {
+			log.Printf("[Warning] Failed to load custom rules from %s: %v", customRulesFile, err)
+		} else {
+			engine.AddRules(customRules)
+			log.Printf(" Loaded %d custom rules from %s", len(customRules), customRulesFile)
+		}
+	}
+
 	hub := dashboard.NewHub()
 	go hub.Run()
 

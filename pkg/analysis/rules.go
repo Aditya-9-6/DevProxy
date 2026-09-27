@@ -41,6 +41,20 @@ func NewSecurityRulesEngine() *SecurityRulesEngine {
 	return engine
 }
 
+// AddRule registers a single additional rule.
+func (e *SecurityRulesEngine) AddRule(rule Rule) {
+	if rule != nil {
+		e.rules = append(e.rules, rule)
+	}
+}
+
+// AddRules registers multiple additional rules (e.g. from custom YAML).
+func (e *SecurityRulesEngine) AddRules(rules []Rule) {
+	for _, r := range rules {
+		e.AddRule(r)
+	}
+}
+
 // Analyze runs all rules against a traffic event and returns any findings.
 func (e *SecurityRulesEngine) Analyze(event *ringbuffer.TrafficEvent) []*Finding {
 	var findings []*Finding

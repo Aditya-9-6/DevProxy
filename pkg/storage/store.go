@@ -14,8 +14,11 @@ import (
 
 // Store provides an ephemeral in-memory SQLite database for captured requests and security findings.
 type Store struct {
-	db *sql.DB
-	mu sync.RWMutex
+	db         *sql.DB
+	mu         sync.RWMutex
+	maxRecords int
+	reqCount   sync.Mutex
+	counter    uint64
 }
 
 // StatsSummary contains high-level metrics for the dashboard.
@@ -207,7 +210,53 @@ func (s *Store) SaveTransaction(event *ringbuffer.TrafficEvent, findings []*anal
 		}
 	}
 
+	s.reqCount.Lock()
+	s.counter++
+	cnt := s.counter
+	s.reqCount.Unlock()
+
+	if cnt%50 == 0 {
+		go func() {
+			_ = s.PruneOldRecords(s.maxRecords)
+		}()
+	}
+
 	return tx.Commit()
+}
+
+// PruneOldRecords deletes records exceeding keepCount to prevent memory growth in long sessions.
+func (s *Store) PruneOldRecords(keepCount int) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if keepCount <= 0 {
+		keepCount = 5000
+	}
+
+	pruneFindings := `DELETE FROM findings WHERE request_id IN (
+		SELECT id FROM requests WHERE id NOT IN (
+			SELECT id FROM requests ORDER BY timestamp DESC LIMIT ?
+		)
+	);`
+	_, _ = s.db.Exec(pruneFindings, keepCount)
+
+	pruneReqs := `DELETE FROM requests WHERE id NOT IN (
+		SELECT id FROM requests ORDER BY timestamp DESC LIMIT ?
+	);`
+	_, err := s.db.Exec(pruneReqs, keepCount)
+	return err
+}
+
+// ClearAll deletes all stored requests and findings.
+func (s *Store) ClearAll() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if _, err := s.db.Exec(`DELETE FROM findings;`); err != nil {
+		return err
+	}
+	_, err := s.db.Exec(`DELETE FROM requests;`)
+	return err
 }
 
 // GetRecentRequests retrieves the latest requests up to limit.
