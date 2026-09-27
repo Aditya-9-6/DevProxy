@@ -17,8 +17,8 @@ type Rule interface {
 
 // SecurityRulesEngine coordinates and executes security inspection rules on traffic events.
 type SecurityRulesEngine struct {
-	rules      []Rule
-	radixTrie  *RadixTrie
+	rules     []Rule
+	radixTrie *RadixTrie
 }
 
 // NewSecurityRulesEngine creates a fully loaded rules engine with built-in security checks.
@@ -526,7 +526,7 @@ func (r *SecurityHeadersRule) Evaluate(event *ringbuffer.TrafficEvent) []*Findin
 // --- Rule 5: Dangerous CORS Configurations ---
 type CORSRule struct{}
 
-func NewCORSRule() *CORSRule { return &CORSRule{} }
+func NewCORSRule() *CORSRule     { return &CORSRule{} }
 func (r *CORSRule) Name() string { return "CORS Policy Check" }
 
 func (r *CORSRule) Evaluate(event *ringbuffer.TrafficEvent) []*Finding {
@@ -559,7 +559,7 @@ func (r *CORSRule) Evaluate(event *ringbuffer.TrafficEvent) []*Finding {
 type InsecureAuthRule struct{}
 
 func NewInsecureAuthRule() *InsecureAuthRule { return &InsecureAuthRule{} }
-func (r *InsecureAuthRule) Name() string { return "Insecure Cleartext Authentication" }
+func (r *InsecureAuthRule) Name() string     { return "Insecure Cleartext Authentication" }
 
 func (r *InsecureAuthRule) Evaluate(event *ringbuffer.TrafficEvent) []*Finding {
 	if event.TLS {

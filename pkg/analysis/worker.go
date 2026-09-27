@@ -16,16 +16,16 @@ type ResultHandler interface {
 
 // AnalysisWorkerPool manages background worker threads pulling from the ring buffer.
 type AnalysisWorkerPool struct {
-	ringBuffer     *ringbuffer.RingBuffer
-	engine         *SecurityRulesEngine
-	handler        ResultHandler
-	concurrency    int
-	wg             sync.WaitGroup
-	ctx            context.Context
-	cancel         context.CancelFunc
-	totalAnalyzed  atomic.Uint64
-	totalFindings  atomic.Uint64
-	totalScanTime  atomic.Uint64 // nanoseconds
+	ringBuffer    *ringbuffer.RingBuffer
+	engine        *SecurityRulesEngine
+	handler       ResultHandler
+	concurrency   int
+	wg            sync.WaitGroup
+	ctx           context.Context
+	cancel        context.CancelFunc
+	totalAnalyzed atomic.Uint64
+	totalFindings atomic.Uint64
+	totalScanTime atomic.Uint64 // nanoseconds
 }
 
 // NewAnalysisWorkerPool creates a new pool of analysis workers.
