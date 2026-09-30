@@ -19,7 +19,7 @@ services:
       class H(http.server.SimpleHTTPRequestHandler):
           def do_GET(self):
               self.send_response(500)
-              self.send_header(\"Set-Cookie\", \"auth_token=supersecret123; Path=/\")
+              self.send_header(\"Set-Cookie\", \"session_id=demo_session_cookie; Path=/\")
               self.send_header(\"Server\", \"Apache/2.4.49 (Debian)\")
               self.end_headers()
               self.wfile.write(b\"Traceback (most recent call last):\\n  File \\\"app.py\\\", line 42, in get_user\\n    raise KeyError(\\\"leaked database connection\\\")\")
