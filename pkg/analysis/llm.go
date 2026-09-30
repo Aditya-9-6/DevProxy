@@ -48,10 +48,13 @@ func NewLLMRule() *LLMRule {
 	}
 }
 
+// Name returns the display name of the LLM inspection rule.
 func (r *LLMRule) Name() string {
 	return "AI & LLM Traffic Inspector"
 }
 
+// Evaluate returns prompt-leak, token-consumption, and telemetry findings
+// for recognized LLM traffic, or nil when the event is not an LLM call.
 func (r *LLMRule) Evaluate(event *ringbuffer.TrafficEvent) []*Finding {
 	provider, isLLM := identifyLLMProvider(event)
 	if !isLLM {
@@ -112,6 +115,8 @@ func (r *LLMRule) Evaluate(event *ringbuffer.TrafficEvent) []*Finding {
 	return findings
 }
 
+// identifyLLMProvider infers a provider from the host, path, or request body
+// and reports whether the event matches an LLM request signature.
 func identifyLLMProvider(event *ringbuffer.TrafficEvent) (LLMProvider, bool) {
 	host := strings.ToLower(event.Host)
 	if h, _, err := net.SplitHostPort(event.Host); err == nil {
@@ -150,6 +155,9 @@ func identifyLLMProvider(event *ringbuffer.TrafficEvent) (LLMProvider, bool) {
 	}
 }
 
+// inspectPromptForLeaks returns findings for card numbers, SSNs, and secrets
+// in the request body, skipping hosts containing localhost or 127.0.0.1
+// and requests classified as Ollama.
 func inspectPromptForLeaks(event *ringbuffer.TrafficEvent, provider LLMProvider, acMatcher *AhoCorasickMatcher, now time.Time) []*Finding {
 	// If provider is entirely local (e.g. Ollama on localhost), data never leaves machine
 	host := strings.ToLower(event.Host)
@@ -234,6 +242,8 @@ func inspectPromptForLeaks(event *ringbuffer.TrafficEvent, provider LLMProvider,
 	return findings
 }
 
+// parseLLMTelemetry extracts the model and token usage from a transaction
+// and estimates its cost, returning partial telemetry when no response is available.
 func parseLLMTelemetry(event *ringbuffer.TrafficEvent, provider LLMProvider) *LLMCallTelemetry {
 	telemetry := &LLMCallTelemetry{
 		Provider: provider,
@@ -290,6 +300,8 @@ func parseLLMTelemetry(event *ringbuffer.TrafficEvent, provider LLMProvider) *LL
 	return telemetry
 }
 
+// extractTokensFromJSON updates tel with usage from supported JSON response
+// formats and fills an unknown model when available. Unrecognized payloads leave tel unchanged.
 func extractTokensFromJSON(respBody []byte, tel *LLMCallTelemetry) {
 	// Standard OpenAI / Groq / Mistral format
 	var openAIResp struct {
@@ -360,6 +372,8 @@ func extractTokensFromJSON(respBody []byte, tel *LLMCallTelemetry) {
 	}
 }
 
+// extractTokensFromSSE updates tel with model and usage fields from SSE data
+// lines, ignoring empty payloads, completion markers, and malformed JSON.
 func extractTokensFromSSE(respStr string, tel *LLMCallTelemetry) {
 	scanner := bufio.NewScanner(strings.NewReader(respStr))
 	for scanner.Scan() {

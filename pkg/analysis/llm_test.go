@@ -8,6 +8,8 @@ import (
 	"github.com/Aditya-9-6/DevProxy/pkg/ringbuffer"
 )
 
+// TestLLMRule_OpenAIChatCompletionJSON verifies model and token telemetry
+// from an OpenAI JSON response.
 func TestLLMRule_OpenAIChatCompletionJSON(t *testing.T) {
 	rule := NewLLMRule()
 
@@ -59,6 +61,8 @@ func TestLLMRule_OpenAIChatCompletionJSON(t *testing.T) {
 	}
 }
 
+// TestLLMRule_OpenAISSEStream verifies token totals and streaming telemetry
+// from an OpenAI SSE response.
 func TestLLMRule_OpenAISSEStream(t *testing.T) {
 	rule := NewLLMRule()
 
@@ -103,6 +107,8 @@ func TestLLMRule_OpenAISSEStream(t *testing.T) {
 	}
 }
 
+// TestLLMRule_AnthropicMessages verifies provider identification and summed
+// input and output token counts for Anthropic responses.
 func TestLLMRule_AnthropicMessages(t *testing.T) {
 	rule := NewLLMRule()
 
@@ -154,6 +160,8 @@ func TestLLMRule_AnthropicMessages(t *testing.T) {
 	}
 }
 
+// TestLLMRule_GeminiContent verifies model extraction from the request path
+// and token totals from Gemini usage metadata.
 func TestLLMRule_GeminiContent(t *testing.T) {
 	rule := NewLLMRule()
 
@@ -202,6 +210,8 @@ func TestLLMRule_GeminiContent(t *testing.T) {
 	}
 }
 
+// TestLLMRule_HighTokenConsumption verifies a medium-severity warning
+// when a response reports more than 8,000 tokens.
 func TestLLMRule_HighTokenConsumption(t *testing.T) {
 	rule := NewLLMRule()
 
@@ -244,6 +254,8 @@ func TestLLMRule_HighTokenConsumption(t *testing.T) {
 	}
 }
 
+// TestLLMRule_PromptDataLeak verifies critical findings for a valid credit
+// card number and an AWS credential sent in a cloud AI prompt.
 func TestLLMRule_PromptDataLeak(t *testing.T) {
 	rule := NewLLMRule()
 
@@ -289,6 +301,8 @@ func TestLLMRule_PromptDataLeak(t *testing.T) {
 	}
 }
 
+// TestLLMRule_LocalOllamaNoLeakAlert verifies that local Ollama prompts
+// do not produce data-leak findings.
 func TestLLMRule_LocalOllamaNoLeakAlert(t *testing.T) {
 	rule := NewLLMRule()
 
@@ -318,6 +332,8 @@ func TestLLMRule_LocalOllamaNoLeakAlert(t *testing.T) {
 	}
 }
 
+// TestEstimateLLMCost verifies the configured GPT-4o token rates and
+// the zero-cost estimate for a local Llama model.
 func TestEstimateLLMCost(t *testing.T) {
 	// GPT-4o: 1,000,000 prompt = $2.50, 1,000,000 completion = $10.00
 	cost := EstimateLLMCost("gpt-4o", 1000, 1000)
@@ -333,18 +349,24 @@ func TestEstimateLLMCost(t *testing.T) {
 	}
 }
 
+// containsSubstring reports whether s contains sub, ignoring ASCII letter case.
 func containsSubstring(s, sub string) bool {
 	return containsFold(s, sub)
 }
 
+// containsFold reports whether s contains sub, ignoring ASCII letter case
+// and treating an empty substring as a match.
 func containsFold(s, sub string) bool {
 	return len(s) >= len(sub) && (s == sub || len(sub) == 0 || (len(s) > 0 && len(sub) > 0 && indexFold(s, sub) >= 0))
 }
 
+// indexFold returns the first byte index of sub in s, ignoring ASCII letter
+// case, or -1 if there is no match.
 func indexFold(s, sub string) int {
 	return indexString(toLower(s), toLower(sub))
 }
 
+// toLower converts ASCII uppercase letters to lowercase, preserving other bytes.
 func toLower(s string) string {
 	b := make([]byte, len(s))
 	for i := 0; i < len(s); i++ {
@@ -357,6 +379,8 @@ func toLower(s string) string {
 	return string(b)
 }
 
+// indexString returns the first byte index of sub in s, or -1 if absent.
+// An empty substring matches at index zero.
 func indexString(s, sub string) int {
 	n := len(sub)
 	if n == 0 {
