@@ -576,6 +576,7 @@
         <select class="filter-select" id="vuln-filter" onchange="filterTraffic()">
           <option value="ALL">All Traffic</option>
           <option value="ONLY_VULN">Flagged Only</option>
+          <option value="ONLY_AI">AI &amp; LLM Calls</option>
         </select>
         <button class="btn" style="padding: 6px 10px;" onclick="clearTraffic()">Clear</button>
       </div>
@@ -909,7 +910,12 @@ curl -x http://localhost:8080 --cacert devproxy-ca.crt https://httpbin.org/get
       let html = '';
       for (const r of traffic) {
         if (methodFilter !== 'ALL' && r.method !== methodFilter) continue;
+
+        const isAI = (r.findings && r.findings.some(f => f.category === 'AI_OBSERVABILITY' || f.category === 'AI_DATA_LEAKAGE' || (f.category === 'RESOURCE_CONSUMPTION' && f.rule_name && f.rule_name.includes('LLM')))) ||
+                     (r.url && (r.url.includes('openai.com') || r.url.includes('anthropic.com') || r.url.includes('googleapis.com/v1beta/models') || r.url.includes('groq.com') || r.url.includes('mistral.ai') || r.url.includes(':11434') || r.url.includes('/api/generate') || r.url.includes('/api/chat')));
+
         if (vulnFilter === 'ONLY_VULN' && (!r.finding_count && (!r.findings || r.findings.length === 0))) continue;
+        if (vulnFilter === 'ONLY_AI' && !isAI) continue;
         if (search && !r.url.toLowerCase().includes(search) && !r.host.toLowerCase().includes(search)) continue;
 
         const isSelected = selectedRequest && selectedRequest.id === r.id;
@@ -922,7 +928,10 @@ curl -x http://localhost:8080 --cacert devproxy-ca.crt https://httpbin.org/get
 
         html += `
           <div class="traffic-row ${isSelected ? 'selected' : ''}" onclick="selectRequest('${r.id}')">
-            <div><span class="badge-method m-${r.method}">${r.method}</span></div>
+            <div style="display: flex; align-items: center; gap: 4px;">
+              <span class="badge-method m-${r.method}">${r.method}</span>
+              ${isAI ? `<span style="background: rgba(168,85,247,0.2); color: #c084fc; border: 1px solid rgba(168,85,247,0.4); padding: 1px 4px; border-radius: 4px; font-size: 9px; font-weight: 700;">AI</span>` : ''}
+            </div>
             <div class="status-tag ${statusClass}">${r.status_code || '-'}</div>
             <div class="url-cell" title="${r.url}">
               <span>${r.path || r.url}</span>
@@ -983,9 +992,44 @@ curl -x http://localhost:8080 --cacert devproxy-ca.crt https://httpbin.org/get
         findingsContainer.innerHTML = fHtml;
       }
 
+      // Check for AI / LLM Findings
+      const aiFinding = findings.find(f => f.category === 'AI_OBSERVABILITY');
+      const aiLeakFinding = findings.find(f => f.category === 'AI_DATA_LEAKAGE');
+      const aiTokenWarning = findings.find(f => f.category === 'RESOURCE_CONSUMPTION' && f.rule_name && f.rule_name.includes('LLM'));
+
+      let aiBannerHtml = '';
+      if (aiFinding || aiLeakFinding || aiTokenWarning) {
+        aiBannerHtml = `
+          <div style="background: linear-gradient(135deg, rgba(147, 51, 234, 0.15) 0%, rgba(59, 130, 246, 0.15) 100%); border: 1px solid rgba(168, 85, 247, 0.4); border-radius: 8px; padding: 12px 14px; margin-bottom: 14px;">
+            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px;">
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <span style="font-size: 16px;">🤖</span>
+                <span style="font-size: 13px; font-weight: 700; color: #c084fc;">AI &amp; LLM Telemetry</span>
+              </div>
+              <span style="font-size: 10px; font-weight: 700; background: rgba(168, 85, 247, 0.25); color: #e9d5ff; padding: 2px 8px; border-radius: 9999px; border: 1px solid rgba(168, 85, 247, 0.4);">LIVE TRACKING</span>
+            </div>
+            ${aiFinding ? `
+              <div style="font-size: 13px; font-weight: 600; color: #f1f5f9; margin-bottom: 4px;">${escapeHtml(aiFinding.title)}</div>
+              <div style="font-size: 11px; color: #94a3b8; font-family: monospace;">${escapeHtml(aiFinding.evidence)}</div>
+            ` : ''}
+            ${aiTokenWarning ? `
+              <div style="margin-top: 8px; font-size: 12px; color: #fde047; background: rgba(234, 179, 8, 0.15); padding: 6px 10px; border-radius: 4px; border: 1px solid rgba(234, 179, 8, 0.3);">
+                ⚠️ <strong>Excessive Token Warning:</strong> ${escapeHtml(aiTokenWarning.title)}
+              </div>
+            ` : ''}
+            ${aiLeakFinding ? `
+              <div style="margin-top: 8px; font-size: 12px; color: #fca5a5; background: rgba(239, 68, 68, 0.15); padding: 6px 10px; border-radius: 4px; border: 1px solid rgba(239, 68, 68, 0.3);">
+                🚨 <strong>Prompt Data Leak:</strong> ${escapeHtml(aiLeakFinding.title)}
+              </div>
+            ` : ''}
+          </div>
+        `;
+      }
+
       // Request tab
       const reqEl = document.getElementById('request-details');
       reqEl.innerHTML = `
+        ${aiBannerHtml}
         <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; gap: 8px;">
           <div style="font-size:14px; font-weight:600; color:#38bdf8; word-break: break-all;">
             ${selectedRequest.method} ${selectedRequest.url} (${selectedRequest.proto})
@@ -1010,6 +1054,7 @@ curl -x http://localhost:8080 --cacert devproxy-ca.crt https://httpbin.org/get
       // Response tab
       const respEl = document.getElementById('response-details');
       respEl.innerHTML = `
+        ${aiBannerHtml}
         <div style="font-size:14px; font-weight:600; margin-bottom:12px; color:#38bdf8;">
           HTTP Status: ${selectedRequest.status_code} • Duration: ${(selectedRequest.duration_ms || 0).toFixed(2)}ms
         </div>

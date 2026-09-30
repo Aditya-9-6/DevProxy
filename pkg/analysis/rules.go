@@ -40,6 +40,7 @@ func NewSecurityRulesEngine() *SecurityRulesEngine {
 		NewIPBlocklistRule(trie),
 		NewGraphQLRule(),
 		NewPIIRule(),
+		NewLLMRule(),
 	}
 
 	return engine
