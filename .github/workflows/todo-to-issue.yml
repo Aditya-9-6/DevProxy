@@ -1,0 +1,28 @@
+name: "TODO & Advancement to Issue Bot"
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  todo-to-issue:
+    name: "Scan & Convert Code Comments to Issues"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: "Scan for TODO and ADVANCEMENT comments"
+        uses: "alstr/todo-to-issue-action@v5"
+        with:
+          CLOSE_ISSUES: true
+          AUTO_ASSIGN: false
+          TAGS: "TODO,ADVANCEMENT,FIXME,OPTIMIZE"
+          IGNORE: ".github/workflows/**,web/**,node_modules/**,dist/**"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

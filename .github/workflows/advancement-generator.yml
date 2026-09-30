@@ -1,0 +1,38 @@
+name: "Advancement & Roadmap Issue Generator"
+
+on:
+  workflow_dispatch:
+    inputs:
+      advancement_type:
+        description: "Select Advancement to generate as GitHub Issue"
+        required: true
+        default: "all"
+        type: choice
+        options:
+          - "all"
+          - "grpc_protobuf"
+          - "upstream_proxy_chain"
+          - "har_import_playback"
+          - "otel_tracing"
+          - "ja4_tls_fingerprint"
+          - "ui_theme_toggle"
+
+permissions:
+  issues: write
+  contents: read
+
+jobs:
+  generate-issues:
+    name: "Generate Advancement Issues"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Generate Advancement Issues via GitHub CLI
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ADVANCEMENT: ${{ inputs.advancement_type }}
+        run: |
+          chmod +x .github/scripts/generate-advancements.sh
+          bash .github/scripts/generate-advancements.sh "$ADVANCEMENT"
