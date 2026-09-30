@@ -1,0 +1,35 @@
+name: Security Scan (Gosec)
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    - cron: '0 0 * * 1'
+
+permissions:
+  contents: read
+
+jobs:
+  security-audit:
+    name: Gosec Security Audit
+    permissions:
+      contents: read
+      security-events: write
+    runs-on: ubuntu-latest
+    env:
+      GO111MODULE: on
+    steps:
+      - name: Checkout Source
+        uses: actions/checkout@v4
+
+      - name: Run Gosec Security Scanner
+        uses: securego/gosec@master
+        with:
+          args: '-no-fail -fmt sarif -out results.sarif ./...'
+
+      - name: Upload SARIF report to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: results.sarif
