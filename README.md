@@ -5,6 +5,7 @@
 [![DeepSource](https://app.deepsource.com/gh/Aditya-9-6/DevProxy.svg/?label=resolved+issues&show_trend=true)](https://app.deepsource.com/gh/Aditya-9-6/DevProxy/)
 [![Go Report Card](https://goreportcard.com/badge/github.com/Aditya-9-6/DevProxy)](https://goreportcard.com/report/github.com/Aditya-9-6/DevProxy)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+[![All Contributors](https://img.shields.io/badge/all_contributors-1-orange.svg?style=flat-square)](#-contributors)
 
 > Completely decoupled, asynchronous passive security proxy that inspects web traffic for vulnerabilities with **zero added latency** to the developer's data path.
 
@@ -165,6 +166,33 @@ DevProxy enforces strict static analysis, vulnerability detection, and performan
   - ⚡ **Performance Bottlenecks**: Memory allocations, unbuffered I/O, and goroutine synchronization pitfalls.
   - 🔧 **Autofix**: Automated 1-click code fixes directly in PRs.
   - 📊 **Test Coverage Tracking**: Integrated coverage reporting via `.deepsource.toml` and GitHub Actions.
+- **[Dependabot](https://github.com/dependabot)**: Automated weekly CVE vulnerability scanning and dependency updates for Go modules, Docker, and GitHub Actions.
+- **[Gosec](https://github.com/securego/gosec)**: AST-based Go security audit reporting directly to GitHub's native Security tab.
+- **[Release Drafter](https://github.com/release-drafter/release-drafter)**: Automatically categorizes merged PRs and drafts changelogs with contributor attribution.
+
+---
+
+## 👥 Contributors
+
+Thanks goes to these wonderful people ([emoji key](https://allcontributors.org/docs/en/emoji-key)):
+
+<!-- ALL-CONTRIBUTORS-LIST:START - Do not remove or modify this section -->
+<!-- prettier-ignore-start -->
+<!-- markdownlint-disable -->
+<table>
+  <tbody>
+    <tr>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/Aditya-9-6"><img src="https://avatars.githubusercontent.com/u/105096058?v=4?s=100" width="100px;" alt="Aditya Dahale"/><br /><sub><b>Aditya Dahale</b></sub></a><br /><a href="https://github.com/Aditya-9-6/DevProxy/commits?author=Aditya-9-6" title="Code">💻</a> <a href="https://github.com/Aditya-9-6/DevProxy/commits?author=Aditya-9-6" title="Documentation">📖</a> <a href="#design-Aditya-9-6" title="Design">🎨</a> <a href="#maintenance-Aditya-9-6" title="Maintenance">🚧</a> <a href="#security-Aditya-9-6" title="Security">🛡️</a></td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- markdownlint-restore -->
+<!-- prettier-ignore-end -->
+
+<!-- ALL-CONTRIBUTORS-LIST:END -->
+
+This project follows the [all-contributors](https://github.com/all-contributors/all-contributors) specification. Contributions of any kind are welcome!
 
 ---
 
