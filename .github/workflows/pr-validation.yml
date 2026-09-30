@@ -85,6 +85,17 @@ jobs:
           name: code-coverage-report
           path: coverage.out
 
+      - name: Report Coverage to DeepSource
+        if: runner.os == 'Linux' && matrix.go-version == '1.24' && env.DEEPSOURCE_DSN != ''
+        uses: deepsourcelabs/test-coverage-action@master
+        env:
+          DEEPSOURCE_DSN: ${{ secrets.DEEPSOURCE_DSN }}
+        with:
+          key: go
+          coverage-file: coverage.out
+          dsn: ${{ secrets.DEEPSOURCE_DSN }}
+          fail-ci-on-error: false
+
   # ============================================================================
   # 3. Cross-Platform Compilation Check
   # ============================================================================
