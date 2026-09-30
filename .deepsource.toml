@@ -17,6 +17,10 @@ enabled = true
   [analyzers.meta]
   import_root = "github.com/Aditya-9-6/DevProxy"
 
+[[analyzers]]
+name = "test-coverage"
+enabled = true
+
 [[transformers]]
 name = "gofmt"
 enabled = true
