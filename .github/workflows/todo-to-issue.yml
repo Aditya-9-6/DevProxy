@@ -23,6 +23,6 @@ jobs:
           CLOSE_ISSUES: true
           AUTO_ASSIGN: false
           TAGS: "TODO,ADVANCEMENT,FIXME,OPTIMIZE"
-          IGNORE: ".github/workflows/**,web/**,node_modules/**,dist/**"
+          IGNORE: '\.github/.*,web/.*,node_modules/.*,dist/.*,.*\.md'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
