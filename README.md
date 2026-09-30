@@ -1,5 +1,11 @@
 # DevProxy: Zero-Latency Development Security Proxy
 
+[![CI](https://github.com/Aditya-9-6/DevProxy/actions/workflows/pr-validation.yml/badge.svg)](https://github.com/Aditya-9-6/DevProxy/actions/workflows/pr-validation.yml)
+[![DeepSource](https://app.deepsource.com/gh/Aditya-9-6/DevProxy.svg/?label=active+issues&show_trend=true)](https://app.deepsource.com/gh/Aditya-9-6/DevProxy/)
+[![DeepSource](https://app.deepsource.com/gh/Aditya-9-6/DevProxy.svg/?label=resolved+issues&show_trend=true)](https://app.deepsource.com/gh/Aditya-9-6/DevProxy/)
+[![Go Report Card](https://goreportcard.com/badge/github.com/Aditya-9-6/DevProxy)](https://goreportcard.com/report/github.com/Aditya-9-6/DevProxy)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+
 > Completely decoupled, asynchronous passive security proxy that inspects web traffic for vulnerabilities with **zero added latency** to the developer's data path.
 
 ---
@@ -147,6 +153,18 @@ Run the automated test suite covering CA generation, dynamic leaf certificate ve
 ```bash
 go test -v ./...
 ```
+
+---
+
+## 🤖 Automated Code Quality & Security
+
+DevProxy enforces strict static analysis, vulnerability detection, and performance benchmarking across every pull request:
+- **[CodeRabbit AI](https://coderabbit.ai)**: Automated AI code reviewer providing contextual summaries, diff walkthroughs, and inline improvement suggestions.
+- **[DeepSource](https://deepsource.com)**: Continuous static analysis detecting:
+  - 🛡️ **Security Vulnerabilities**: Injection vectors, credential leaks, and insecure crypto usage.
+  - ⚡ **Performance Bottlenecks**: Memory allocations, unbuffered I/O, and goroutine synchronization pitfalls.
+  - 🔧 **Autofix**: Automated 1-click code fixes directly in PRs.
+  - 📊 **Test Coverage Tracking**: Integrated coverage reporting via `.deepsource.toml` and GitHub Actions.
 
 ---
 
