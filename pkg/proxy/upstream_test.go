@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -701,6 +702,232 @@ func TestUpstreamProxy_CONNECTPreservesPipelinedBytes(t *testing.T) {
 	}
 	if string(got) != "PIPED-BYTES" {
 		t.Fatalf("got %q, want %q", got, "PIPED-BYTES")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// upstream handshake timeouts (shortened to 100ms in tests)
+// ---------------------------------------------------------------------------
+
+// shortenUpstreamTimeout shrinks the package timeout for one test and puts it
+// back afterwards.
+func shortenUpstreamTimeout(t *testing.T, d time.Duration) {
+	t.Helper()
+	orig := upstreamDialTimeout
+	upstreamDialTimeout = d
+	t.Cleanup(func() { upstreamDialTimeout = orig })
+}
+
+// goroutineBaseline waits for the goroutine count to stop moving and returns it.
+func goroutineBaseline(t *testing.T) int {
+	t.Helper()
+	last, stable := -1, 0
+	for i := 0; i < 40; i++ {
+		n := runtime.NumGoroutine()
+		if n == last {
+			stable++
+			if stable >= 2 {
+				return n
+			}
+		} else {
+			stable = 0
+		}
+		last = n
+		time.Sleep(50 * time.Millisecond)
+	}
+	return last
+}
+
+// waitGoroutinesSettle fails unless the count falls back to max.
+func waitGoroutinesSettle(t *testing.T, max int) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if runtime.NumGoroutine() <= max {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("goroutine leak: %d goroutines, want <= %d", runtime.NumGoroutine(), max)
+}
+
+// dialGuard runs fn in its own goroutine so a missing handshake timeout shows
+// up as a test failure instead of a hung test binary. It fails the test if fn
+// does not return within limit.
+func dialGuard(t *testing.T, limit time.Duration, fn func() (net.Conn, error)) (net.Conn, error, time.Duration) {
+	t.Helper()
+	type result struct {
+		conn net.Conn
+		err  error
+	}
+	res := make(chan result, 1)
+	start := time.Now()
+	go func() {
+		c, err := fn()
+		res <- result{c, err}
+	}()
+	select {
+	case r := <-res:
+		return r.conn, r.err, time.Since(start)
+	case <-time.After(limit):
+		t.Fatalf("dial did not return within %v: the proxy handshake is not bounded by a timeout", limit)
+		return nil, nil, 0
+	}
+}
+
+// A proxy that accepts the connection and then never answers must not stall
+// DevProxy: the handshake times out, the connection is closed and no
+// goroutine is left behind.
+func TestUpstreamProxy_HungHTTPProxyTimesOut(t *testing.T) {
+	shortenUpstreamTimeout(t, 100*time.Millisecond)
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen failed: %v", err)
+	}
+	defer ln.Close()
+
+	accepted, proxyClosed := trackHungProxy(t, ln)
+
+	proxySrv := newUpstreamTestProxy(t, "127.0.0.1:0")
+	if err := proxySrv.SetUpstreamProxy("http://" + ln.Addr().String()); err != nil {
+		t.Fatalf("SetUpstreamProxy failed: %v", err)
+	}
+	base := goroutineBaseline(t)
+
+	conn, err, elapsed := dialGuard(t, 2*time.Second, func() (net.Conn, error) {
+		return proxySrv.dialTunnel("https", "hang.test:443")
+	})
+	_ = conn
+	if err == nil {
+		t.Fatal("dialTunnel succeeded against a proxy that never replies, want an error")
+	}
+	if elapsed > upstreamDialTimeout+500*time.Millisecond {
+		t.Fatalf("dialTunnel took %v, want about %v", elapsed, upstreamDialTimeout)
+	}
+	t.Logf("dialTunnel failed after %v as expected: %v", elapsed, err)
+
+	waitHungProxyClosed(t, accepted, proxyClosed)
+	waitGoroutinesSettle(t, base)
+}
+
+// The same must hold for a SOCKS5 proxy that accepts the connection but never
+// answers the greeting.
+func TestUpstreamProxy_HungSOCKS5TimesOut(t *testing.T) {
+	shortenUpstreamTimeout(t, 100*time.Millisecond)
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen failed: %v", err)
+	}
+	defer ln.Close()
+
+	accepted, proxyClosed := trackHungProxy(t, ln)
+
+	proxySrv := newUpstreamTestProxy(t, "127.0.0.1:0")
+	if err := proxySrv.SetUpstreamProxy("socks5://" + ln.Addr().String()); err != nil {
+		t.Fatalf("SetUpstreamProxy failed: %v", err)
+	}
+	base := goroutineBaseline(t)
+
+	conn, err, elapsed := dialGuard(t, 2*time.Second, func() (net.Conn, error) {
+		return proxySrv.dialTunnel("http", "hang.test:80")
+	})
+	_ = conn
+	if err == nil {
+		t.Fatal("dialTunnel succeeded against a SOCKS5 proxy that never replies, want an error")
+	}
+	if elapsed > upstreamDialTimeout+500*time.Millisecond {
+		t.Fatalf("dialTunnel took %v, want about %v", elapsed, upstreamDialTimeout)
+	}
+	t.Logf("dialTunnel failed after %v as expected: %v", elapsed, err)
+
+	waitHungProxyClosed(t, accepted, proxyClosed)
+	waitGoroutinesSettle(t, base)
+}
+
+// trackHungProxy starts a listener that accepts exactly one connection, reads
+// it and never replies. proxyClosed is closed only once our side hangs up, so
+// a leaked connection would be spotted.
+func trackHungProxy(t *testing.T, ln net.Listener) (accepted, proxyClosed chan struct{}) {
+	t.Helper()
+	accepted = make(chan struct{})
+	proxyClosed = make(chan struct{})
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		close(accepted)
+		buf := make([]byte, 4096)
+		for {
+			if _, err := conn.Read(buf); err != nil {
+				close(proxyClosed)
+				return
+			}
+		}
+	}()
+	return accepted, proxyClosed
+}
+
+func waitHungProxyClosed(t *testing.T, accepted, proxyClosed chan struct{}) {
+	t.Helper()
+	select {
+	case <-accepted:
+	case <-time.After(time.Second):
+		t.Fatal("proxy never accepted a connection")
+	}
+	select {
+	case <-proxyClosed:
+	case <-time.After(time.Second):
+		t.Fatal("upstream connection was never closed: leaked connection")
+	}
+}
+
+// The handshake deadline must be cleared once the tunnel is established:
+// otherwise the connection dies the moment that deadline passes, even though
+// the proxy handshake completed fine.
+func TestUpstreamProxy_DeadlineClearedBeforeTunnelIsUsed(t *testing.T) {
+	shortenUpstreamTimeout(t, 100*time.Millisecond)
+
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("still-alive"))
+	}))
+	defer target.Close()
+
+	px := newMockHTTPProxy(t)
+	proxySrv := newUpstreamTestProxy(t, "127.0.0.1:0")
+	if err := proxySrv.SetUpstreamProxy(px.URL()); err != nil {
+		t.Fatalf("SetUpstreamProxy failed: %v", err)
+	}
+
+	targetAddr := target.Listener.Addr().String()
+	conn, err := proxySrv.dialTunnel("https", targetAddr)
+	if err != nil {
+		t.Fatalf("dialTunnel failed: %v", err)
+	}
+	defer conn.Close()
+
+	// Watchdog only: if the tunnel is already dead it must not hang the test.
+	// It deliberately does not touch deadlines, so a stale one still shows up.
+	timer := time.AfterFunc(3*time.Second, func() { _ = conn.Close() })
+	defer timer.Stop()
+
+	// Let the handshake timeout elapse before touching the tunnel.
+	time.Sleep(3 * upstreamDialTimeout)
+
+	if _, err := fmt.Fprintf(conn, "GET / HTTP/1.1\r\nHost: %s\r\nConnection: close\r\n\r\n", targetAddr); err != nil {
+		t.Fatalf("tunnel unusable %v after the handshake timeout elapsed: %v", 3*upstreamDialTimeout, err)
+	}
+	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	if err != nil {
+		t.Fatalf("reading through the tunnel failed after the handshake timeout elapsed: %v", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if string(body) != "still-alive" {
+		t.Fatalf("unexpected body %q", body)
 	}
 }
 

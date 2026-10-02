@@ -16,9 +16,12 @@ import (
 	"golang.org/x/net/proxy"
 )
 
-// upstreamDialTimeout bounds establishing an upstream connection. It matches
-// the timeout the plain WebSocket path already used.
-const upstreamDialTimeout = 10 * time.Second
+// upstreamDialTimeout bounds establishing an upstream connection: the TCP
+// dial to the destination or proxy, and the proxy handshake itself. It
+// matches the timeout the plain WebSocket path already used.
+//
+// It is a variable rather than a constant so tests can shorten it.
+var upstreamDialTimeout = 10 * time.Second
 
 // SetUpstreamProxy parses raw (the -upstream-proxy flag value) and routes
 // DevProxy's egress through it. It rejects malformed URLs, unsupported
@@ -215,6 +218,16 @@ func dialHTTPConnect(proxyURL *url.URL, targetAddr string) (net.Conn, error) {
 	if err != nil {
 		return nil, fmt.Errorf("connect to upstream proxy failed: %w", err)
 	}
+	// Bound the proxy handshake -- TLS to the proxy (when the proxy itself is
+	// https), the CONNECT request and its response -- so a proxy that accepts
+	// the connection and then stays silent cannot stall a bump goroutine.
+	_ = conn.SetDeadline(time.Now().Add(upstreamDialTimeout))
+	// The deadline covers the handshake only. Clear it before the tunnel is
+	// handed back, so the connection the caller then streams through carries
+	// no read/write deadline of its own. Note the closure reads `conn` at
+	// return time, so for an https proxy it clears the TLS wrapper (and
+	// through it the socket) as well.
+	defer func() { _ = conn.SetDeadline(time.Time{}) }()
 
 	if proxyURL.Scheme == "https" {
 		host, _, err := net.SplitHostPort(proxyAddr)
@@ -273,7 +286,16 @@ func dialSOCKS5(proxyURL *url.URL, targetAddr string) (net.Conn, error) {
 	if err != nil {
 		return nil, fmt.Errorf("setting up SOCKS5 dialer failed: %w", err)
 	}
-	conn, err := dialer.Dial("tcp", targetAddr)
+	// Bound the SOCKS5 handshake with the same timeout the HTTP CONNECT path
+	// uses. x/net derives a deadline from the context for the greeting and the
+	// CONNECT exchange, and clears it again before returning the connection.
+	ctx, cancel := context.WithTimeout(context.Background(), upstreamDialTimeout)
+	defer cancel()
+	cd, ok := dialer.(proxy.ContextDialer)
+	if !ok {
+		return nil, fmt.Errorf("SOCKS5 dialer does not support contexts")
+	}
+	conn, err := cd.DialContext(ctx, "tcp", targetAddr)
 	if err != nil {
 		return nil, fmt.Errorf("dial through SOCKS5 upstream proxy failed: %w", err)
 	}
