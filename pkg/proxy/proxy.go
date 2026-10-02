@@ -30,6 +30,8 @@ type ProxyServer struct {
 	reqCounter       atomic.Uint64
 	mockEngine       *mock.Engine
 	insecureUpstream bool
+	upstreamProxy    *url.URL
+	loopWarnOnce     sync.Once
 }
 
 // NewProxyServer creates a new ProxyServer.
@@ -55,6 +57,9 @@ func NewProxyServer(addr string, cm *certs.CertificateManager, rb *ringbuffer.Ri
 		transport:   transport,
 		mockEngine:  mock.NewEngine(),
 	}
+	// Single resolver for every egress path: the -upstream-proxy flag wins,
+	// otherwise HTTPS_PROXY/HTTP_PROXY/NO_PROXY/ALL_PROXY apply.
+	transport.Proxy = p.resolveForRequest
 
 	p.httpServer = &http.Server{
 		Addr:         addr,
@@ -163,8 +168,13 @@ func (p *ProxyServer) bumpTLSConnection(clientConn net.Conn, targetHostPort stri
 		targetAddr = net.JoinHostPort(targetAddr, "443")
 	}
 
-	upstreamConn, err := tls.Dial("tcp", targetAddr, upstreamTLSConfig)
+	rawConn, err := p.dialTunnel("https", targetAddr)
 	if err != nil {
+		return
+	}
+	upstreamConn := tls.Client(rawConn, upstreamTLSConfig)
+	if err := upstreamConn.Handshake(); err != nil {
+		_ = rawConn.Close()
 		return
 	}
 	defer upstreamConn.Close()
@@ -541,7 +551,7 @@ func (p *ProxyServer) handleWebSocketUpgrade(w http.ResponseWriter, r *http.Requ
 		destAddr = net.JoinHostPort(destAddr, "80")
 	}
 
-	upstreamConn, err := net.DialTimeout("tcp", destAddr, 10*time.Second)
+	upstreamConn, err := p.dialTunnel("http", destAddr)
 	if err != nil {
 		clientConn.Write([]byte("HTTP/1.1 502 Bad Gateway\r\n\r\n"))
 		return

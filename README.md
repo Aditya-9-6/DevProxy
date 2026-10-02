@@ -144,6 +144,13 @@ Open `http://localhost:8081` in your browser to inspect live traffic and real-ti
 | `-ca-cert` | `~/.devproxy/devproxy-ca.crt` | Custom Root CA certificate path |
 | `-ca-key` | `~/.devproxy/devproxy-ca.key` | Custom Root CA private key path |
 | `-ebpf` | `false` | Show transparent eBPF / container redirection guide |
+| `-upstream-proxy` | *(empty)* | Route DevProxy's own egress through an upstream proxy: `http://`, `https://` or `socks5://host:port` |
+
+When `-upstream-proxy` is not set, DevProxy falls back to the standard
+`HTTPS_PROXY` / `HTTP_PROXY` / `ALL_PROXY` and `NO_PROXY` environment
+variables. Upstream proxy credentials (`user:password@`) and PAC files are not
+supported; traffic that would loop back into DevProxy's own listen address is
+refused.
 
 ---
 
