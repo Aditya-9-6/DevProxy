@@ -22,6 +22,28 @@
         "maintenance",
         "security"
       ]
+    },
+    {
+      "login": "varun-pahuja",
+      "name": "Varun Pahuja",
+      "avatar_url": "https://avatars.githubusercontent.com/u/190826251?v=4",
+      "profile": "https://github.com/varun-pahuja",
+      "contributions": [
+        "code",
+        "doc",
+        "test"
+      ]
+    },
+    {
+      "login": "akshat-lakhera",
+      "name": "Akshat Lakhera",
+      "avatar_url": "https://avatars.githubusercontent.com/u/211803516?v=4",
+      "profile": "https://github.com/akshat-lakhera",
+      "contributions": [
+        "code",
+        "design",
+        "doc"
+      ]
     }
   ],
   "contributorsPerLine": 7,

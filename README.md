@@ -5,7 +5,7 @@
 [![DeepSource](https://app.deepsource.com/gh/Aditya-9-6/DevProxy.svg/?label=resolved+issues&show_trend=true)](https://app.deepsource.com/gh/Aditya-9-6/DevProxy/)
 [![Go Report Card](https://goreportcard.com/badge/github.com/Aditya-9-6/DevProxy)](https://goreportcard.com/report/github.com/Aditya-9-6/DevProxy)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
-[![All Contributors](https://img.shields.io/badge/all_contributors-1-orange.svg?style=flat-square)](#-contributors)
+[![All Contributors](https://img.shields.io/badge/all_contributors-3-orange.svg?style=flat-square)](#-contributors)
 
 > Completely decoupled, asynchronous passive security proxy that inspects web traffic for vulnerabilities with **zero added latency** to the developer's data path.
 
@@ -190,6 +190,8 @@ Thanks goes to these wonderful people ([emoji key](https://allcontributors.org/d
   <tbody>
     <tr>
       <td align="center" valign="top" width="14.28%"><a href="https://github.com/Aditya-9-6"><img src="https://avatars.githubusercontent.com/u/105096058?v=4?s=100" width="100px;" alt="Aditya Dahale"/><br /><sub><b>Aditya Dahale</b></sub></a><br /><a href="https://github.com/Aditya-9-6/DevProxy/commits?author=Aditya-9-6" title="Code">💻</a> <a href="https://github.com/Aditya-9-6/DevProxy/commits?author=Aditya-9-6" title="Documentation">📖</a> <a href="#design-Aditya-9-6" title="Design">🎨</a> <a href="#maintenance-Aditya-9-6" title="Maintenance">🚧</a> <a href="#security-Aditya-9-6" title="Security">🛡️</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/varun-pahuja"><img src="https://avatars.githubusercontent.com/u/190826251?v=4?s=100" width="100px;" alt="Varun Pahuja"/><br /><sub><b>Varun Pahuja</b></sub></a><br /><a href="https://github.com/Aditya-9-6/DevProxy/commits?author=varun-pahuja" title="Code">💻</a> <a href="https://github.com/Aditya-9-6/DevProxy/commits?author=varun-pahuja" title="Documentation">📖</a> <a href="https://github.com/Aditya-9-6/DevProxy/commits?author=varun-pahuja" title="Tests">⚠️</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/akshat-lakhera"><img src="https://avatars.githubusercontent.com/u/211803516?v=4?s=100" width="100px;" alt="Akshat Lakhera"/><br /><sub><b>Akshat Lakhera</b></sub></a><br /><a href="https://github.com/Aditya-9-6/DevProxy/commits?author=akshat-lakhera" title="Code">💻</a> <a href="#design-akshat-lakhera" title="Design">🎨</a> <a href="https://github.com/Aditya-9-6/DevProxy/commits?author=akshat-lakhera" title="Documentation">📖</a></td>
     </tr>
   </tbody>
 </table>
