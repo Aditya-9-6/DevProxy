@@ -55,6 +55,7 @@ func main() {
 	showVersion := flag.Bool("version", false, "Print DevProxy version and build info")
 	showInstallCA := flag.Bool("install-ca", false, "Display instructions to install and trust the Root CA")
 	insecureUpstream := flag.Bool("insecure-upstream", false, "Allow upstream HTTPS connections to skip TLS verification (for local self-signed dev microservices)")
+	upstreamProxy := flag.String("upstream-proxy", "", "Route DevProxy's own egress through an upstream proxy: http://, https:// or socks5://host:port (falls back to HTTPS_PROXY/ALL_PROXY when empty)")
 	flag.Parse()
 
 	if *showVersion {
@@ -198,6 +199,14 @@ To prevent SSL certificate warnings in curl, browsers, and mobile emulators:
 	if *insecureUpstream {
 		proxyServer.SetInsecureUpstreamTLS(true)
 		log.Println(" Upstream TLS verification: INSECURE/SKIP (dev microservices mode)")
+	}
+	if *upstreamProxy != "" {
+		if err := proxyServer.SetUpstreamProxy(*upstreamProxy); err != nil {
+			log.Fatalf("Invalid -upstream-proxy: %v", err)
+		}
+		// Deliberately does not log the proxy URL: it may carry a host you
+		// would rather not write to disk.
+		log.Println(" Upstream proxy: enabled for all DevProxy egress")
 	}
 	go func() {
 		if err := proxyServer.Start(); err != nil && err != http.ErrServerClosed {
