@@ -9,20 +9,151 @@
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <style>
     :root {
+      color-scheme: dark;
       --bg-dark: #0a0d14;
       --bg-card: #111622;
       --bg-card-hover: #171f30;
+      --bg-header: #0d121d;
+      --bg-ribbon: #0b0f17;
+      --bg-toolbar: #0d121d;
+      --bg-input: #131926;
+      --bg-btn: #1e293b;
+      --bg-btn-hover: #283548;
+      --bg-pane: #0d121d;
+      --bg-tabs: #111622;
+      --bg-code: #090c12;
       --border: #1e293b;
+      --border-subtle: rgba(255, 255, 255, 0.05);
       --text-main: #f1f5f9;
       --text-muted: #94a3b8;
+      --text-sub: #cbd5e1;
+      --text-code: #fca5a5;
+      --text-body: #e2e8f0;
       --accent: #3b82f6;
       --accent-glow: rgba(59, 130, 246, 0.25);
       --critical: #ef4444;
+      --critical-bg: rgba(239, 68, 68, 0.15);
+      --critical-border: rgba(239, 68, 68, 0.4);
       --high: #f97316;
+      --high-bg: rgba(249, 115, 22, 0.2);
       --medium: #eab308;
+      --medium-bg: rgba(234, 179, 8, 0.2);
       --low: #3b82f6;
+      --low-bg: rgba(59, 130, 246, 0.2);
       --info: #64748b;
+      --info-bg: rgba(100, 116, 139, 0.2);
       --success: #10b981;
+      --badge-sub-bg: #1e293b;
+      --badge-sub-text: #38bdf8;
+      --badge-sub-border: #334155;
+      --remed-bg: rgba(16, 185, 129, 0.1);
+      --remed-border: rgba(16, 185, 129, 0.3);
+      --remed-text: #6ee7b7;
+      --url-cell-text: #cbd5e1;
+      --url-host-text: #64748b;
+      --th-bg: #111622;
+      --th-text: var(--text-muted);
+      --td-key: #38bdf8;
+      --td-val: #cbd5e1;
+      --row-selected-bg: #1e293b;
+      --diff-bg: #090d16;
+      --shadow-modal: 0 20px 25px -5px rgba(0, 0, 0, 0.5);
+      --tab-active: #38bdf8;
+    }
+
+    [data-theme="light"] {
+      color-scheme: light;
+      --bg-dark: #f8fafc;
+      --bg-card: #ffffff;
+      --bg-card-hover: #f1f5f9;
+      --bg-header: #ffffff;
+      --bg-ribbon: #f1f5f9;
+      --bg-toolbar: #f8fafc;
+      --bg-input: #ffffff;
+      --bg-btn: #f1f5f9;
+      --bg-btn-hover: #e2e8f0;
+      --bg-pane: #f8fafc;
+      --bg-tabs: #ffffff;
+      --bg-code: #f1f5f9;
+      --border: #e2e8f0;
+      --border-subtle: rgba(0, 0, 0, 0.06);
+      --text-main: #0f172a;
+      --text-muted: #64748b;
+      --text-sub: #334155;
+      --text-code: #b91c1c;
+      --text-body: #1e293b;
+      --accent: #2563eb;
+      --accent-glow: rgba(37, 99, 235, 0.2);
+      --critical: #dc2626;
+      --critical-bg: rgba(220, 38, 38, 0.1);
+      --critical-border: rgba(220, 38, 38, 0.35);
+      --high: #c2410c;
+      --high-bg: rgba(234, 88, 12, 0.12);
+      --medium: #b45309;
+      --medium-bg: rgba(217, 119, 6, 0.12);
+      --low: #1d4ed8;
+      --low-bg: rgba(37, 99, 235, 0.12);
+      --info: #475569;
+      --info-bg: rgba(71, 85, 105, 0.12);
+      --success: #15803d;
+      --badge-sub-bg: #e0f2fe;
+      --badge-sub-text: #0369a1;
+      --badge-sub-border: #bae6fd;
+      --remed-bg: rgba(21, 128, 61, 0.08);
+      --remed-border: rgba(21, 128, 61, 0.3);
+      --remed-text: #15803d;
+      --url-cell-text: #1e293b;
+      --url-host-text: #64748b;
+      --th-bg: #f8fafc;
+      --th-text: #475569;
+      --td-key: #0284c7;
+      --td-val: #1e293b;
+      --row-selected-bg: #e2e8f0;
+      --diff-bg: #f8fafc;
+      --shadow-modal: 0 20px 25px -5px rgba(0, 0, 0, 0.12), 0 8px 10px -6px rgba(0, 0, 0, 0.08);
+      --tab-active: #0284c7;
+    }
+
+    body, header, .stats-ribbon, .stat-card, .traffic-pane, .toolbar, .search-input, .filter-select, .traffic-row, .inspector-pane, .tabs-header, .tab-btn, .modal-box, .btn, .headers-table th, .headers-table td, .code-box, .remed-box, .finding-card, .status-indicator {
+      transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
+    }
+
+    [data-theme="light"] .m-GET { background: #0284c7; color: #ffffff; }
+    [data-theme="light"] .m-POST { background: #15803d; color: #ffffff; }
+    [data-theme="light"] .m-PUT { background: #b45309; color: #ffffff; }
+    [data-theme="light"] .m-DELETE { background: #be123c; color: #ffffff; }
+    [data-theme="light"] .m-CONNECT { background: #475569; color: #ffffff; }
+
+    [data-theme="light"] ::-webkit-scrollbar {
+      width: 8px;
+      height: 8px;
+    }
+    [data-theme="light"] ::-webkit-scrollbar-thumb {
+      background: #cbd5e1;
+      border-radius: 4px;
+    }
+    [data-theme="light"] ::-webkit-scrollbar-thumb:hover {
+      background: #94a3b8;
+    }
+    [data-theme="light"] ::-webkit-scrollbar-track {
+      background: #f1f5f9;
+    }
+
+    .btn-theme {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      cursor: pointer;
+      user-select: none;
+      font-weight: 600;
+    }
+    .btn-theme #theme-icon {
+      font-size: 14px;
+      line-height: 1;
+    }
+    .btn-theme #theme-text {
+      font-size: 12px;
+      line-height: 1;
     }
 
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -38,7 +169,7 @@
 
     /* Header */
     header {
-      background: #0d121d;
+      background: var(--bg-header);
       border-bottom: 1px solid var(--border);
       padding: 12px 24px;
       display: flex;
@@ -70,12 +201,12 @@
     }
     .badge-sub {
       font-size: 11px;
-      background: #1e293b;
-      color: #38bdf8;
+      background: var(--badge-sub-bg);
+      color: var(--badge-sub-text);
       padding: 2px 8px;
       border-radius: 9999px;
       font-weight: 600;
-      border: 1px solid #334155;
+      border: 1px solid var(--badge-sub-border);
     }
     .header-actions {
       display: flex;
@@ -88,7 +219,7 @@
       gap: 6px;
       font-size: 12px;
       color: var(--text-muted);
-      background: #111622;
+      background: var(--bg-card);
       padding: 6px 12px;
       border-radius: 6px;
       border: 1px solid var(--border);
@@ -114,7 +245,7 @@
       display: inline-flex;
       align-items: center;
       gap: 6px;
-      background: #1e293b;
+      background: var(--bg-btn);
       color: var(--text-main);
       padding: 7px 14px;
       border-radius: 6px;
@@ -126,8 +257,8 @@
       transition: all 0.15s ease;
     }
     .btn:hover {
-      background: #283548;
-      border-color: #3b82f6;
+      background: var(--bg-btn-hover);
+      border-color: var(--accent);
     }
     .btn-primary {
       background: #2563eb;
@@ -143,7 +274,7 @@
       grid-template-columns: repeat(6, 1fr);
       gap: 12px;
       padding: 12px 24px;
-      background: #0b0f17;
+      background: var(--bg-ribbon);
       border-bottom: 1px solid var(--border);
     }
     .stat-card {
@@ -189,7 +320,7 @@
     }
     .toolbar {
       padding: 10px 16px;
-      background: #0d121d;
+      background: var(--bg-toolbar);
       border-bottom: 1px solid var(--border);
       display: flex;
       gap: 10px;
@@ -197,7 +328,7 @@
     }
     .search-input {
       flex: 1;
-      background: #131926;
+      background: var(--bg-input);
       border: 1px solid var(--border);
       color: var(--text-main);
       padding: 6px 12px;
@@ -207,10 +338,10 @@
       outline: none;
     }
     .search-input:focus {
-      border-color: #3b82f6;
+      border-color: var(--accent);
     }
     .filter-select {
-      background: #131926;
+      background: var(--bg-input);
       border: 1px solid var(--border);
       color: var(--text-main);
       padding: 6px 10px;
@@ -230,7 +361,7 @@
       align-items: center;
       gap: 8px;
       padding: 10px 16px;
-      border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+      border-bottom: 1px solid var(--border-subtle);
       cursor: pointer;
       font-size: 12px;
       font-family: 'JetBrains Mono', monospace;
@@ -240,8 +371,8 @@
       background: var(--bg-card-hover);
     }
     .traffic-row.selected {
-      background: #1e293b;
-      border-left: 3px solid #3b82f6;
+      background: var(--row-selected-bg);
+      border-left: 3px solid var(--accent);
     }
 
     .badge-method {
@@ -262,7 +393,7 @@
       font-weight: 600;
     }
     .s-2xx { color: var(--success); }
-    .s-3xx { color: #38bdf8; }
+    .s-3xx { color: var(--td-key); }
     .s-4xx { color: var(--medium); }
     .s-5xx { color: var(--critical); }
 
@@ -270,10 +401,10 @@
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
-      color: #cbd5e1;
+      color: var(--url-cell-text);
     }
     .url-host {
-      color: #64748b;
+      color: var(--url-host-text);
       font-size: 11px;
     }
 
@@ -282,9 +413,9 @@
       align-items: center;
       justify-content: center;
       gap: 3px;
-      background: rgba(239, 68, 68, 0.15);
+      background: var(--critical-bg);
       color: var(--critical);
-      border: 1px solid rgba(239, 68, 68, 0.4);
+      border: 1px solid var(--critical-border);
       padding: 2px 6px;
       border-radius: 4px;
       font-size: 10px;
@@ -298,14 +429,14 @@
 
     /* Right Pane: Inspector */
     .inspector-pane {
-      background: #0d121d;
+      background: var(--bg-pane);
       display: flex;
       flex-direction: column;
       height: calc(100vh - 140px);
     }
     .tabs-header {
       display: flex;
-      background: #111622;
+      background: var(--bg-tabs);
       border-bottom: 1px solid var(--border);
       padding: 0 16px;
     }
@@ -324,8 +455,8 @@
       color: var(--text-main);
     }
     .tab-btn.active {
-      color: #38bdf8;
-      border-bottom-color: #38bdf8;
+      color: var(--tab-active);
+      border-bottom-color: var(--tab-active);
     }
     .tab-badge {
       background: var(--critical);
@@ -373,31 +504,31 @@
       text-transform: uppercase;
       letter-spacing: 0.5px;
     }
-    .sev-pill.CRITICAL { background: rgba(239, 68, 68, 0.2); color: var(--critical); border: 1px solid var(--critical); }
-    .sev-pill.HIGH     { background: rgba(249, 115, 22, 0.2); color: var(--high); border: 1px solid var(--high); }
-    .sev-pill.MEDIUM   { background: rgba(234, 179, 8, 0.2);  color: var(--medium); border: 1px solid var(--medium); }
-    .sev-pill.LOW      { background: rgba(59, 130, 246, 0.2); color: var(--low); border: 1px solid var(--low); }
-    .sev-pill.INFO     { background: rgba(100, 116, 139, 0.2);color: var(--info); border: 1px solid var(--info); }
+    .sev-pill.CRITICAL { background: var(--critical-bg); color: var(--critical); border: 1px solid var(--critical); }
+    .sev-pill.HIGH     { background: var(--high-bg);     color: var(--high);     border: 1px solid var(--high); }
+    .sev-pill.MEDIUM   { background: var(--medium-bg);   color: var(--medium);   border: 1px solid var(--medium); }
+    .sev-pill.LOW      { background: var(--low-bg);      color: var(--low);      border: 1px solid var(--low); }
+    .sev-pill.INFO     { background: var(--info-bg);     color: var(--info);     border: 1px solid var(--info); }
 
     .finding-title {
       font-size: 15px;
       font-weight: 600;
-      color: #fff;
+      color: var(--text-main);
     }
     .finding-desc {
       font-size: 13px;
-      color: #cbd5e1;
+      color: var(--text-sub);
       margin-top: 6px;
       line-height: 1.4;
     }
     .code-box {
-      background: #090c12;
-      border: 1px solid #1e293b;
+      background: var(--bg-code);
+      border: 1px solid var(--border);
       border-radius: 6px;
       padding: 10px;
       font-family: 'JetBrains Mono', monospace;
       font-size: 12px;
-      color: #fca5a5;
+      color: var(--text-code);
       margin-top: 10px;
       overflow-x: auto;
       white-space: pre-wrap;
@@ -405,12 +536,12 @@
     }
     .remed-box {
       margin-top: 10px;
-      background: rgba(16, 185, 129, 0.1);
-      border: 1px solid rgba(16, 185, 129, 0.3);
+      background: var(--remed-bg);
+      border: 1px solid var(--remed-border);
       border-radius: 6px;
       padding: 8px 12px;
       font-size: 12px;
-      color: #6ee7b7;
+      color: var(--remed-text);
     }
 
     /* Key Value Headers Table */
@@ -427,28 +558,28 @@
       text-align: left;
     }
     .headers-table th {
-      background: #111622;
-      color: var(--text-muted);
+      background: var(--th-bg);
+      color: var(--th-text);
       font-size: 11px;
     }
     .headers-table td:first-child {
-      color: #38bdf8;
+      color: var(--td-key);
       width: 25%;
       word-break: break-all;
     }
     .headers-table td:last-child {
-      color: #cbd5e1;
+      color: var(--td-val);
       word-break: break-all;
     }
 
     .raw-body-box {
-      background: #090c12;
+      background: var(--bg-code);
       border: 1px solid var(--border);
       border-radius: 6px;
       padding: 12px;
       font-family: 'JetBrains Mono', monospace;
       font-size: 12px;
-      color: #e2e8f0;
+      color: var(--text-body);
       white-space: pre-wrap;
       max-height: 400px;
       overflow-y: auto;
@@ -485,7 +616,10 @@
       width: 600px;
       max-width: 90%;
       padding: 24px;
-      box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5);
+      box-shadow: var(--shadow-modal);
+    }
+    .modal-box p {
+      color: var(--text-sub);
     }
     .modal-title {
       font-size: 18px;
@@ -493,6 +627,18 @@
       margin-bottom: 12px;
     }
   </style>
+  <script>
+    (function() {
+      try {
+        var savedTheme = localStorage.getItem('devproxy_theme');
+        if (savedTheme === 'light') {
+          document.documentElement.setAttribute('data-theme', 'light');
+        } else {
+          document.documentElement.setAttribute('data-theme', 'dark');
+        }
+      } catch (e) {}
+    })();
+  </script>
 </head>
 <body>
   <!-- Header -->
@@ -528,6 +674,10 @@
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
         Export Audit
       </button>
+      <button class="btn btn-theme" id="theme-toggle" onclick="toggleTheme()" title="Switch to Light Mode" aria-label="Switch to Light Mode">
+        <span id="theme-icon">☀️</span>
+        <span id="theme-text">Light</span>
+      </button>
     </div>
   </header>
 
@@ -539,7 +689,7 @@
     </div>
     <div class="stat-card">
       <span class="stat-label">Avg Proxy Latency</span>
-      <span class="stat-value" style="color: #38bdf8;" id="stat-latency">0.0 ms</span>
+      <span class="stat-value" style="color: var(--td-key);" id="stat-latency">0.0 ms</span>
     </div>
     <div class="stat-card">
       <span class="stat-label">Critical Alerts</span>
@@ -626,7 +776,7 @@
             <div class="placeholder-state">No JWT token detected in selected request. Paste one below to inspect manually.</div>
           </div>
           <div style="margin-top: 16px; background: var(--bg-card); padding: 14px; border-radius: 8px; border: 1px solid var(--border);">
-            <div style="font-size: 12px; font-weight: 600; color: #94a3b8; margin-bottom: 8px;">MANUAL TOKEN INSPECTION</div>
+            <div style="font-size: 12px; font-weight: 600; color: var(--text-muted); margin-bottom: 8px;">MANUAL TOKEN INSPECTION</div>
             <textarea id="manual-jwt-input" class="search-input" style="width: 100%; height: 60px; font-size: 11px; resize: vertical;" placeholder="Paste raw eyJ... token here"></textarea>
             <div style="margin-top: 8px; text-align: right;">
               <button class="btn btn-primary" onclick="inspectManualJWT()" style="font-size: 12px; padding: 4px 12px;">Decode &amp; Lint JWT</button>
@@ -641,7 +791,7 @@
   <div class="modal-overlay" id="ca-modal" onclick="if(event.target===this) closeCAModal()">
     <div class="modal-box">
       <div class="modal-title">DevProxy Local Root CA</div>
-      <p style="color: #cbd5e1; font-size: 13px; margin-bottom: 16px; line-height: 1.5;">
+      <p style="color: var(--text-sub); font-size: 13px; margin-bottom: 16px; line-height: 1.5;">
         DevProxy dynamically intercepts and inspects HTTPS traffic via on-the-fly leaf certificate minting.
         To avoid browser SSL warnings, install the local DevProxy Root CA into your system or container trust store.
       </p>
@@ -652,8 +802,8 @@
         </a>
       </div>
 
-      <div style="font-size: 12px; color: #94a3b8; margin-bottom: 6px;">Quick CLI Trust Commands:</div>
-      <div class="code-box" style="margin-top: 0; color: #93c5fd;">
+      <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 6px;">Quick CLI Trust Commands:</div>
+      <div class="code-box" style="margin-top: 0; color: var(--td-key);">
 # Linux / Debian / Ubuntu:
 sudo cp devproxy-ca.crt /usr/local/share/ca-certificates/
 sudo update-ca-certificates
@@ -739,7 +889,7 @@ curl -x http://localhost:8080 --cacert devproxy-ca.crt https://httpbin.org/get
         <div style="font-size:12px; color:var(--text-muted); margin-bottom:12px;">Simulate real-world mobile network conditions or complete offline mode across all requests:</div>
         <div style="display: flex; gap: 10px; align-items: center; margin-bottom: 16px;">
           <label style="font-size: 12px; font-weight: 600; min-width: 110px; color: var(--text-muted);">ACTIVE PROFILE:</label>
-          <select id="throttle-profile-select" class="search-input" style="flex: 1; padding: 6px 10px; background: #0b0f17;" onchange="applyThrottlingProfile(this.value)">
+          <select id="throttle-profile-select" class="search-input" style="flex: 1; padding: 6px 10px; background: var(--bg-input);" onchange="applyThrottlingProfile(this.value)">
             <option value="none">No Throttling (Direct Connection)</option>
             <option value="slow-3g">Slow 3G (400kbps, 400ms latency, ±50ms jitter)</option>
             <option value="fast-3g">Fast 3G (1.6Mbps, 150ms latency, ±20ms jitter)</option>
@@ -782,7 +932,7 @@ curl -x http://localhost:8080 --cacert devproxy-ca.crt https://httpbin.org/get
         <!-- Right Column: Replay Outcome & Semantic Diff -->
         <div>
           <div style="font-size:11px; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:6px;">Replay Outcome &amp; Diff</div>
-          <div id="replay-diff-container" style="background: #090d16; border: 1px solid var(--border); border-radius: 6px; padding: 10px; font-size: 12px; min-height: 250px; font-family: 'JetBrains Mono', monospace;">
+          <div id="replay-diff-container" style="background: var(--diff-bg); border: 1px solid var(--border); border-radius: 6px; padding: 10px; font-size: 12px; min-height: 250px; font-family: 'JetBrains Mono', monospace;">
             <div style="color: var(--text-muted); text-align: center; margin-top: 80px;">Click &quot;Re-execute Request&quot; to test upstream server and compute diff.</div>
           </div>
         </div>
@@ -797,10 +947,10 @@ curl -x http://localhost:8080 --cacert devproxy-ca.crt https://httpbin.org/get
   <div class="modal-overlay" id="openapi-modal" onclick="if(event.target===this) closeOpenAPIModal()">
     <div class="modal-box" style="width: 650px;">
       <div class="modal-title">OpenAPI Contract Validator</div>
-      <div id="openapi-status-badge" style="font-size:12px; color:#38bdf8; margin-bottom:12px; background:rgba(56,189,248,0.1); padding:8px 12px; border-radius:6px; border:1px solid rgba(56,189,248,0.3);">
+      <div id="openapi-status-badge" style="font-size:12px; color:var(--td-key); margin-bottom:12px; background:rgba(56,189,248,0.1); padding:8px 12px; border-radius:6px; border:1px solid rgba(56,189,248,0.3);">
         Status: Checking specification...
       </div>
-      <p style="color: #cbd5e1; font-size: 13px; margin-bottom: 8px; line-height: 1.4;">
+      <p style="color: var(--text-sub); font-size: 13px; margin-bottom: 8px; line-height: 1.4;">
         Paste your OpenAPI 3.0 or Swagger 2.0 schema (JSON or YAML) to passively detect Shadow APIs, undocumented routes, and schema contract drift.
       </p>
       <textarea id="openapi-spec-input" class="search-input" style="width: 100%; height: 200px; font-family:'JetBrains Mono', monospace; font-size: 11px; margin-bottom: 12px; resize: vertical;" placeholder="openapi: 3.0.0&#10;info:&#10;  title: My API&#10;  version: 1.0.0&#10;paths: ..."></textarea>
@@ -980,7 +1130,7 @@ curl -x http://localhost:8080 --cacert devproxy-ca.crt https://httpbin.org/get
             <div class="finding-card sev-${f.severity}">
               <div class="finding-top">
                 <span class="sev-pill ${f.severity}">${f.severity}</span>
-                <span style="font-size: 11px; color: #94a3b8; font-family: monospace;">${f.rule_name}</span>
+                <span style="font-size: 11px; color: var(--text-muted); font-family: monospace;">${f.rule_name}</span>
               </div>
               <div class="finding-title">${f.title}</div>
               <div class="finding-desc">${f.description}</div>
@@ -1010,7 +1160,7 @@ curl -x http://localhost:8080 --cacert devproxy-ca.crt https://httpbin.org/get
             </div>
             ${aiFinding ? `
               <div style="font-size: 13px; font-weight: 600; color: #f1f5f9; margin-bottom: 4px;">${escapeHtml(aiFinding.title)}</div>
-              <div style="font-size: 11px; color: #94a3b8; font-family: monospace;">${escapeHtml(aiFinding.evidence)}</div>
+              <div style="font-size: 11px; color: var(--text-muted); font-family: monospace;">${escapeHtml(aiFinding.evidence)}</div>
             ` : ''}
             ${aiTokenWarning ? `
               <div style="margin-top: 8px; font-size: 12px; color: #fde047; background: rgba(234, 179, 8, 0.15); padding: 6px 10px; border-radius: 4px; border: 1px solid rgba(234, 179, 8, 0.3);">
@@ -1031,7 +1181,7 @@ curl -x http://localhost:8080 --cacert devproxy-ca.crt https://httpbin.org/get
       reqEl.innerHTML = `
         ${aiBannerHtml}
         <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; gap: 8px;">
-          <div style="font-size:14px; font-weight:600; color:#38bdf8; word-break: break-all;">
+          <div style="font-size:14px; font-weight:600; color:var(--td-key); word-break: break-all;">
             ${selectedRequest.method} ${selectedRequest.url} (${selectedRequest.proto})
           </div>
           <div style="display:flex; gap:6px;">
@@ -1043,10 +1193,10 @@ curl -x http://localhost:8080 --cacert devproxy-ca.crt https://httpbin.org/get
             </button>
           </div>
         </div>
-        <div style="font-size:12px; font-weight:600; color:#94a3b8; margin-bottom:6px;">REQUEST HEADERS</div>
+        <div style="font-size:12px; font-weight:600; color:var(--text-muted); margin-bottom:6px;">REQUEST HEADERS</div>
         ${renderHeadersTable(selectedRequest.req_headers)}
         ${selectedRequest.req_body ? `
-          <div style="font-size:12px; font-weight:600; color:#94a3b8; margin-top:14px; margin-bottom:6px;">REQUEST BODY</div>
+          <div style="font-size:12px; font-weight:600; color:var(--text-muted); margin-top:14px; margin-bottom:6px;">REQUEST BODY</div>
           <div class="raw-body-box">${escapeHtml(selectedRequest.req_body)}</div>
         ` : ''}
       `;
@@ -1055,13 +1205,13 @@ curl -x http://localhost:8080 --cacert devproxy-ca.crt https://httpbin.org/get
       const respEl = document.getElementById('response-details');
       respEl.innerHTML = `
         ${aiBannerHtml}
-        <div style="font-size:14px; font-weight:600; margin-bottom:12px; color:#38bdf8;">
+        <div style="font-size:14px; font-weight:600; margin-bottom:12px; color:var(--td-key);">
           HTTP Status: ${selectedRequest.status_code} • Duration: ${(selectedRequest.duration_ms || 0).toFixed(2)}ms
         </div>
-        <div style="font-size:12px; font-weight:600; color:#94a3b8; margin-bottom:6px;">RESPONSE HEADERS</div>
+        <div style="font-size:12px; font-weight:600; color:var(--text-muted); margin-bottom:6px;">RESPONSE HEADERS</div>
         ${renderHeadersTable(selectedRequest.resp_headers)}
         ${selectedRequest.resp_body ? `
-          <div style="font-size:12px; font-weight:600; color:#94a3b8; margin-top:14px; margin-bottom:6px;">RESPONSE BODY</div>
+          <div style="font-size:12px; font-weight:600; color:var(--text-muted); margin-top:14px; margin-bottom:6px;">RESPONSE BODY</div>
           <div class="raw-body-box">${escapeHtml(selectedRequest.resp_body)}</div>
         ` : ''}
       `;
@@ -1229,14 +1379,14 @@ curl -x http://localhost:8080 --cacert devproxy-ca.crt https://httpbin.org/get
 
       container.innerHTML = `
         <div style="margin-bottom:12px;">
-          <div style="font-size:12px; font-weight:600; color:#38bdf8; margin-bottom:4px;">TOKEN OVERVIEW</div>
-          <div style="font-size:12px; color:#cbd5e1;">Algorithm: <strong>${escapeHtml(details.algorithm || 'none')}</strong> | Type: <strong>${escapeHtml(details.type || 'JWT')}</strong> | Expired: <strong>${details.is_expired ? '⚠️ YES' : 'NO'}</strong></div>
+          <div style="font-size:12px; font-weight:600; color:var(--td-key); margin-bottom:4px;">TOKEN OVERVIEW</div>
+          <div style="font-size:12px; color:var(--text-sub);">Algorithm: <strong>${escapeHtml(details.algorithm || 'none')}</strong> | Type: <strong>${escapeHtml(details.type || 'JWT')}</strong> | Expired: <strong>${details.is_expired ? '⚠️ YES' : 'NO'}</strong></div>
         </div>
         ${findingsHtml}
-        <div style="font-size:12px; font-weight:600; color:#94a3b8; margin-top:10px; margin-bottom:4px;">DECODED HEADER</div>
-        <div class="code-box" style="margin-top:0; color:#93c5fd;">${escapeHtml(JSON.stringify(details.header, null, 2))}</div>
-        <div style="font-size:12px; font-weight:600; color:#94a3b8; margin-top:10px; margin-bottom:4px;">DECODED PAYLOAD (CLAIMS)</div>
-        <div class="code-box" style="margin-top:0; color:#6ee7b7;">${escapeHtml(JSON.stringify(details.payload, null, 2))}</div>
+        <div style="font-size:12px; font-weight:600; color:var(--text-muted); margin-top:10px; margin-bottom:4px;">DECODED HEADER</div>
+        <div class="code-box" style="margin-top:0; color:var(--td-key);">${escapeHtml(JSON.stringify(details.header, null, 2))}</div>
+        <div style="font-size:12px; font-weight:600; color:var(--text-muted); margin-top:10px; margin-bottom:4px;">DECODED PAYLOAD (CLAIMS)</div>
+        <div class="code-box" style="margin-top:0; color:var(--remed-text);">${escapeHtml(JSON.stringify(details.payload, null, 2))}</div>
       `;
     }
 
@@ -1289,7 +1439,7 @@ curl -x http://localhost:8080 --cacert devproxy-ca.crt https://httpbin.org/get
       let html = '';
       for (const r of rules) {
         html += `
-          <div style="display:flex; justify-content:space-between; align-items:center; background:#0b0f17; border:1px solid var(--border); padding:6px 10px; border-radius:4px; margin-bottom:4px; font-family:monospace; font-size:11px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; background:var(--bg-code); border:1px solid var(--border); padding:6px 10px; border-radius:4px; margin-bottom:4px; font-family:monospace; font-size:11px;">
             <span>${escapeHtml(formatFn(r))}</span>
             <button class="btn" style="padding:2px 6px; font-size:10px; color:#ef4444;" onclick="deleteMockRule('${r.id}')">Delete</button>
           </div>
@@ -1368,7 +1518,7 @@ curl -x http://localhost:8080 --cacert devproxy-ca.crt https://httpbin.org/get
             badge.style.background = 'rgba(16,185,129,0.1)';
             badge.innerHTML = `<strong>Active Contract:</strong> ${escapeHtml(info.title)} (v${escapeHtml(info.version)}) • Monitoring ${info.total_paths} paths`;
           } else {
-            badge.style.color = '#38bdf8';
+            badge.style.color = 'var(--td-key)';
             badge.style.borderColor = 'rgba(56,189,248,0.3)';
             badge.style.background = 'rgba(56,189,248,0.1)';
             badge.innerHTML = `Status: No OpenAPI specification loaded. All endpoints unconstrained.`;
@@ -1474,7 +1624,7 @@ curl -x http://localhost:8080 --cacert devproxy-ca.crt https://httpbin.org/get
         ? `<span style="background: rgba(239,68,68,0.2); color: var(--critical); padding: 2px 6px; border-radius: 4px;">Status Changed: ${diff.old_status} ➔ ${diff.new_status}</span>`
         : `<span style="background: rgba(16,185,129,0.2); color: var(--success); padding: 2px 6px; border-radius: 4px;">Status Identical: ${diff.new_status}</span>`;
 
-      const latencyBadge = `<span style="color: #94a3b8;">Latency: ${(orig.duration_ms || 0).toFixed(1)}ms ➔ ${(rep.duration_ms || 0).toFixed(1)}ms (${diff.latency_diff_ms >= 0 ? '+' : ''}${diff.latency_diff_ms.toFixed(1)}ms)</span>`;
+      const latencyBadge = `<span style="color: var(--text-muted);">Latency: ${(orig.duration_ms || 0).toFixed(1)}ms ➔ ${(rep.duration_ms || 0).toFixed(1)}ms (${diff.latency_diff_ms >= 0 ? '+' : ''}${diff.latency_diff_ms.toFixed(1)}ms)</span>`;
 
       let hdrDiffHtml = '';
       if (diff.headers_added && diff.headers_added.length > 0) {
@@ -1495,20 +1645,59 @@ curl -x http://localhost:8080 --cacert devproxy-ca.crt https://httpbin.org/get
           ${statusBadge}
           ${latencyBadge}
         </div>
-        <div style="font-size: 11px; font-weight: 600; color: #94a3b8; margin-top: 8px; margin-bottom: 4px;">HEADER VARIATIONS</div>
-        <div style="background: #0b0f17; padding: 6px; border-radius: 4px; border: 1px solid var(--border); margin-bottom: 8px;">
+        <div style="font-size: 11px; font-weight: 600; color: var(--text-muted); margin-top: 8px; margin-bottom: 4px;">HEADER VARIATIONS</div>
+        <div style="background: var(--bg-code); padding: 6px; border-radius: 4px; border: 1px solid var(--border); margin-bottom: 8px;">
           ${hdrDiffHtml}
         </div>
-        <div style="font-size: 11px; font-weight: 600; color: #94a3b8; margin-top: 8px; margin-bottom: 4px;">BODY DIFF SUMMARY</div>
+        <div style="font-size: 11px; font-weight: 600; color: var(--text-muted); margin-top: 8px; margin-bottom: 4px;">BODY DIFF SUMMARY</div>
         <div style="color: ${diff.body_changed ? '#f97316' : '#10b981'}; font-size: 11px; margin-bottom: 8px;">
           ${escapeHtml(diff.body_summary)}
         </div>
-        <div style="font-size: 11px; font-weight: 600; color: #94a3b8; margin-top: 8px; margin-bottom: 4px;">REPLAYED RESPONSE BODY PREVIEW</div>
+        <div style="font-size: 11px; font-weight: 600; color: var(--text-muted); margin-top: 8px; margin-bottom: 4px;">REPLAYED RESPONSE BODY PREVIEW</div>
         <div class="raw-body-box" style="max-height: 140px; margin-top: 0; font-size: 11px;">${escapeHtml(rep.body || '(empty body)')}</div>
       `;
     }
 
+    function initTheme() {
+      try {
+        const savedTheme = localStorage.getItem('devproxy_theme') || 'dark';
+        applyTheme(savedTheme);
+      } catch (e) {
+        applyTheme('dark');
+      }
+    }
+
+    function toggleTheme() {
+      try {
+        const currentTheme = document.documentElement.getAttribute('data-theme') || 'dark';
+        const newTheme = currentTheme === 'light' ? 'dark' : 'light';
+        localStorage.setItem('devproxy_theme', newTheme);
+        applyTheme(newTheme);
+      } catch (e) {
+        console.error('Error toggling theme:', e);
+      }
+    }
+
+    function applyTheme(theme) {
+      const isLight = theme === 'light';
+      document.documentElement.setAttribute('data-theme', isLight ? 'light' : 'dark');
+      const icon = document.getElementById('theme-icon');
+      const text = document.getElementById('theme-text');
+      const btn = document.getElementById('theme-toggle');
+      if (icon) icon.textContent = isLight ? '🌙' : '☀️';
+      if (text) text.textContent = isLight ? 'Dark' : 'Light';
+      if (btn) {
+        const nextMode = isLight ? 'Dark' : 'Light';
+        btn.title = `Switch to ${nextMode} Mode`;
+        btn.setAttribute('aria-label', `Switch to ${nextMode} Mode`);
+      }
+    }
+
+    // Initialize theme button state immediately on load
+    initTheme();
+
     window.onload = () => {
+      initTheme();
       initWebSocket();
       loadInitialData();
     };
