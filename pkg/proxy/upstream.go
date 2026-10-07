@@ -16,17 +16,8 @@ import (
 	"golang.org/x/net/proxy"
 )
 
-// upstreamDialTimeout bounds establishing an upstream connection: the TCP
-// dial to the destination or proxy, and the proxy handshake itself. It
-// matches the timeout the plain WebSocket path already used.
-//
-// It is a variable rather than a constant so tests can shorten it.
 var upstreamDialTimeout = 10 * time.Second
 
-// SetUpstreamProxy parses raw (the -upstream-proxy flag value) and routes
-// DevProxy's egress through it. It rejects malformed URLs, unsupported
-// schemes, credential-bearing URLs and addresses that would send traffic back
-// into DevProxy itself. The parsed URL is never included in an error message.
 func (p *ProxyServer) SetUpstreamProxy(raw string) error {
 	u, err := parseUpstreamProxy(raw)
 	if err != nil {
@@ -58,8 +49,6 @@ func parseUpstreamProxy(raw string) (*url.URL, error) {
 	return u, nil
 }
 
-// resolveUpstream returns the proxy to use when reaching host over scheme.
-// A nil result means "connect directly".
 func (p *ProxyServer) resolveUpstream(scheme, host string) (*url.URL, error) {
 	if p.upstreamProxy != nil {
 		if p.upstreamLoop(p.upstreamProxy) {
@@ -81,13 +70,6 @@ func (p *ProxyServer) resolveUpstream(scheme, host string) (*url.URL, error) {
 	return u, nil
 }
 
-// envUpstream resolves HTTPS_PROXY/HTTP_PROXY/NO_PROXY and falls back to
-// ALL_PROXY when the scheme-specific variable is unset.
-//
-// The environment is re-read on every resolve: reading it once at startup
-// would make a long-running DevProxy ignore later changes and would make the
-// behaviour hard to test. It is a handful of environment lookups, so there is
-// nothing to cache yet.
 func (p *ProxyServer) envUpstream(scheme, host string) *url.URL {
 	reqURL := &url.URL{Scheme: scheme, Host: host}
 	cfg := httpproxy.FromEnvironment()
@@ -102,8 +84,6 @@ func (p *ProxyServer) envUpstream(scheme, host string) *url.URL {
 	if all == "" {
 		return nil
 	}
-	// Only fall back when the scheme-specific proxy is unset, so that a
-	// NO_PROXY decision is never overridden by ALL_PROXY.
 	if scheme == "https" {
 		if cfg.HTTPSProxy != "" {
 			return nil
@@ -124,8 +104,6 @@ func (p *ProxyServer) envUpstream(scheme, host string) *url.URL {
 	return u
 }
 
-// upstreamLoop reports whether using u would send traffic straight back into
-// DevProxy's own listener.
 func (p *ProxyServer) upstreamLoop(u *url.URL) bool {
 	selfHost, selfPort, err := net.SplitHostPort(p.addr)
 	if err != nil {
@@ -140,7 +118,6 @@ func (p *ProxyServer) upstreamLoop(u *url.URL) bool {
 	}
 	switch selfHost {
 	case "", "0.0.0.0", "::", "[::]":
-		// Listening on every interface: any host on this port loops.
 		return true
 	}
 	return sameHost(selfHost, u.Hostname())
@@ -167,12 +144,11 @@ func defaultProxyPort(scheme string) string {
 		return "80"
 	case "https":
 		return "443"
-	default: // socks5, socks5h
+	default:
 		return "1080"
 	}
 }
 
-// resolveForRequest adapts resolveUpstream to http.Transport's Proxy hook.
 func (p *ProxyServer) resolveForRequest(r *http.Request) (*url.URL, error) {
 	scheme := r.URL.Scheme
 	if scheme == "" {
@@ -185,9 +161,6 @@ func (p *ProxyServer) resolveForRequest(r *http.Request) (*url.URL, error) {
 	return p.resolveUpstream(scheme, host)
 }
 
-// dialTunnel opens a raw connection to targetAddr, routed through the
-// upstream proxy when one applies. It is what the TLS-bump and WebSocket
-// paths use to reach their destination.
 func (p *ProxyServer) dialTunnel(scheme, targetAddr string) (net.Conn, error) {
 	u, err := p.resolveUpstream(scheme, targetAddr)
 	if err != nil {
@@ -206,8 +179,6 @@ func (p *ProxyServer) dialTunnel(scheme, targetAddr string) (net.Conn, error) {
 	}
 }
 
-// dialHTTPConnect opens a tunnel to targetAddr by issuing CONNECT against an
-// HTTP(S) proxy.
 func dialHTTPConnect(proxyURL *url.URL, targetAddr string) (net.Conn, error) {
 	proxyAddr := proxyURL.Host
 	if _, _, err := net.SplitHostPort(proxyAddr); err != nil {
@@ -218,15 +189,7 @@ func dialHTTPConnect(proxyURL *url.URL, targetAddr string) (net.Conn, error) {
 	if err != nil {
 		return nil, fmt.Errorf("connect to upstream proxy failed: %w", err)
 	}
-	// Bound the proxy handshake -- TLS to the proxy (when the proxy itself is
-	// https), the CONNECT request and its response -- so a proxy that accepts
-	// the connection and then stays silent cannot stall a bump goroutine.
 	_ = conn.SetDeadline(time.Now().Add(upstreamDialTimeout))
-	// The deadline covers the handshake only. Clear it before the tunnel is
-	// handed back, so the connection the caller then streams through carries
-	// no read/write deadline of its own. Note the closure reads `conn` at
-	// return time, so for an https proxy it clears the TLS wrapper (and
-	// through it the socket) as well.
 	defer func() { _ = conn.SetDeadline(time.Time{}) }()
 
 	if proxyURL.Scheme == "https" {
@@ -246,7 +209,6 @@ func dialHTTPConnect(proxyURL *url.URL, targetAddr string) (net.Conn, error) {
 		conn = tlsConn
 	}
 
-	// Mirrors how net/http builds its own CONNECT request.
 	req := &http.Request{
 		Method: http.MethodConnect,
 		URL:    &url.URL{Opaque: targetAddr},
@@ -268,8 +230,6 @@ func dialHTTPConnect(proxyURL *url.URL, targetAddr string) (net.Conn, error) {
 		_ = conn.Close()
 		return nil, fmt.Errorf("upstream proxy refused CONNECT with status %d", resp.StatusCode)
 	}
-	// The proxy may have pipelined bytes past the CONNECT response; only wrap
-	// the connection when something was actually buffered.
 	if br.Buffered() > 0 {
 		return &bufferedConn{Conn: conn, r: br}, nil
 	}
@@ -281,14 +241,10 @@ func dialSOCKS5(proxyURL *url.URL, targetAddr string) (net.Conn, error) {
 	if _, _, err := net.SplitHostPort(proxyAddr); err != nil {
 		proxyAddr = net.JoinHostPort(proxyAddr, defaultProxyPort(proxyURL.Scheme))
 	}
-	// Credentials are rejected by parseUpstreamProxy, so auth is always nil.
 	dialer, err := proxy.SOCKS5("tcp", proxyAddr, nil, nil)
 	if err != nil {
 		return nil, fmt.Errorf("setting up SOCKS5 dialer failed: %w", err)
 	}
-	// Bound the SOCKS5 handshake with the same timeout the HTTP CONNECT path
-	// uses. x/net derives a deadline from the context for the greeting and the
-	// CONNECT exchange, and clears it again before returning the connection.
 	ctx, cancel := context.WithTimeout(context.Background(), upstreamDialTimeout)
 	defer cancel()
 	cd, ok := dialer.(proxy.ContextDialer)
@@ -302,7 +258,6 @@ func dialSOCKS5(proxyURL *url.URL, targetAddr string) (net.Conn, error) {
 	return conn, nil
 }
 
-// bufferedConn keeps bytes the CONNECT response reader pulled off the wire.
 type bufferedConn struct {
 	net.Conn
 	r *bufio.Reader

@@ -1,14 +1,13 @@
-## 🤖 Automated Solution for Issue #33
+## 🤖 Automated Solution for Issue #26
 
-**Issue**: #33 - feat(proxy): Add gRPC & Protobuf Binary Stream Decoder in Dashboard
+**Issue**: #26 - feat(advancement): Upstream Proxy Chaining (SOCKS5 & Corporate HTTP Proxy)
 
 ### 📝 Solution Overview
-Implemented gRPC binary stream decoding by adding a dedicated gRPC parser in pkg/proxy/grpc.go, integrating it into the proxy's traffic capture flow, and updating the dashboard hub to handle gRPC-specific event metadata. The implementation uses sync.Pool for zero-allocation buffer management and provides a robust 5-byte header parsing mechanism for gRPC frames.
+Implemented upstream proxy chaining support by adding an -upstream-proxy CLI flag and integrating it into the ProxyServer's transport and tunnel dialer. The implementation supports HTTP, HTTPS, and SOCKS5 proxies, respects standard environment variables (HTTPS_PROXY, etc.), and includes loop detection to prevent circular routing.
 
 ### 📦 Files Changed
-- `pkg/proxy/grpc.go`
-- `pkg/proxy/grpc_test.go`
-- `pkg/dashboard/hub.go`
+- `pkg/proxy/upstream.go`
+- `pkg/proxy/proxy_test.go`
 
 ### 🛡️ Quality & Performance Invariants
 - [x] Idiomatic Go concurrency and memory safety.
@@ -16,4 +15,4 @@ Implemented gRPC binary stream decoding by adding a dedicated gRPC parser in pkg
 - [x] Comprehensive unit tests included.
 
 ---
-*Closes #33*
+*Closes #26*
