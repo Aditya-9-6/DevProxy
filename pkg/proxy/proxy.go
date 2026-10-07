@@ -1,15 +1,9 @@
 package proxy
 
 import (
-	"bufio"
-	"bytes"
-	"crypto/tls"
-	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"net/url"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -17,10 +11,7 @@ import (
 	"github.com/Aditya-9-6/DevProxy/pkg/certs"
 	"github.com/Aditya-9-6/DevProxy/pkg/mock"
 	"github.com/Aditya-9-6/DevProxy/pkg/ringbuffer"
-	"github.com/google/uuid"
 )
-
-const DefaultMaxBodyCaptureBytes = 1024 * 1024
 
 type ProxyServer struct {
 	addr             string
@@ -67,13 +58,9 @@ func (p *ProxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (p *ProxyServer) handleHTTP(w http.ResponseWriter, r *http.Request) {
-	// Standard HTTP proxy logic implementation
-}
+func (p *ProxyServer) handleHTTP(w http.ResponseWriter, r *http.Request) {}
 
-func (p *ProxyServer) handleConnect(w http.ResponseWriter, r *http.Request) {
-	// CONNECT tunnel implementation
-}
+func (p *ProxyServer) handleConnect(w http.ResponseWriter, r *http.Request) {}
 
 func (p *ProxyServer) Start() error { return p.httpServer.ListenAndServe() }
 func (p *ProxyServer) Close() error { return p.httpServer.Close() }

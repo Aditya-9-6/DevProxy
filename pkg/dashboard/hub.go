@@ -89,3 +89,19 @@ func (h *Hub) BroadcastEvent(event *ringbuffer.TrafficEvent, findings []*analysi
 		}
 	}
 }
+
+func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request) {
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		return
+	}
+	h.register <- conn
+	go func() {
+		defer func() { h.unregister <- conn }()
+		for {
+			if _, _, err := conn.ReadMessage(); err != nil {
+				break
+			}
+		}
+	}()
+}

@@ -1,25 +1,27 @@
-## ⚠️ Autonomous Architectural Review: ACTION REQUIRED (Score: 45/100)
+## ⚠️ Autonomous Architectural Review: ACTION REQUIRED (Score: 10/100)
 
 ### 📋 Executive Summary
-The PR attempts to implement OTel propagation but contains a critical architectural failure: the deletion of the entire ProxyServer implementation in pkg/proxy/proxy.go.
+The PR is in a catastrophic state. The previous attempt to implement OTel propagation resulted in the deletion of the core ProxyServer implementation, and the current state contains severe compilation errors, unused imports, and broken logic.
 
 ### 🍝 Anti-Spaghetti & Modularity Findings
-The PR exhibits catastrophic code deletion. The removal of the core proxy logic (ServeHTTP, handleConnect, etc.) renders the system non-functional. While the remaining helper function is clean, the overall structural integrity is destroyed.
+The codebase is currently non-functional. The removal of the core proxy logic in pkg/proxy/proxy.go violates all modularity and architectural standards. The code is currently a collection of broken fragments rather than a coherent system.
 
 ### 🛡️ Concurrency & Security Findings
-The removal of the proxy engine removes all security hardening, TLS bumping, and request handling logic. This is a critical security regression.
+Security posture is non-existent as the proxy engine is effectively deleted. The removal of TLS bumping, request handling, and security hardening logic creates a total system regression. No concurrency safety can be evaluated on broken code.
 
 ### ⚡ Performance & Memory Footprint Audit
-The performance invariants are moot as the proxy engine has been deleted. The remaining code is trivial, but the system is now incapable of processing traffic.
+Performance invariants are irrelevant as the system cannot compile or process traffic. The current state would result in a complete service outage.
 
 ### 🧪 Test Coverage Gaps
-The PR lacks any unit tests for the new tracing logic. The deletion of the existing proxy code likely breaks all existing tests in the package.
+Test coverage is effectively zero. The deletion of the proxy implementation has rendered existing tests in the package unrunnable and broken.
 
 ### 🛠️ Required Refactoring & Action Items
-- Revert the deletion of the ProxyServer implementation in pkg/proxy/proxy.go.
-- Implement the trace context extraction within the existing request handling flow (e.g., inside handleHTTP and handleConnect).
-- Add unit tests to verify that trace headers are correctly extracted and propagated to the TrafficEvent.
-- Ensure the TrafficEvent struct update is correctly integrated with the existing event pipeline.
+- Revert all changes to pkg/proxy/proxy.go and restore the full ProxyServer implementation.
+- Remove all unused imports in pkg/proxy/proxy.go and pkg/dashboard/server.go.
+- Fix the compilation error regarding the redeclaration of DefaultMaxBodyCaptureBytes.
+- Fix the compilation error regarding the undefined s.hub.ServeWS method.
+- Implement OTel trace context extraction as a non-destructive addition to the existing handleHTTP/handleConnect flow.
+- Ensure all new code is covered by unit tests that do not rely on the deleted proxy logic.
 
 ---
 🔄 **Autonomous Self-Healing Loop Active**: The PR Fixer Agent will refactor the code according to these directives and push updates until the PR achieves 100% readiness.

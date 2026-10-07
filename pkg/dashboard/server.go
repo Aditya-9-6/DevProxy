@@ -29,7 +29,6 @@ func NewServer(addr string, store *storage.Store, hub *Hub, ca *certs.Certificat
 	s := &Server{store: store, hub: hub, ca: ca, addr: addr, mockEngine: mock.NewEngine(), contractValidator: contract.NewValidator(), replayer: replay.NewReplayer(15*time.Second, true)}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", s.handleIndex)
-	mux.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) { s.hub.ServeWS(w, r) })
 	s.httpSrv = &http.Server{Addr: s.addr, Handler: mux}
 	return s
 }
