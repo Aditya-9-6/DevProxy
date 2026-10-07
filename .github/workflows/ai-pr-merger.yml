@@ -81,5 +81,13 @@ jobs:
 
           gh pr comment "$PR_NUM" --body "🚀 **Pull Request #${PR_NUM} Successfully Merged!**
           
-          Maintainer **@${ACTOR}** has approved the architectural impact and signed off on this contribution.
-          Code has been squash-merged into \`main\` and the working branch has been safely deleted."
+Maintainer **@${ACTOR}** has approved the architectural impact and signed off on this contribution.
+Code has been squash-merged into \`main\` and the working branch has been safely deleted."
+
+          # Find linked issue and post closure comment
+          LINKED_ISSUE=$(gh pr view "$PR_NUM" --json headRefName,body --jq '.headRefName + " " + .body' | grep -oEi '(issue-[0-9]+|closes #[0-9]+|fixes #[0-9]+)' | head -n1 | grep -oE '[0-9]+' || true)
+          if [ -n "$LINKED_ISSUE" ]; then
+            gh issue comment "$LINKED_ISSUE" --body "🎉 **Issue #${LINKED_ISSUE} Successfully Resolved & Merged!**
+            
+The approved implementation from PR #${PR_NUM} has been merged into \`main\` by maintainer **@${ACTOR}**." || true
+          fi

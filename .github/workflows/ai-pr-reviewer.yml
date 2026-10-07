@@ -143,6 +143,21 @@ jobs:
           if [ "$VERDICT" = "APPROVED" ]; then
             echo "==> PR is 100% approved. Marking with ready-to-merge label."
             gh pr edit "$PR_NUM" --add-label "ready-to-merge" || true
+
+            # Extract linked issue number from branch or PR body
+            LINKED_ISSUE=$(echo "$HEAD_REF" | grep -oE 'issue-[0-9]+' | grep -oE '[0-9]+' || true)
+            if [ -z "$LINKED_ISSUE" ]; then
+              LINKED_ISSUE=$(gh pr view "$PR_NUM" --json body -q .body | grep -oEi '(closes|fixes|resolves) #[0-9]+' | head -n1 | grep -oE '[0-9]+' || true)
+            fi
+
+            if [ -n "$LINKED_ISSUE" ]; then
+              SCORE=$(jq -r .score ai_review_status.json)
+              gh issue comment "$LINKED_ISSUE" --body "🌟 **Solution 100% Ready for Merge!**
+              
+The pull request (#${PR_NUM}) implementing this advancement has passed all autonomous architectural quality gates and anti-spaghetti checks with a score of **${SCORE}/100**.
+
+cc **@Aditya-9-6**: To finalize this advancement and merge into \`main\`, please approve PR #${PR_NUM} or comment \`/merge\` on the PR." || true
+            fi
           fi
 
       - name: Execute Autonomous PR Fixer (Self-Healing Loop)
