@@ -116,7 +116,9 @@ jobs:
             echo "No changes needed or produced."
             echo "has_changes=false" >> $GITHUB_ENV
           else
+            git rm --cached -f ai_pr_*.md ai_review_*.json ci_fix_*.md 2>/dev/null || true
             git add -A
+            git reset -- ai_pr_*.md ai_review_*.json ci_fix_*.md 2>/dev/null || true
             git commit -m "fix(ci): autonomous repair for failing CI tests on PR #${PR_NUM}" -m "Co-authored-by: Aditya Dahale <aditya-9-6@users.noreply.github.com>"
             git remote set-url origin "https://x-access-token:${AUTH_TOKEN}@github.com/${{ github.repository }}.git"
             git push origin "$HEAD_REF"

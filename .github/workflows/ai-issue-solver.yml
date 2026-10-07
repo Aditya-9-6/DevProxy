@@ -146,7 +146,9 @@ jobs:
           git config --global user.email "aditya-9-6@users.noreply.github.com"
 
           git checkout -B "$BRANCH_NAME"
+          git rm --cached -f ai_pr_*.md ai_review_*.json ci_fix_*.md 2>/dev/null || true
           git add -A
+          git reset -- ai_pr_*.md ai_review_*.json ci_fix_*.md 2>/dev/null || true
           git commit -m "feat: automated resolution for issue #${ISSUE_NUM} (${ISSUE_TITLE})" -m "Co-authored-by: Aditya Dahale <aditya-9-6@users.noreply.github.com>"
           git remote set-url origin "https://x-access-token:${AUTH_TOKEN}@github.com/${{ github.repository }}.git"
           git push origin "$BRANCH_NAME" --force

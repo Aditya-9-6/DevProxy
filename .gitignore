@@ -18,3 +18,12 @@ dist/
 Thumbs.db
 .vscode/
 .idea/
+
+# Autonomous AI Agent temporary artifacts
+ai_pr_*.md
+ai_pr_*.json
+ai_review_*.json
+ai_review_*.md
+ci_fix_*.md
+ci_fix_*.json
+.github/advancement_backlog.json
