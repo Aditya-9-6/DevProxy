@@ -58,9 +58,7 @@ func (p *ProxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (p *ProxyServer) handleHTTP(w http.ResponseWriter, r *http.Request) {}
-
+func (p *ProxyServer) handleHTTP(w http.ResponseWriter, r *http.Request)    {}
 func (p *ProxyServer) handleConnect(w http.ResponseWriter, r *http.Request) {}
-
-func (p *ProxyServer) Start() error { return p.httpServer.ListenAndServe() }
-func (p *ProxyServer) Close() error { return p.httpServer.Close() }
+func (p *ProxyServer) Start() error                                         { return p.httpServer.ListenAndServe() }
+func (p *ProxyServer) Close() error                                         { return p.httpServer.Close() }

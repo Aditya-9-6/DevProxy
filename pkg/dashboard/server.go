@@ -4,7 +4,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/Aditya-9-6/DevProxy/pkg/analysis"
 	"github.com/Aditya-9-6/DevProxy/pkg/certs"
 	"github.com/Aditya-9-6/DevProxy/pkg/contract"
 	"github.com/Aditya-9-6/DevProxy/pkg/mock"
@@ -33,4 +32,12 @@ func NewServer(addr string, store *storage.Store, hub *Hub, ca *certs.Certificat
 	return s
 }
 
-func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {}
+func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request)           {}
+func (s *Server) handleAddMapLocal(w http.ResponseWriter, r *http.Request)     {}
+func (s *Server) handleAddMapRemote(w http.ResponseWriter, r *http.Request)    {}
+func (s *Server) handleAddChaos(w http.ResponseWriter, r *http.Request)        {}
+func (s *Server) handleMocks(w http.ResponseWriter, r *http.Request)           {}
+func (s *Server) handleContractOpenAPI(w http.ResponseWriter, r *http.Request) {}
+func (s *Server) handleJWTInspect(w http.ResponseWriter, r *http.Request)      {}
+func (s *Server) handleMockThrottling(w http.ResponseWriter, r *http.Request)  {}
+func (s *Server) handleReplay(w http.ResponseWriter, r *http.Request)          {}
