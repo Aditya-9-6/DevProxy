@@ -3,18 +3,21 @@ set -e
 
 CHOICE="${1:-all}"
 
+echo "==> Fetching existing issues index in a single fast call..."
+EXISTING_TITLES=$(gh issue list --state all --limit 200 --json title --jq '.[].title' 2>/dev/null || true)
+
 create_issue() {
   local title="$1"
   local body="$2"
   local labels="$3"
 
   echo "==> Checking if issue exists: $title"
-  EXISTING=$(gh issue list --search "$title in:title" --state all --json number --jq 'length')
-  if [ "$EXISTING" -gt 0 ]; then
+  if echo "$EXISTING_TITLES" | grep -Fqx "$title" >/dev/null 2>&1; then
     echo "Issue already exists, skipping."
   else
     echo "Creating issue: $title"
     gh issue create --title "$title" --body "$body" --label "$labels"
+    EXISTING_TITLES=$(printf "%s\n%s" "$EXISTING_TITLES" "$title")
   fi
 }
 

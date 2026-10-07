@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -16,13 +17,15 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
 
       - name: "Scan for TODO and ADVANCEMENT comments"
         uses: "alstr/todo-to-issue-action@v5"
         with:
           CLOSE_ISSUES: true
           AUTO_ASSIGN: false
-          TAGS: "TODO,ADVANCEMENT,FIXME,OPTIMIZE"
+          IDENTIFIERS: '[{"name": "TODO", "labels": ["enhancement"]}, {"name": "ADVANCEMENT", "labels": ["enhancement", "hacktoberfest"]}, {"name": "FIXME", "labels": ["bug"]}, {"name": "OPTIMIZE", "labels": ["performance"]}]'
           IGNORE: '\.github/.*,web/.*,node_modules/.*,dist/.*,.*\.md'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

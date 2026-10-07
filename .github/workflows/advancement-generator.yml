@@ -28,6 +28,8 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
 
       - name: Generate Advancement Issues via GitHub CLI
         env:
