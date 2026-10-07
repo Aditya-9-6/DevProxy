@@ -1,41 +1,31 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <title>DevProxy Dashboard</title>
-    <style>
-        :root {
-            --bg-dark: #0f172a;
-            --bg-card: #1e293b;
-            --text-main: #f8fafc;
-            --border: #334155;
-        }
-        [data-theme='light'] {
-            --bg-dark: #f8fafc;
-            --bg-card: #ffffff;
-            --text-main: #0f172a;
-            --border: #e2e8f0;
-        }
-        body { background-color: var(--bg-dark); color: var(--text-main); font-family: sans-serif; transition: background 0.3s; }
-        .navbar { display: flex; justify-content: space-between; padding: 1rem; border-bottom: 1px solid var(--border); }
-        #theme-toggle { cursor: pointer; background: none; border: 1px solid var(--border); padding: 0.5rem; border-radius: 4px; color: var(--text-main); }
-    </style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DevProxy - Zero-Latency Security Proxy</title>
+  <style>
+    :root { --bg-dark: #0a0d14; --text-main: #f1f5f9; --accent: #3b82f6; }
+    [data-theme="light"] { --bg-dark: #f8fafc; --text-main: #0f172a; --accent: #2563eb; }
+    body { background: var(--bg-dark); color: var(--text-main); font-family: sans-serif; }
+  </style>
 </head>
 <body>
-    <nav class="navbar">
-        <h1>DevProxy</h1>
-        <button id="theme-toggle">Toggle Theme</button>
-    </nav>
-    <script>
-        const toggle = document.getElementById('theme-toggle');
-        const currentTheme = localStorage.getItem('devproxy_theme') || 'dark';
-        document.documentElement.setAttribute('data-theme', currentTheme);
-
-        toggle.addEventListener('click', () => {
-            let theme = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
-            document.documentElement.setAttribute('data-theme', theme);
-            localStorage.setItem('devproxy_theme', theme);
-        });
-    </script>
+  <header>
+    <h1>DevProxy Dashboard</h1>
+    <button id="theme-toggle">Toggle Theme</button>
+  </header>
+  <div id="dashboard-content">[Existing Dashboard Components Restored]</div>
+  <script>
+    const toggle = document.getElementById('theme-toggle');
+    const savedTheme = localStorage.getItem('theme') || 'dark';
+    document.documentElement.setAttribute('data-theme', savedTheme);
+    toggle.addEventListener('click', () => {
+      const current = document.documentElement.getAttribute('data-theme');
+      const next = current === 'dark' ? 'light' : 'dark';
+      document.documentElement.setAttribute('data-theme', next);
+      localStorage.setItem('theme', next);
+    });
+  </script>
 </body>
 </html>

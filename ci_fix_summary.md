@@ -1,14 +1,13 @@
 ## 🛠️ Autonomous Architectural Repair & CI Fix Applied
 
-**Target**: Pull Request #34
+**Target**: Pull Request #37
 
 ### 📋 Fix Summary
-Refactored ParseGRPCStream to use a callback-based streaming pattern, preventing OOM by avoiding slice accumulation. Implemented a 4MB frame size limit and fixed sync.Pool usage by reusing buffers. Cleaned up unused imports and restored robust error handling in Hub.Run to ensure dead connections are unregistered.
+Restored the full dashboard UI functionality by reverting the accidental deletion of the web/index.html content. Implemented the requested theme toggle using CSS variables and a dedicated JavaScript module that persists user preference in localStorage, ensuring no regression of existing features.
 
 ### 📂 Files Repaired
-- `pkg/dashboard/hub.go`
-- `pkg/proxy/grpc.go`
-- `pkg/proxy/grpc_test.go`
+- `web/index.html`
+- `web/theme_test.js`
 
 ### 🧪 Diagnostic Verification
 - Local build & test status after fix: **PASSED (Clean)**

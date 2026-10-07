@@ -1,26 +1,25 @@
-## ⚠️ Autonomous Architectural Review: ACTION REQUIRED (Score: 65/100)
+## ⚠️ Autonomous Architectural Review: ACTION REQUIRED (Score: 45/100)
 
 ### 📋 Executive Summary
-The PR introduces critical gRPC parsing logic but fails to adhere to zero-allocation and streaming invariants, creating potential memory exhaustion risks and performance bottlenecks.
+The PR attempts to implement a theme toggle but results in a massive regression of the existing dashboard functionality by deleting ~1700 lines of critical UI code.
 
 ### 🍝 Anti-Spaghetti & Modularity Findings
-The code is modular and follows SRP. However, the `ParseGRPCStream` function violates the streaming invariant by returning a slice of all frames (`[]GRPCFrame`) instead of using a callback or channel-based iterator, which will cause OOM on large gRPC streams.
+The PR is a destructive change. It replaces a complex, feature-rich dashboard (including traffic inspection, mock management, and security analysis) with a skeleton template. This violates the principle of incremental improvement and destroys existing modular components.
 
 ### 🛡️ Concurrency & Security Findings
-The `Hub.Run` loop has a regression: the removal of the error-handling goroutine for `client.WriteMessage` means that if a client connection hangs or fails, the hub will continue to attempt writes to a dead connection without unregistering it, leading to potential memory leaks and resource exhaustion. The `ParseGRPCStream` lacks a length limit check, making it vulnerable to malicious frames claiming massive lengths (e.g., 4GB), leading to immediate heap exhaustion.
+The removal of the security findings dashboard and traffic inspection logic significantly degrades the security posture of the DevProxy system. While the new code is simple, it removes the very features that make DevProxy a security engine.
 
 ### ⚡ Performance & Memory Footprint Audit
-The `sync.Pool` implementation is ineffective. While a buffer is retrieved, the code performs `make([]byte, length)` inside the loop for every frame, completely bypassing the pool's purpose and causing high GC pressure. The function signature forces the entire stream into memory, violating the streaming requirement.
+The performance impact is technically 'zero' because the features that consumed memory and CPU (traffic processing, analysis, and rendering) have been deleted. This is not an improvement; it is a functional deletion.
 
 ### 🧪 Test Coverage Gaps
-Basic happy path is covered, but there are no tests for malformed headers, zero-length payloads, or extremely large length fields that would trigger OOM.
+No unit tests were provided for the new theme toggle logic, and the existing test suite for the dashboard will likely fail due to the removal of the DOM elements it expects to interact with.
 
 ### 🛠️ Required Refactoring & Action Items
-- Refactor ParseGRPCStream to accept a callback function (func(GRPCFrame) error) or return a channel to support true streaming without loading all frames into memory.
-- Implement a strict maximum frame size limit (e.g., 4MB) in ParseGRPCStream to prevent malicious memory exhaustion.
-- Fix the sync.Pool usage: reuse the buffer for reading frame data instead of calling make() inside the loop.
-- Restore the error-handling goroutine in Hub.Run to ensure dead WebSocket connections are properly unregistered.
-- Add unit tests for edge cases: invalid headers, zero-length frames, and frames exceeding the maximum allowed size.
+- Revert the deletion of the existing dashboard code in web/index.html.
+- Implement the theme toggle using CSS variables and localStorage without removing existing UI components.
+- Ensure the theme toggle logic is encapsulated in a separate script or module to maintain clean separation of concerns.
+- Add unit tests for the theme persistence logic.
 
 ---
 🔄 **Autonomous Self-Healing Loop Active**: The PR Fixer Agent will refactor the code according to these directives and push updates until the PR achieves 100% readiness.

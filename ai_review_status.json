@@ -1,13 +1,12 @@
 {
   "verdict": "ACTION_REQUIRED",
-  "score": 65,
+  "score": 45,
   "needs_improvement": true,
   "action_items": [
-    "Refactor ParseGRPCStream to accept a callback function (func(GRPCFrame) error) or return a channel to support true streaming without loading all frames into memory.",
-    "Implement a strict maximum frame size limit (e.g., 4MB) in ParseGRPCStream to prevent malicious memory exhaustion.",
-    "Fix the sync.Pool usage: reuse the buffer for reading frame data instead of calling make() inside the loop.",
-    "Restore the error-handling goroutine in Hub.Run to ensure dead WebSocket connections are properly unregistered.",
-    "Add unit tests for edge cases: invalid headers, zero-length frames, and frames exceeding the maximum allowed size."
+    "Revert the deletion of the existing dashboard code in web/index.html.",
+    "Implement the theme toggle using CSS variables and localStorage without removing existing UI components.",
+    "Ensure the theme toggle logic is encapsulated in a separate script or module to maintain clean separation of concerns.",
+    "Add unit tests for the theme persistence logic."
   ],
-  "system_impact": "The current implementation poses a significant stability risk due to unbounded memory allocation during gRPC stream parsing and potential WebSocket client leakage in the Hub. It is not production-ready for high-throughput environments."
+  "system_impact": "This PR is catastrophic for the DevProxy dashboard. It removes critical functionality including traffic monitoring, mock/chaos engineering controls, and security analysis views. It must be rejected immediately to prevent breaking the production dashboard."
 }
