@@ -1,14 +1,12 @@
-## 🤖 Automated Solution for Issue #33
+## 🤖 Automated Solution for Issue #30
 
-**Issue**: #33 - feat(proxy): Add gRPC & Protobuf Binary Stream Decoder in Dashboard
+**Issue**: #30 - feat(advancement): High-Contrast Light / Dark Mode Toggle in Web UI
 
 ### 📝 Solution Overview
-Implemented gRPC binary stream decoding by adding a dedicated gRPC parser in pkg/proxy/grpc.go, integrating it into the proxy's traffic capture flow, and updating the dashboard hub to handle gRPC-specific event metadata. The implementation uses sync.Pool for zero-allocation buffer management and provides a robust 5-byte header parsing mechanism for gRPC frames.
+Implemented a high-contrast Light/Dark mode toggle for the DevProxy dashboard. Added CSS variables for theme management, a persistent localStorage mechanism to remember user preference, and a UI toggle button in the navigation bar.
 
 ### 📦 Files Changed
-- `pkg/proxy/grpc.go`
-- `pkg/proxy/grpc_test.go`
-- `pkg/dashboard/hub.go`
+- `web/index.html`
 
 ### 🛡️ Quality & Performance Invariants
 - [x] Idiomatic Go concurrency and memory safety.
@@ -16,4 +14,4 @@ Implemented gRPC binary stream decoding by adding a dedicated gRPC parser in pkg
 - [x] Comprehensive unit tests included.
 
 ---
-*Closes #33*
+*Closes #30*
