@@ -24,7 +24,8 @@ jobs:
     name: Autonomous CI Fixer
     if: >
       github.event_name == 'workflow_dispatch' ||
-      (github.event.issue.pull_request && (
+      (github.event.issue.pull_request &&
+       contains('["OWNER", "COLLABORATOR", "MEMBER"]', github.event.comment.author_association) && (
         startsWith(github.event.comment.body, '/fix') ||
         startsWith(github.event.comment.body, '/fix-ci') ||
         startsWith(github.event.comment.body, '@devproxy-bot fix') ||
@@ -89,7 +90,8 @@ jobs:
       - name: Run Autonomous CI Repair Agent
         id: repair
         env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_SOLVER_KEY || secrets.GEMINI_API_KEY }}
+          GEMINI_FALLBACK_KEY: ${{ secrets.GEMINI_REVIEWER_KEY || secrets.GEMINI_ISSUE_KEY }}
           PR_NUM: ${{ steps.meta.outputs.pr_num }}
           GH_TOKEN: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}

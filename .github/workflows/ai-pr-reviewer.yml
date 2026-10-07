@@ -1,0 +1,108 @@
+name: AI PR Validator & Reviewer Bot
+
+on:
+  pull_request:
+    types: [opened, ready_for_review]
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "Pull Request number to review"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: ai-reviewer-${{ github.event.pull_request.number || github.event.issue.number || github.event.inputs.pr_number }}
+  cancel-in-progress: true
+
+jobs:
+  review-pr:
+    name: Autonomous PR Reviewer
+    # Trigger on PR open/ready, workflow_dispatch, or authorized maintainer comment /review
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'pull_request' ||
+      (github.event_name == 'issue_comment' && github.event.issue.pull_request &&
+       contains('["OWNER", "COLLABORATOR", "MEMBER"]', github.event.comment.author_association) && (
+        startsWith(github.event.comment.body, '/review') ||
+        startsWith(github.event.comment.body, '@devproxy-bot review')
+      ))
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate GitHub App Token (Higher Rate Limits)
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        continue-on-error: true
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
+      - name: Resolve PR Metadata
+        id: meta
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            PR_NUM="${{ github.event.inputs.pr_number }}"
+          elif [ "${{ github.event_name }}" = "pull_request" ]; then
+            PR_NUM="${{ github.event.pull_request.number }}"
+          else
+            PR_NUM="${{ github.event.issue.number }}"
+          fi
+
+          PR_DATA=$(gh pr view "$PR_NUM" --json headRefName,title)
+          HEAD_REF=$(echo "$PR_DATA" | jq -r .headRefName)
+          TITLE=$(echo "$PR_DATA" | jq -r .title)
+
+          echo "pr_num=$PR_NUM" >> $GITHUB_OUTPUT
+          echo "head_ref=$HEAD_REF" >> $GITHUB_OUTPUT
+          echo "title=$TITLE" >> $GITHUB_OUTPUT
+
+      - name: Checkout Repository & PR Branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.meta.outputs.head_ref }}
+          fetch-depth: 0
+
+      - name: Ensure PR Reviewer Script Present
+        run: |
+          if [ ! -f ".github/scripts/ai_pr_reviewer.py" ]; then
+            git checkout origin/main -- .github/scripts/ai_pr_reviewer.py || true
+          fi
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run Autonomous PR Reviewer
+        id: reviewer
+        env:
+          GEMINI_REVIEWER_KEY: ${{ secrets.GEMINI_REVIEWER_KEY }}
+          GEMINI_SOLVER_KEY: ${{ secrets.GEMINI_SOLVER_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          PR_NUM: ${{ steps.meta.outputs.pr_num }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          python3 .github/scripts/ai_pr_reviewer.py \
+            --pr-number "$PR_NUM" \
+            --workspace .
+
+      - name: Post Review Comment on PR
+        if: always()
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUM: ${{ steps.meta.outputs.pr_num }}
+        run: |
+          if [ -f "ai_pr_review.md" ]; then
+            gh pr comment "$PR_NUM" --body-file "ai_pr_review.md"
+          fi

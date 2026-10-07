@@ -28,7 +28,8 @@ jobs:
     if: >
       github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'issues' && github.event.label.name == 'auto-solve') ||
-      (github.event_name == 'issue_comment' && !github.event.issue.pull_request && (
+      (github.event_name == 'issue_comment' && !github.event.issue.pull_request &&
+       contains('["OWNER", "COLLABORATOR", "MEMBER"]', github.event.comment.author_association) && (
         startsWith(github.event.comment.body, '@devproxy-bot solve') ||
         startsWith(github.event.comment.body, '@spryzen-bot solve') ||
         startsWith(github.event.comment.body, '/solve')
@@ -78,7 +79,8 @@ jobs:
       - name: Run AI Solution Generator
         id: solver
         env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_SOLVER_KEY || secrets.GEMINI_API_KEY }}
+          GEMINI_FALLBACK_KEY: ${{ secrets.GEMINI_REVIEWER_KEY || secrets.GEMINI_ISSUE_KEY }}
           ISSUE_NUM: ${{ steps.meta.outputs.num }}
           ISSUE_TITLE: ${{ steps.meta.outputs.title }}
           GH_TOKEN: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
