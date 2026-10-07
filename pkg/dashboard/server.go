@@ -34,7 +34,7 @@ type Server struct {
 
 // NewServer creates a new dashboard Server instance.
 func NewServer(addr string, store *storage.Store, hub *Hub, ca *certs.CertificateAuthority) *Server {
-	return &Server{
+	s := &Server{
 		store:             store,
 		hub:               hub,
 		ca:                ca,
@@ -43,30 +43,7 @@ func NewServer(addr string, store *storage.Store, hub *Hub, ca *certs.Certificat
 		contractValidator: contract.NewValidator(),
 		replayer:          replay.NewReplayer(15*time.Second, true),
 	}
-}
 
-// SetMockEngine configures the mock & chaos engine.
-func (s *Server) SetMockEngine(eng *mock.Engine) {
-	s.mockEngine = eng
-}
-
-// SetRingBuffer configures the ring buffer for HAR import.
-func (s *Server) SetRingBuffer(rb *ringbuffer.RingBuffer) {
-	s.ringBuf = rb
-}
-
-// SetContractValidator configures the OpenAPI contract validator.
-func (s *Server) SetContractValidator(cv *contract.Validator) {
-	s.contractValidator = cv
-}
-
-// SetReplayer configures the request replay & diff engine.
-func (s *Server) SetReplayer(r *replay.Replayer) {
-	s.replayer = r
-}
-
-// Start launches the HTTP server for the dashboard.
-func (s *Server) Start() error {
 	mux := http.NewServeMux()
 
 	// Embedded UI
@@ -99,6 +76,31 @@ func (s *Server) Start() error {
 		Handler: mux,
 	}
 
+	return s
+}
+
+// SetMockEngine configures the mock & chaos engine.
+func (s *Server) SetMockEngine(eng *mock.Engine) {
+	s.mockEngine = eng
+}
+
+// SetRingBuffer configures the ring buffer for HAR import.
+func (s *Server) SetRingBuffer(rb *ringbuffer.RingBuffer) {
+	s.ringBuf = rb
+}
+
+// SetContractValidator configures the OpenAPI contract validator.
+func (s *Server) SetContractValidator(cv *contract.Validator) {
+	s.contractValidator = cv
+}
+
+// SetReplayer configures the request replay & diff engine.
+func (s *Server) SetReplayer(r *replay.Replayer) {
+	s.replayer = r
+}
+
+// Start launches the HTTP server for the dashboard.
+func (s *Server) Start() error {
 	return s.httpSrv.ListenAndServe()
 }
 
