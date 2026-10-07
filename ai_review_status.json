@@ -1,6 +1,6 @@
 {
   "verdict": "ACTION_REQUIRED",
-  "score": 45,
+  "score": 40,
   "needs_improvement": true,
   "action_items": [
     "Revert the deletion of the existing dashboard code in web/index.html.",

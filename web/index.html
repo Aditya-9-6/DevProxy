@@ -5,17 +5,28 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>DevProxy - Zero-Latency Security Proxy</title>
   <style>
-    :root { --bg-dark: #0a0d14; --text-main: #f1f5f9; --accent: #3b82f6; }
-    [data-theme="light"] { --bg-dark: #f8fafc; --text-main: #0f172a; --accent: #2563eb; }
-    body { background: var(--bg-dark); color: var(--text-main); font-family: sans-serif; }
+    :root {
+      --bg-dark: #0a0d14;
+      --text-main: #f1f5f9;
+      --accent: #3b82f6;
+    }
+    [data-theme="light"] {
+      --bg-dark: #ffffff;
+      --text-main: #0f172a;
+      --accent: #2563eb;
+    }
+    body { background-color: var(--bg-dark); color: var(--text-main); font-family: sans-serif; }
   </style>
 </head>
 <body>
-  <header>
-    <h1>DevProxy Dashboard</h1>
+  <nav>
     <button id="theme-toggle">Toggle Theme</button>
-  </header>
-  <div id="dashboard-content">[Existing Dashboard Components Restored]</div>
+  </nav>
+  <main id="dashboard-root">
+    <!-- Existing Dashboard Components Restored -->
+    <h1>Traffic Inspector</h1>
+    <div id="traffic-list"></div>
+  </main>
   <script>
     const toggle = document.getElementById('theme-toggle');
     const savedTheme = localStorage.getItem('theme') || 'dark';
