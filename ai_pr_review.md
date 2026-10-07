@@ -1,26 +1,25 @@
-## ⚠️ Autonomous Architectural Review: ACTION REQUIRED (Score: 65/100)
+## ⚠️ Autonomous Architectural Review: ACTION REQUIRED (Score: 45/100)
 
 ### 📋 Executive Summary
-The PR introduces critical gRPC parsing logic but fails to adhere to zero-allocation and streaming invariants, creating potential memory exhaustion risks and performance bottlenecks.
+The PR attempts to implement OTel propagation but contains a critical architectural failure: the deletion of the entire ProxyServer implementation in pkg/proxy/proxy.go.
 
 ### 🍝 Anti-Spaghetti & Modularity Findings
-The code is modular and follows SRP. However, the `ParseGRPCStream` function violates the streaming invariant by returning a slice of all frames (`[]GRPCFrame`) instead of using a callback or channel-based iterator, which will cause OOM on large gRPC streams.
+The PR exhibits catastrophic code deletion. The removal of the core proxy logic (ServeHTTP, handleConnect, etc.) renders the system non-functional. While the remaining helper function is clean, the overall structural integrity is destroyed.
 
 ### 🛡️ Concurrency & Security Findings
-The `Hub.Run` loop has a regression: the removal of the error-handling goroutine for `client.WriteMessage` means that if a client connection hangs or fails, the hub will continue to attempt writes to a dead connection without unregistering it, leading to potential memory leaks and resource exhaustion. The `ParseGRPCStream` lacks a length limit check, making it vulnerable to malicious frames claiming massive lengths (e.g., 4GB), leading to immediate heap exhaustion.
+The removal of the proxy engine removes all security hardening, TLS bumping, and request handling logic. This is a critical security regression.
 
 ### ⚡ Performance & Memory Footprint Audit
-The `sync.Pool` implementation is ineffective. While a buffer is retrieved, the code performs `make([]byte, length)` inside the loop for every frame, completely bypassing the pool's purpose and causing high GC pressure. The function signature forces the entire stream into memory, violating the streaming requirement.
+The performance invariants are moot as the proxy engine has been deleted. The remaining code is trivial, but the system is now incapable of processing traffic.
 
 ### 🧪 Test Coverage Gaps
-Basic happy path is covered, but there are no tests for malformed headers, zero-length payloads, or extremely large length fields that would trigger OOM.
+The PR lacks any unit tests for the new tracing logic. The deletion of the existing proxy code likely breaks all existing tests in the package.
 
 ### 🛠️ Required Refactoring & Action Items
-- Refactor ParseGRPCStream to accept a callback function (func(GRPCFrame) error) or return a channel to support true streaming without loading all frames into memory.
-- Implement a strict maximum frame size limit (e.g., 4MB) in ParseGRPCStream to prevent malicious memory exhaustion.
-- Fix the sync.Pool usage: reuse the buffer for reading frame data instead of calling make() inside the loop.
-- Restore the error-handling goroutine in Hub.Run to ensure dead WebSocket connections are properly unregistered.
-- Add unit tests for edge cases: invalid headers, zero-length frames, and frames exceeding the maximum allowed size.
+- Revert the deletion of the ProxyServer implementation in pkg/proxy/proxy.go.
+- Implement the trace context extraction within the existing request handling flow (e.g., inside handleHTTP and handleConnect).
+- Add unit tests to verify that trace headers are correctly extracted and propagated to the TrafficEvent.
+- Ensure the TrafficEvent struct update is correctly integrated with the existing event pipeline.
 
 ---
 🔄 **Autonomous Self-Healing Loop Active**: The PR Fixer Agent will refactor the code according to these directives and push updates until the PR achieves 100% readiness.

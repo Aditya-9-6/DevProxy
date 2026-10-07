@@ -1,13 +1,12 @@
 {
   "verdict": "ACTION_REQUIRED",
-  "score": 65,
+  "score": 45,
   "needs_improvement": true,
   "action_items": [
-    "Refactor ParseGRPCStream to accept a callback function (func(GRPCFrame) error) or return a channel to support true streaming without loading all frames into memory.",
-    "Implement a strict maximum frame size limit (e.g., 4MB) in ParseGRPCStream to prevent malicious memory exhaustion.",
-    "Fix the sync.Pool usage: reuse the buffer for reading frame data instead of calling make() inside the loop.",
-    "Restore the error-handling goroutine in Hub.Run to ensure dead WebSocket connections are properly unregistered.",
-    "Add unit tests for edge cases: invalid headers, zero-length frames, and frames exceeding the maximum allowed size."
+    "Revert the deletion of the ProxyServer implementation in pkg/proxy/proxy.go.",
+    "Implement the trace context extraction within the existing request handling flow (e.g., inside handleHTTP and handleConnect).",
+    "Add unit tests to verify that trace headers are correctly extracted and propagated to the TrafficEvent.",
+    "Ensure the TrafficEvent struct update is correctly integrated with the existing event pipeline."
   ],
-  "system_impact": "The current implementation poses a significant stability risk due to unbounded memory allocation during gRPC stream parsing and potential WebSocket client leakage in the Hub. It is not production-ready for high-throughput environments."
+  "system_impact": "The system is currently broken. The proxy server will fail to start or handle any traffic due to the missing implementation in pkg/proxy/proxy.go. This PR must be reverted and re-submitted with only the necessary additions."
 }
