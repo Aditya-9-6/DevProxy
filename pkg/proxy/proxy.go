@@ -4,15 +4,18 @@ import (
 	"crypto/md5"
 	"crypto/tls"
 	"encoding/hex"
-	"fmt"
-	"net/http"
-	"sort"
+	"net/url"
 	"strconv"
 	"strings"
-
-	"github.com/Aditya-9-6/DevProxy/pkg/certs"
-	"github.com/Aditya-9-6/DevProxy/pkg/ringbuffer"
+	"sync"
 )
+
+// ProxyServer defines the core proxy structure.
+type ProxyServer struct {
+	addr          string
+	upstreamProxy *url.URL
+	loopWarnOnce  sync.Once
+}
 
 // calculateJA3 computes the JA3 fingerprint from a ClientHelloInfo.
 func calculateJA3(chi *tls.ClientHelloInfo) string {
@@ -50,6 +53,3 @@ func calculateJA3(chi *tls.ClientHelloInfo) string {
 	hash := md5.Sum([]byte(b.String()))
 	return hex.EncodeToString(hash[:])
 }
-
-// ProxyServer implementation remains largely the same, but now uses the GetConfigForClient hook to capture JA3.
-// (Simplified for brevity, assuming existing structure)

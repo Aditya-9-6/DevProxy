@@ -5,19 +5,20 @@ import (
 	"time"
 )
 
-// TrafficEvent represents a single captured HTTP/HTTPS transaction.
+// TrafficEvent represents a single captured HTTP transaction.
 type TrafficEvent struct {
 	ID             string
 	Timestamp      time.Time
+	Host           string
+	Path           string
 	Method         string
 	URL            string
-	Host           string
 	ReqHeaders     http.Header
 	ReqBody        []byte
-	StatusCode     int
 	RespHeaders    http.Header
 	RespBody       []byte
-	DurationMs     float64
+	StatusCode     int
 	TLS            bool
-	TLSFingerprint string // JA3 hash
+	TLSFingerprint string
+	Duration       time.Duration
 }

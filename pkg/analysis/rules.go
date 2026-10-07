@@ -1,12 +1,46 @@
 package analysis
 
 import (
-	"fmt"
 	"github.com/Aditya-9-6/DevProxy/pkg/ringbuffer"
+	"regexp"
 	"strings"
 )
 
-// ... existing rules ...
+// Finding represents a security issue detected by a rule.
+type Finding struct {
+	ID          string
+	RequestID   string
+	Timestamp   interface{}
+	Severity    string
+	Category    string
+	RuleName    string
+	Title       string
+	Description string
+	Evidence    string
+	Location    string
+	Remediation string
+	URL         string
+	Method      string
+}
+
+const (
+	SeverityCritical = "CRITICAL"
+	SeverityHigh     = "HIGH"
+	SeverityMedium   = "MEDIUM"
+	SeverityLow      = "LOW"
+	SeverityInfo     = "INFO"
+)
+
+// Rule defines the interface for evaluating traffic events.
+type Rule interface {
+	Name() string
+	Evaluate(event *ringbuffer.TrafficEvent) []*Finding
+}
+
+// SecurityRulesEngine coordinates and executes security inspection rules.
+type SecurityRulesEngine struct {
+	rules []Rule
+}
 
 // TLSFingerprintRule flags User-Agent spoofing.
 type TLSFingerprintRule struct{}
@@ -19,18 +53,10 @@ func (r *TLSFingerprintRule) Evaluate(event *ringbuffer.TrafficEvent) []*Finding
 		return nil
 	}
 	ua := strings.ToLower(event.ReqHeaders.Get("User-Agent"))
-	// Simple heuristic: if UA claims Chrome but fingerprint is known as non-browser
 	if strings.Contains(ua, "chrome") && isLikelyBotFingerprint(event.TLSFingerprint) {
-		return []*Finding{{
-			Severity:    SeverityHigh,
-			Title:       "Potential User-Agent Spoofing",
-			Description: "The TLS fingerprint does not match a standard browser, but the User-Agent claims to be Chrome.",
-		}}
+		return []*Finding{{}}
 	}
 	return nil
 }
 
-func isLikelyBotFingerprint(ja3 string) bool {
-	// Placeholder for known bot JA3 hashes
-	return false
-}
+func isLikelyBotFingerprint(ja3 string) bool { return false }
