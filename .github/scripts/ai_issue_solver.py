@@ -15,12 +15,12 @@ import subprocess
 import time
 from pathlib import Path
 
-DEFAULT_MODEL = "gemini-2.5-flash"
+DEFAULT_MODEL = "gemini-3.1-flash-lite"
 FALLBACK_MODELS = [
-    "gemini-2.5-flash",
-    "gemini-2.5-pro",
-    "gemini-1.5-flash",
-    "gemini-1.5-pro",
+    "gemini-3.1-flash-lite",
+    "gemini-3.5-flash",
+    "gemini-3.8-flash",
+    "gemini-3.7-flash",
 ]
 
 SYSTEM_PROMPT = """You are an expert autonomous systems software engineer specializing in Go, high-throughput network proxies, HTTP/HTTPS MITM interception, WebSocket streaming, and developer debugging tools.
@@ -102,9 +102,14 @@ def get_relevant_files(workspace_root: Path, all_files: list, keywords: list) ->
     return "\n\n".join(context_files)
 
 def call_gemini(api_key: str, prompt: str, model: str = DEFAULT_MODEL) -> dict:
-    """Calls Gemini REST API with fallback across supported models."""
-    models_to_try = [model] + [m for m in FALLBACK_MODELS if m != model]
+    """Calls Gemini REST API with fallback and retries across supported models."""
+    ordered = [model] + [m for m in FALLBACK_MODELS if m != model]
+    models_to_try = []
+    for m in ordered:
+        if m not in models_to_try:
+            models_to_try.append(m)
     
+    last_err = None
     for current_model in models_to_try:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{current_model}:generateContent?key={api_key}"
         
@@ -123,43 +128,52 @@ def call_gemini(api_key: str, prompt: str, model: str = DEFAULT_MODEL) -> dict:
             }
         }
         
-        req = urllib.request.Request(
-            url,
-            data=json.dumps(payload).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
-            method="POST"
-        )
-        
-        try:
-            with urllib.request.urlopen(req, timeout=120) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
-                text_response = data["candidates"][0]["content"]["parts"][0]["text"].strip()
-                
-                # Parse JSON response
-                try:
-                    return json.loads(text_response, strict=False)
-                except json.JSONDecodeError:
-                    if text_response.startswith("```"):
-                        lines = text_response.splitlines()
-                        if lines[0].startswith("```"):
-                            lines = lines[1:]
-                        if lines and lines[-1].startswith("```"):
-                            lines = lines[:-1]
-                        text_response = "\n".join(lines).strip()
-                    return json.loads(text_response, strict=False)
-        except urllib.error.HTTPError as e:
-            err_msg = e.read().decode("utf-8", errors="replace")
-            print(f"[Warning] HTTP {e.code} with model {current_model}: {err_msg}", file=sys.stderr)
-            time.sleep(3)
-            if current_model == models_to_try[-1]:
-                raise RuntimeError(f"Gemini API error: {err_msg}")
-        except Exception as e:
-            print(f"[Warning] Error with model {current_model}: {e}", file=sys.stderr)
-            time.sleep(3)
-            if current_model == models_to_try[-1]:
-                raise
+        print(f"[*] Attempting generation with model: {current_model}...", flush=True)
+        max_attempts = 3
+        for attempt in range(1, max_attempts + 1):
+            req = urllib.request.Request(
+                url,
+                data=json.dumps(payload).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST"
+            )
+            try:
+                with urllib.request.urlopen(req, timeout=90) as resp:
+                    data = json.loads(resp.read().decode("utf-8"))
+                    text_response = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+                    
+                    # Parse JSON response
+                    try:
+                        return json.loads(text_response, strict=False)
+                    except json.JSONDecodeError:
+                        if text_response.startswith("```"):
+                            lines = text_response.splitlines()
+                            if lines[0].startswith("```"):
+                                lines = lines[1:]
+                            if lines and lines[-1].startswith("```"):
+                                lines = lines[:-1]
+                            text_response = "\n".join(lines).strip()
+                        return json.loads(text_response, strict=False)
+            except urllib.error.HTTPError as e:
+                err_msg = e.read().decode("utf-8", errors="replace")
+                print(f"[Warning] HTTP {e.code} (attempt {attempt}/{max_attempts}) with model {current_model}: {err_msg[:200]}", file=sys.stderr)
+                last_err = err_msg
+                # If model is deprecated / not found, do not waste retries
+                if e.code == 404:
+                    break
+                if e.code in (429, 500, 502, 503, 504) and attempt < max_attempts:
+                    time.sleep(3 * attempt)
+                    continue
+                break
+            except Exception as e:
+                print(f"[Warning] Error (attempt {attempt}/{max_attempts}) with model {current_model}: {e}", file=sys.stderr)
+                last_err = str(e)
+                if attempt < max_attempts:
+                    time.sleep(3 * attempt)
+                    continue
+                break
 
-    raise RuntimeError("Failed to obtain solution from Gemini API.")
+    raise RuntimeError(f"Failed to obtain solution from Gemini API across models {models_to_try}. Last error: {last_err}")
 
 def main():
     parser = argparse.ArgumentParser(description="DevProxy AI Issue Solver")
