@@ -1,13 +1,13 @@
-## 🤖 Automated Solution for Issue #33
+## 🤖 Automated Solution for Issue #28
 
-**Issue**: #33 - feat(proxy): Add gRPC & Protobuf Binary Stream Decoder in Dashboard
+**Issue**: #28 - feat(advancement): Distributed OpenTelemetry (OTel) Tracing Propagation
 
 ### 📝 Solution Overview
-Implemented gRPC binary stream decoding by adding a dedicated gRPC parser in pkg/proxy/grpc.go, integrating it into the proxy's traffic capture flow, and updating the dashboard hub to handle gRPC-specific event metadata. The implementation uses sync.Pool for zero-allocation buffer management and provides a robust 5-byte header parsing mechanism for gRPC frames.
+Implemented W3C Trace Context propagation by extracting 'traceparent' and 'tracestate' headers in the proxy data path and storing them in the TrafficEvent. Updated the dashboard hub to broadcast these trace identifiers, enabling the frontend to render clickable trace links.
 
 ### 📦 Files Changed
-- `pkg/proxy/grpc.go`
-- `pkg/proxy/grpc_test.go`
+- `pkg/ringbuffer/event.go`
+- `pkg/proxy/proxy.go`
 - `pkg/dashboard/hub.go`
 
 ### 🛡️ Quality & Performance Invariants
@@ -16,4 +16,4 @@ Implemented gRPC binary stream decoding by adding a dedicated gRPC parser in pkg
 - [x] Comprehensive unit tests included.
 
 ---
-*Closes #33*
+*Closes #28*

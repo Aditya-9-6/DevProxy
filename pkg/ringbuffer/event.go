@@ -6,6 +6,7 @@ import (
 )
 
 // TrafficEvent captures the full request and response pair cloned from the data path.
+// Includes W3C Trace Context fields for distributed tracing.
 type TrafficEvent struct {
 	ID          string        `json:"id"`
 	Timestamp   time.Time     `json:"timestamp"`
@@ -24,4 +25,6 @@ type TrafficEvent struct {
 	RespBody    []byte        `json:"resp_body"`
 	TLS         bool          `json:"tls"`
 	TLSServer   string        `json:"tls_server,omitempty"`
+	TraceParent string        `json:"traceparent,omitempty"`
+	TraceState  string        `json:"tracestate,omitempty"`
 }

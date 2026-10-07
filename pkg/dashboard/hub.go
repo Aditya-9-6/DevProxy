@@ -75,6 +75,8 @@ func (h *Hub) BroadcastEvent(event *ringbuffer.TrafficEvent, findings []*analysi
 			"url":           event.URL,
 			"content_type":  event.ReqHeaders.Get("Content-Type"),
 			"finding_count": len(findings),
+			"traceparent":   event.TraceParent,
+			"tracestate":    event.TraceState,
 		},
 		Findings: findings,
 	}
@@ -86,20 +88,4 @@ func (h *Hub) BroadcastEvent(event *ringbuffer.TrafficEvent, findings []*analysi
 		default:
 		}
 	}
-}
-
-func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request) {
-	conn, err := upgrader.Upgrade(w, r, nil)
-	if err != nil {
-		return
-	}
-	h.register <- conn
-	go func() {
-		defer func() { h.unregister <- conn }()
-		for {
-			if _, _, err := conn.ReadMessage(); err != nil {
-				break
-			}
-		}
-	}()
 }
