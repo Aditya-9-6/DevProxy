@@ -17,7 +17,7 @@ permissions:
 
 concurrency:
   group: ai-fixer-${{ github.event.issue.number || github.event.inputs.pr_number }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   fix-ci:

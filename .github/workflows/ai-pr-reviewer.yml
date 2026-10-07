@@ -20,7 +20,7 @@ permissions:
 
 concurrency:
   group: ai-reviewer-${{ github.event.pull_request.number || github.event.issue.number || github.event.inputs.pr_number }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   review-and-heal-pr:
