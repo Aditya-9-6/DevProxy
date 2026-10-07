@@ -186,6 +186,7 @@ To prevent SSL certificate warnings in curl, browsers, and mobile emulators:
 	dashServer := dashboard.NewServer(webAddr, store, hub, ca)
 	dashServer.SetMockEngine(mockEngine)
 	dashServer.SetContractValidator(contractValidator)
+	dashServer.SetRingBuffer(ringBuf)
 	go func() {
 		if err := dashServer.Start(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("Dashboard server error: %v", err)
