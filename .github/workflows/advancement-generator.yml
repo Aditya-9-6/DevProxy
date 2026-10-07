@@ -31,9 +31,18 @@ jobs:
         with:
           fetch-depth: 1
 
+      - name: Generate GitHub App Token (Higher Rate Limits)
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        continue-on-error: true
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
       - name: Generate Advancement Issues via GitHub CLI
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
           ADVANCEMENT: ${{ inputs.advancement_type }}
         run: |
           chmod +x .github/scripts/generate-advancements.sh

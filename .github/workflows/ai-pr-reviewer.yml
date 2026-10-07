@@ -24,14 +24,15 @@ concurrency:
 jobs:
   review-pr:
     name: Autonomous PR Reviewer
-    # Trigger on PR open/ready, workflow_dispatch, or authorized maintainer comment /review
+    # Trigger on PR open/ready by maintainer, workflow_dispatch, or authorized maintainer comment /review
     if: >
       github.event_name == 'workflow_dispatch' ||
-      github.event_name == 'pull_request' ||
+      (github.event_name == 'pull_request' && contains('["OWNER", "COLLABORATOR", "MEMBER"]', github.event.pull_request.author_association)) ||
       (github.event_name == 'issue_comment' && github.event.issue.pull_request &&
        contains('["OWNER", "COLLABORATOR", "MEMBER"]', github.event.comment.author_association) && (
         startsWith(github.event.comment.body, '/review') ||
-        startsWith(github.event.comment.body, '@devproxy-bot review')
+        startsWith(github.event.comment.body, '@devproxy-bot review') ||
+        startsWith(github.event.comment.body, '@spryzen-bot review')
       ))
     runs-on: ubuntu-latest
     steps:
