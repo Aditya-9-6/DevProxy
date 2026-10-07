@@ -200,7 +200,7 @@ Output ONLY valid JSON matching this schema:
             except urllib.error.HTTPError as e:
                 if e.code == 429:
                     freeze_sec = 15 * attempt
-                    print(f"[❄️ FREEZE TIMER] Rate limit encountered on {model}. Backing off for {freeze_sec}s...", flush=True)
+                    print(f"[FREEZE TIMER] Rate limit encountered on {model}. Backing off for {freeze_sec}s...", flush=True)
                     time.sleep(freeze_sec)
                     continue
                 break
@@ -298,7 +298,7 @@ def main():
     # 1. Check Freeze Timer Cooldown
     can_submit, elapsed = check_freeze_timer(existing_issues, cooldown_minutes=cooldown_min, force=force)
     if not can_submit:
-        print(f"[❄️ FREEZE TIMER ACTIVE] Last issue was created {elapsed:.1f} minutes ago (< {cooldown_min} min cooldown).")
+        print(f"[FREEZE TIMER ACTIVE] Last issue was created {elapsed:.1f} minutes ago (< {cooldown_min} min cooldown).")
         print("[*] Generating next high-impact advancement and archiving to backlog queue to prevent rate-limit breaks...")
 
         # Find next candidate to archive
@@ -315,7 +315,7 @@ def main():
             if not any(b["title"] == candidate["title"] for b in backlog):
                 backlog.append(candidate)
                 save_backlog(workspace, backlog)
-                print(f"[📦 ARCHIVED TO BACKLOG] Stored: '{candidate['title']}'. Will be submitted once freeze timer expires.")
+                print(f"[ARCHIVED TO BACKLOG] Stored: '{candidate['title']}'. Will be submitted once freeze timer expires.")
         return
 
     # 2. Cooldown is clear: Drain backlog first if available
@@ -331,7 +331,7 @@ def main():
                 created_count += 1
                 save_backlog(workspace, backlog)
                 if created_count < count:
-                    print("[❄️ JITTER FREEZE] Sleeping 12s to protect GitHub secondary rate limit...")
+                    print("[RATE-LIMIT DELAY] Sleeping 12s to protect GitHub secondary rate limit...")
                     time.sleep(12)
 
     # 3. Pull from curated catalog
@@ -343,7 +343,7 @@ def main():
                 existing_titles.add(item["title"])
                 created_count += 1
                 if created_count < count:
-                    print("[❄️ JITTER FREEZE] Sleeping 12s to protect GitHub secondary rate limit...")
+                    print("[RATE-LIMIT DELAY] Sleeping 12s to protect GitHub secondary rate limit...")
                     time.sleep(12)
 
     # 4. If catalog exhausted and more requested, dynamically generate via Gemini AI
@@ -358,7 +358,7 @@ def main():
                 existing_titles.add(ai_item["title"])
                 created_count += 1
                 if created_count < count:
-                    print("[❄️ JITTER FREEZE] Sleeping 12s to protect GitHub secondary rate limit...")
+                    print("[RATE-LIMIT DELAY] Sleeping 12s to protect GitHub secondary rate limit...")
                     time.sleep(12)
 
     if created_count == 0:
