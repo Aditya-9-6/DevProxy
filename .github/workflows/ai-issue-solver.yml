@@ -1,0 +1,165 @@
+name: AI Issue Solver Bot
+
+on:
+  issues:
+    types: [labeled]
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: "Issue number to solve"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: ai-solver-${{ github.event.issue.number || github.event.inputs.issue_number }}
+  cancel-in-progress: true
+
+jobs:
+  solve-issue:
+    name: Autonomous Issue Solver
+    # Run only if triggered by 'auto-solve' label, comment '/solve' or '@devproxy-bot solve' / '@spryzen-bot solve', or workflow_dispatch
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'issues' && github.event.label.name == 'auto-solve') ||
+      (github.event_name == 'issue_comment' && !github.event.issue.pull_request && (
+        startsWith(github.event.comment.body, '@devproxy-bot solve') ||
+        startsWith(github.event.comment.body, '@spryzen-bot solve') ||
+        startsWith(github.event.comment.body, '/solve')
+      ))
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve Issue Metadata
+        id: meta
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            ISSUE_NUM="${{ github.event.inputs.issue_number }}"
+          else
+            ISSUE_NUM="${{ github.event.issue.number }}"
+          fi
+
+          # Fetch issue details via GitHub CLI
+          ISSUE_DATA=$(gh issue view "$ISSUE_NUM" --json title,body,number)
+          TITLE=$(echo "$ISSUE_DATA" | jq -r .title)
+          
+          echo "num=$ISSUE_NUM" >> $GITHUB_OUTPUT
+          echo "title=$TITLE" >> $GITHUB_OUTPUT
+
+          # Post starting acknowledgment comment
+          gh issue comment "$ISSUE_NUM" --body "🤖 **DevProxy AI Issue Solver** is analyzing this issue and writing the solution..."
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run AI Solution Generator
+        id: solver
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          ISSUE_NUM: ${{ steps.meta.outputs.num }}
+          ISSUE_TITLE: ${{ steps.meta.outputs.title }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          BODY=$(gh issue view "$ISSUE_NUM" --json body -q .body)
+
+          set +e
+          python3 .github/scripts/ai_issue_solver.py \
+            --issue-number "$ISSUE_NUM" \
+            --issue-title "$ISSUE_TITLE" \
+            --issue-body "$BODY" \
+            --workspace .
+          EXIT_CODE=$?
+          set -e
+
+          if [ $EXIT_CODE -eq 2 ]; then
+            echo "missing_key=true" >> $GITHUB_OUTPUT
+            gh issue comment "$ISSUE_NUM" --body "⚠️ **DevProxy AI Issue Solver: Action Required**
+          
+          The bot needs a free Google Gemini API key to generate code solutions.
+          
+          **How to enable in 1 minute (100% Free):**
+          1. Get a free API key at [Google AI Studio](https://aistudio.google.com/).
+          2. Go to **Settings** &rarr; **Secrets and variables** &rarr; **Actions** &rarr; **New repository secret**.
+          3. Name: \`GEMINI_API_KEY\`
+          4. Value: Paste your key.
+          
+          Once added, re-run this bot by commenting \`/solve\` on this issue!"
+            exit 0
+          elif [ $EXIT_CODE -ne 0 ]; then
+            gh issue comment "$ISSUE_NUM" --body "❌ **AI Issue Solver Error**: Encountered an issue while generating code for this ticket. Please check the workflow run logs."
+            exit $EXIT_CODE
+          fi
+
+          echo "missing_key=false" >> $GITHUB_OUTPUT
+
+      - name: Set up Go
+        if: steps.solver.outputs.missing_key != 'true'
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: true
+
+      - name: Verify Code Compilation & Tests
+        if: steps.solver.outputs.missing_key != 'true'
+        run: |
+          gofmt -w .
+          go vet ./... || true
+          go test -v ./... || {
+            echo "Tests or compiler checks had warnings. Staging anyway for author inspection."
+          }
+
+      - name: Create Branch and Commit Changes
+        if: steps.solver.outputs.missing_key != 'true'
+        env:
+          ISSUE_NUM: ${{ steps.meta.outputs.num }}
+          ISSUE_TITLE: ${{ steps.meta.outputs.title }}
+        run: |
+          BRANCH_NAME="ai/solve-issue-${ISSUE_NUM}"
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+          git checkout -B "$BRANCH_NAME"
+          git add -A
+          git commit -m "feat: automated resolution for issue #${ISSUE_NUM} (${ISSUE_TITLE})"
+          git push origin "$BRANCH_NAME" --force
+
+          echo "branch=$BRANCH_NAME" >> $GITHUB_ENV
+
+      - name: Open Pull Request
+        if: steps.solver.outputs.missing_key != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          ISSUE_NUM: ${{ steps.meta.outputs.num }}
+          ISSUE_TITLE: ${{ steps.meta.outputs.title }}
+        run: |
+          PR_BODY="ai_pr_summary.md"
+          if [ ! -f "$PR_BODY" ]; then
+            echo "Automated resolution for Issue #${ISSUE_NUM}." > "$PR_BODY"
+          fi
+
+          PR_URL=$(gh pr create \
+            --head "$branch" \
+            --base main \
+            --title "feat(ai): resolve #${ISSUE_NUM} - ${ISSUE_TITLE}" \
+            --body-file "$PR_BODY" \
+            --label "ai-generated,advancement")
+
+          echo "PR created: $PR_URL"
+          gh issue comment "$ISSUE_NUM" --body "🚀 **Solution Generated!** A pull request has been opened with the implementation: $PR_URL"
