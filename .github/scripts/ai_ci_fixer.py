@@ -197,36 +197,42 @@ def main():
     workspace = Path(args.workspace).resolve()
     print(f"[*] Starting Autonomous CI Fixer for PR #{args.pr_number} in {workspace}...")
 
-    # Step 1: Capture errors
-    error_log = ""
-    if args.error_log_file and Path(args.error_log_file).is_file():
-        error_log = Path(args.error_log_file).read_text(encoding="utf-8", errors="replace").strip()
-    
-    if not error_log:
+    all_repaired_files = set()
+    latest_summary = ""
+    post_code = 1
+    post_errors = ""
+
+    max_iterations = 2
+    for iteration in range(1, max_iterations + 1):
+        print(f"\n=== Autonomous Repair Pass {iteration}/{max_iterations} ===", flush=True)
+
+        # Step 1: Run diagnostics
         code, error_log = run_diagnostics(workspace)
         if code == 0 and not error_log:
-            print("[OK] All local checks (gofmt, go vet, go test) pass! No failure detected to fix.")
-            sys.exit(0)
+            print(f"[OK] All local checks pass cleanly at pass {iteration}!")
+            post_code = 0
+            post_errors = ""
+            break
 
-    print(f"[*] Diagnostics identified failure ({len(error_log)} chars of error output).")
+        print(f"[*] Diagnostics identified {len(error_log)} chars of error output at pass {iteration}.")
 
-    # Step 2: Extract referenced files & context
-    referenced_files = extract_referenced_files(error_log, workspace)
-    print(f"[*] Files mentioned in error output: {referenced_files}")
+        # Step 2: Extract referenced files & context
+        referenced_files = extract_referenced_files(error_log, workspace)
+        print(f"[*] Files mentioned in error output: {referenced_files}")
 
-    file_contents = {}
-    for rf in referenced_files[:10]:
-        fp = workspace / rf
-        if fp.is_file():
-            try:
-                file_contents[rf] = fp.read_text(encoding="utf-8", errors="replace")
-            except Exception as e:
-                print(f"[!] Could not read {rf}: {e}", file=sys.stderr)
+        file_contents = {}
+        for rf in referenced_files[:10]:
+            fp = workspace / rf
+            if fp.is_file():
+                try:
+                    file_contents[rf] = fp.read_text(encoding="utf-8", errors="replace")
+                except Exception as e:
+                    print(f"[!] Could not read {rf}: {e}", file=sys.stderr)
 
-    pr_diff = get_pr_diff(workspace)
+        pr_diff = get_pr_diff(workspace)
 
-    # Step 3: Construct prompt for Gemini
-    prompt = f"""Pull Request #{args.pr_number} has failing CI checks / compiler errors.
+        # Step 3: Construct prompt for Gemini
+        prompt = f"""Pull Request #{args.pr_number} has failing CI checks / compiler errors (Repair Pass {iteration}/{max_iterations}).
 
 === CI DIAGNOSTIC ERROR LOG ===
 {error_log[:18000]}
@@ -239,32 +245,37 @@ def main():
 
 Instructions:
 1. Diagnose the root cause of every compilation error, undefined symbol, or failing test assertion above.
-2. Ensure you preserve ALL existing exported types, functions, structs, and interfaces required across the package.
-3. Provide the full replacement content for each file that needs to be fixed.
-4. Output valid JSON adhering to the specified schema.
+2. Note that if a symbol (like struct, const, or function) is already declared in another file in the same package (e.g. finding.go), DO NOT redeclare it in rules.go.
+3. Ensure you preserve ALL existing exported types, functions, structs, and interfaces required across the package.
+4. Provide the full replacement content for each file that needs to be fixed.
+5. Output valid JSON adhering to the specified schema.
 """
 
-    # Step 4: Request fix from Gemini
-    result = call_gemini(api_key, prompt)
-    summary = result.get("summary", "Automated repair for CI test & compiler errors.")
-    files = result.get("files", [])
+        # Step 4: Request fix from Gemini
+        result = call_gemini(api_key, prompt)
+        latest_summary = result.get("summary", "Automated repair for CI test & compiler errors.")
+        files = result.get("files", [])
 
-    if not files:
-        print("[!] No file changes provided by AI.", file=sys.stderr)
-        sys.exit(1)
+        if not files:
+            print("[!] No file changes provided by AI.", file=sys.stderr)
+            break
 
-    print(f"[*] Applying {len(files)} fixed files...")
-    for f in files:
-        rel_path = f["path"].replace("\\", "/")
-        content = f["content"]
-        target = workspace / rel_path
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(content, encoding="utf-8")
-        print(f"    [+] Wrote fixed file: {rel_path}")
+        print(f"[*] Applying {len(files)} fixed files...")
+        for f in files:
+            rel_path = f["path"].replace("\\", "/")
+            content = f["content"]
+            target = workspace / rel_path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(content, encoding="utf-8")
+            all_repaired_files.add(rel_path)
+            print(f"    [+] Wrote fixed file: {rel_path}")
 
-    # Step 5: Format & verify locally
-    subprocess.run(["gofmt", "-w", "."], cwd=workspace)
-    post_code, post_errors = run_diagnostics(workspace)
+        # Step 5: Format & verify
+        subprocess.run(["gofmt", "-w", "."], cwd=workspace)
+        post_code, post_errors = run_diagnostics(workspace)
+        if post_code == 0:
+            print(f"[SUCCESS] Build and tests passed cleanly after pass {iteration}!")
+            break
 
     # Write summary
     summary_file = workspace / "ci_fix_summary.md"
@@ -273,17 +284,17 @@ Instructions:
 **Target**: Pull Request #{args.pr_number}
 
 ### 📋 Fix Summary
-{summary}
+{latest_summary}
 
 ### 📂 Files Repaired
-{chr(10).join(f"- `{f['path']}`" for f in files)}
+{chr(10).join(f"- `{f}`" for f in sorted(list(all_repaired_files)))}
 
 ### 🧪 Diagnostic Verification
 - Local build & test status after fix: **{'PASSED (Clean)' if post_code == 0 else 'WARNING (Some checks still reporting errors)'}**
 {f"```text{chr(10)}{post_errors[:1500]}{chr(10)}```" if post_code != 0 else ""}
 """
     summary_file.write_text(summary_content, encoding="utf-8")
-    print(f"[OK] Fix applied. Verification result: code {post_code}")
+    print(f"[OK] Fix cycle completed. Final verification status: code {post_code}")
 
 if __name__ == "__main__":
     main()
