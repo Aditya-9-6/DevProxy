@@ -2,7 +2,7 @@ name: "Advancement & Roadmap Issue Generator"
 
 on:
   schedule:
-    - cron: "0 */4 * * *" # Runs every 4 hours automatically
+    - cron: "0 */2 * * *" # Runs every 2 hours automatically
   workflow_dispatch:
     inputs:
       count:

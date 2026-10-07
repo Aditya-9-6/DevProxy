@@ -181,3 +181,9 @@ jobs:
 
           echo "PR ready: $PR_URL"
           gh issue comment "$ISSUE_NUM" --body "🚀 **Solution Generated!** A pull request has been opened/updated with the implementation: $PR_URL"
+
+          NEW_PR_NUM=$(echo "$PR_URL" | grep -oE '[0-9]+$' || true)
+          if [ -n "$NEW_PR_NUM" ]; then
+            echo "Triggering AI PR Reviewer for PR #$NEW_PR_NUM..."
+            gh workflow run ai-pr-reviewer.yml -f pr_number="$NEW_PR_NUM" || true
+          fi
