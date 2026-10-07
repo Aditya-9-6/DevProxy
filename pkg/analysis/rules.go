@@ -1,34 +1,9 @@
 package analysis
 
 import (
-	"github.com/Aditya-9-6/DevProxy/pkg/ringbuffer"
-	"regexp"
 	"strings"
-)
 
-// Finding represents a security issue detected by a rule.
-type Finding struct {
-	ID          string
-	RequestID   string
-	Timestamp   interface{}
-	Severity    string
-	Category    string
-	RuleName    string
-	Title       string
-	Description string
-	Evidence    string
-	Location    string
-	Remediation string
-	URL         string
-	Method      string
-}
-
-const (
-	SeverityCritical = "CRITICAL"
-	SeverityHigh     = "HIGH"
-	SeverityMedium   = "MEDIUM"
-	SeverityLow      = "LOW"
-	SeverityInfo     = "INFO"
+	"github.com/Aditya-9-6/DevProxy/pkg/ringbuffer"
 )
 
 // Rule defines the interface for evaluating traffic events.
@@ -40,6 +15,15 @@ type Rule interface {
 // SecurityRulesEngine coordinates and executes security inspection rules.
 type SecurityRulesEngine struct {
 	rules []Rule
+}
+
+// Analyze iterates through all registered rules and aggregates findings.
+func (e *SecurityRulesEngine) Analyze(event *ringbuffer.TrafficEvent) []*Finding {
+	var findings []*Finding
+	for _, rule := range e.rules {
+		findings = append(findings, rule.Evaluate(event)...)
+	}
+	return findings
 }
 
 // TLSFingerprintRule flags User-Agent spoofing.

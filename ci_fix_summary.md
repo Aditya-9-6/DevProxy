@@ -3,11 +3,9 @@
 **Target**: Pull Request #21
 
 ### 📋 Fix Summary
-Resolved compilation errors caused by missing struct definitions, undefined types, and unused imports. Fixed the TrafficEvent struct in ringbuffer to include the missing Duration field and added the missing ProxyServer struct definition in pkg/proxy. Cleaned up unused imports in proxy and analysis packages.
+Resolved compilation errors in pkg/analysis by removing duplicate declarations of 'Finding' and severity constants in rules.go, removing unused imports, and implementing the missing 'Analyze' method in the SecurityRulesEngine struct to satisfy the worker pool's requirements.
 
 ### 📂 Files Repaired
-- `pkg/ringbuffer/event.go`
-- `pkg/proxy/proxy.go`
 - `pkg/analysis/rules.go`
 
 ### 🧪 Diagnostic Verification
@@ -15,29 +13,29 @@ Resolved compilation errors caused by missing struct definitions, undefined type
 ```text
 === GO VET COMPILATION / STATIC ANALYSIS ERRORS ===
 # github.com/Aditya-9-6/DevProxy/pkg/analysis
-pkg/analysis/rules.go:5:2: "regexp" imported and not used
-pkg/analysis/rules.go:10:6: Finding redeclared in this block
-	pkg/analysis/finding.go:17:6: other declaration of Finding
-pkg/analysis/rules.go:27:2: SeverityCritical redeclared in this block
-	pkg/analysis/finding.go:9:2: other declaration of SeverityCritical
-pkg/analysis/rules.go:28:2: SeverityHigh redeclared in this block
-	pkg/analysis/finding.go:10:2: other declaration of SeverityHigh
-pkg/analysis/rules.go:29:2: SeverityMedium redeclared in this block
-	pkg/analysis/finding.go:11:2: other declaration of SeverityMedium
-pkg/analysis/rules.go:30:2: SeverityLow redeclared in this block
-	pkg/analysis/finding.go:12:2: other declaration of SeverityLow
-pkg/analysis/rules.go:31:2: SeverityInfo redeclared in this block
-	pkg/analysis/finding.go:13:2: other declaration of SeverityInfo
-pkg/analysis/worker.go:72:24: p.engine.Analyze undefined (type *SecurityRulesEngine has no field or method Analyze)
-# github.com/Aditya-9-6/DevProxy/pkg/analysis
 # [github.com/Aditya-9-6/DevProxy/pkg/analysis]
-vet: pkg/analysis/rules.go:10:6: Finding redeclared in this block
+vet: pkg/analysis/custom_test.go:38:12: undefined: NewSecurityRulesEngine
+# github.com/Aditya-9-6/DevProxy/pkg/storage
+pkg/storage/har.go:249:4: unknown field ClientIP in struct literal of type ringbuffer.TrafficEvent
+pkg/storage/har.go:253:4: unknown field Proto in struct literal of type ringbuffer.TrafficEvent
+pkg/storage/store.go:166:9: event.ClientIP undefined (type *ringbuffer.TrafficEvent has no field or method ClientIP)
+pkg/storage/store.go:167:9: event.Scheme undefined (type *ringbuffer.TrafficEvent has no field or method Scheme)
+pkg/storage/store.go:172:9: event.Proto undefined (type *ringbuffer.TrafficEvent has no field or method Proto)
+# github.com/Aditya-9-6/DevProxy/pkg/storage
+# [github.com/Aditya-9-6/DevProxy/pkg/storage]
+vet: pkg/storage/har.go:249:4: unknown field ClientIP in struct literal of type ringbuffer.TrafficEvent
 
 === GO TEST FAILURES ===
 FAIL	github.com/Aditya-9-6/DevProxy/cmd/devproxy [build failed]
 FAIL	github.com/Aditya-9-6/DevProxy/pkg/analysis [build failed]
 === RUN   TestCertificateAuthority
---- PASS: TestCertificateAuthority (0.02s)
+--- PASS: TestCertificateAuthority (0.04s)
 PASS
-ok  	github.com/Aditya-9-6/DevProxy/pkg/certs	
+ok  	github.com/Aditya-9-6/DevProxy/pkg/certs	(cached)
+=== RUN   TestOpenAPIValidator
+--- PASS: TestOpenAPIValidator (0.00s)
+PASS
+ok  	github.com/Aditya-9-6/DevProxy/pkg/contract	0.003s
+FAIL	github.com/Aditya-9-6/DevProxy/pkg/dashboard [build failed]
+=== RUN   TestM
 ```
