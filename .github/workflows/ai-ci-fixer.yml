@@ -34,7 +34,6 @@ jobs:
     steps:
       - name: Generate GitHub App Token (Higher Rate Limits)
         id: app-token
-        if: secrets.APP_ID != '' && secrets.APP_PRIVATE_KEY != ''
         uses: actions/create-github-app-token@v1
         continue-on-error: true
         with:
