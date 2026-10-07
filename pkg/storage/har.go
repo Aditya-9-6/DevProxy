@@ -2,8 +2,11 @@ package storage
 
 import (
 	"encoding/json"
+	"net/http"
 	"strings"
 	"time"
+
+	"github.com/Aditya-9-6/DevProxy/pkg/ringbuffer"
 )
 
 // HAR represents the root HTTP Archive 1.2 container.
@@ -198,4 +201,58 @@ func extractQueryParams(rawURL string) []HARQuery {
 		}
 	}
 	return queries
+}
+
+// ParseHAR parses standard HAR 1.2 JSON structure into ringbuffer.TrafficEvent objects.
+func ParseHAR(harBytes []byte) ([]*ringbuffer.TrafficEvent, error) {
+	var har HAR
+	if err := json.Unmarshal(harBytes, &har); err != nil {
+		return nil, err
+	}
+
+	events := make([]*ringbuffer.TrafficEvent, 0, len(har.Log.Entries))
+	for _, entry := range har.Log.Entries {
+		reqHeaders := make(http.Header)
+		for _, h := range entry.Request.Headers {
+			reqHeaders.Add(h.Name, h.Value)
+		}
+
+		respHeaders := make(http.Header)
+		for _, h := range entry.Response.Headers {
+			respHeaders.Add(h.Name, h.Value)
+		}
+
+		var reqBody []byte
+		if entry.Request.PostData != nil {
+			reqBody = []byte(entry.Request.PostData.Text)
+		}
+
+		var respBody []byte
+		if entry.Response.Content.Text != "" {
+			respBody = []byte(entry.Response.Content.Text)
+		}
+
+		event := &ringbuffer.TrafficEvent{
+			Timestamp:   entry.StartedDateTime,
+			Duration:    time.Duration(entry.Time * float64(time.Millisecond)),
+			ClientIP:    "127.0.0.1",
+			Host:        entry.ServerIPAddress,
+			Method:      entry.Request.Method,
+			URL:         entry.Request.URL,
+			Proto:       entry.Request.HTTPVersion,
+			ReqHeaders:  reqHeaders,
+			ReqBody:     reqBody,
+			StatusCode:  entry.Response.Status,
+			RespHeaders: respHeaders,
+			RespBody:    respBody,
+			TLS:         strings.HasPrefix(entry.Request.URL, "https"),
+		}
+
+		if event.Host == "" {
+		    event.Host = reqHeaders.Get("Host")
+		}
+
+		events = append(events, event)
+	}
+	return events, nil
 }
