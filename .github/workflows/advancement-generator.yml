@@ -1,29 +1,30 @@
 name: "Advancement & Roadmap Issue Generator"
 
 on:
+  schedule:
+    - cron: "0 */4 * * *" # Runs every 4 hours automatically
   workflow_dispatch:
     inputs:
-      advancement_type:
-        description: "Select Advancement to generate as GitHub Issue"
-        required: true
-        default: "all"
-        type: choice
-        options:
-          - "all"
-          - "grpc_protobuf"
-          - "upstream_proxy_chain"
-          - "har_import_playback"
-          - "otel_tracing"
-          - "ja4_tls_fingerprint"
-          - "ui_theme_toggle"
+      count:
+        description: "Number of high-impact advancement issues to generate (1-5)"
+        required: false
+        default: "1"
+      force:
+        description: "Bypass freeze timer cooldown? (true/false)"
+        required: false
+        default: "false"
 
 permissions:
   issues: write
-  contents: read
+  contents: write
+
+concurrency:
+  group: advancement-generator
+  cancel-in-progress: false
 
 jobs:
   generate-issues:
-    name: "Generate Advancement Issues"
+    name: "Generate Structured Advancement Issues"
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
@@ -39,11 +40,19 @@ jobs:
           app-id: ${{ secrets.APP_ID }}
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
 
-      - name: Generate Advancement Issues via GitHub CLI
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run Advancement Issue Generator Engine
         env:
-          GITHUB_TOKEN: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
           GH_TOKEN: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
-          ADVANCEMENT: ${{ inputs.advancement_type }}
+          GH_REPO: ${{ github.repository }}
+          GEMINI_ISSUE_KEY: ${{ secrets.GEMINI_ISSUE_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_ISSUE_KEY || secrets.GEMINI_API_KEY }}
+          INPUT_COUNT: ${{ github.event.inputs.count || '1' }}
+          FORCE_SUBMIT: ${{ github.event.inputs.force || 'false' }}
+          MIN_COOLDOWN_MINUTES: "30"
         run: |
-          chmod +x .github/scripts/generate-advancements.sh
-          bash .github/scripts/generate-advancements.sh "$ADVANCEMENT"
+          python3 .github/scripts/generate_advancement_issue.py
