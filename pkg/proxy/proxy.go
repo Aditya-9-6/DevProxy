@@ -22,6 +22,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
+	"golang.org/x/net/http2"
 )
 
 // ProxyServer is the high-throughput asynchronous proxy engine.
@@ -47,7 +48,7 @@ func NewProxyServer(addr string, cm *certs.CertificateManager, rb *ringbuffer.Ri
 			Timeout:   10 * time.Second,
 			KeepAlive: 30 * time.Second,
 		}).DialContext,
-		ForceAttemptHTTP2:     false, // Ensure clean HTTP/1.1 wire protocol for proxying
+		ForceAttemptHTTP2:     true, // Enable gRPC/HTTP2 upstream capabilities
 		MaxIdleConns:          500,
 		MaxIdleConnsPerHost:   100,
 		IdleConnTimeout:       90 * time.Second,
@@ -73,6 +74,9 @@ func NewProxyServer(addr string, cm *certs.CertificateManager, rb *ringbuffer.Ri
 		WriteTimeout: 120 * time.Second,
 		IdleTimeout:  120 * time.Second,
 	}
+
+	// Configure HTTP/2 for gRPC multiplexing
+	http2.ConfigureServer(p.httpServer, &http2.Server{})
 
 	return p
 }
@@ -556,6 +560,7 @@ func (p *ProxyServer) handleHTTP(w http.ResponseWriter, r *http.Request) {
 		TLS:         false,
 		TraceID:     traceID,
 		SpanID:      spanID,
+		IsGRPC:      strings.HasPrefix(r.Header.Get("Content-Type"), "application/grpc"),
 	}
 
 	p.ringBuffer.Push(event)

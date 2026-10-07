@@ -18,3 +18,5 @@ dist/
 Thumbs.db
 .vscode/
 .idea/
+devproxy
+devproxy-report.json

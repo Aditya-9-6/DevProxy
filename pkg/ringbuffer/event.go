@@ -26,4 +26,5 @@ type TrafficEvent struct {
 	TLSServer   string        `json:"tls_server,omitempty"`
 	TraceID     string        `json:"trace_id,omitempty"`
 	SpanID      string        `json:"span_id,omitempty"`
+	IsGRPC      bool          `json:"is_grpc,omitempty"`
 }
