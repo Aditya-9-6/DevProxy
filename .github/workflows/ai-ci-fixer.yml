@@ -70,11 +70,9 @@ jobs:
           ref: ${{ steps.meta.outputs.head_ref }}
           fetch-depth: 0
 
-      - name: Ensure AI Fixer Script Present
+      - name: Ensure Latest AI Fixer Script Present
         run: |
-          if [ ! -f ".github/scripts/ai_ci_fixer.py" ]; then
-            git checkout origin/main -- .github/scripts/ai_ci_fixer.py || true
-          fi
+          git checkout origin/main -- .github/scripts/ai_ci_fixer.py || true
 
       - name: Set up Go
         uses: actions/setup-go@v5

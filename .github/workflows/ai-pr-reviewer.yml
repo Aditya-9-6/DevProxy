@@ -76,14 +76,9 @@ jobs:
           fetch-depth: 0
           token: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
 
-      - name: Ensure PR Reviewer & Fixer Scripts Present
+      - name: Ensure Latest Reviewer & Fixer Scripts Present
         run: |
-          if [ ! -f ".github/scripts/ai_pr_reviewer.py" ]; then
-            git checkout origin/main -- .github/scripts/ai_pr_reviewer.py || true
-          fi
-          if [ ! -f ".github/scripts/ai_ci_fixer.py" ]; then
-            git checkout origin/main -- .github/scripts/ai_ci_fixer.py || true
-          fi
+          git checkout origin/main -- .github/scripts/ai_pr_reviewer.py .github/scripts/ai_ci_fixer.py || true
 
       - name: Set up Go
         uses: actions/setup-go@v5
