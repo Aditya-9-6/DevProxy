@@ -79,15 +79,12 @@ jobs:
             gh pr merge "$PR_NUM" --squash --auto --delete-branch --author-email "aditya-9-6@users.noreply.github.com" || exit 1
           }
 
-          gh pr comment "$PR_NUM" --body "🚀 **Pull Request #${PR_NUM} Successfully Merged!**
-          
-Maintainer **@${ACTOR}** has approved the architectural impact and signed off on this contribution.
-Code has been squash-merged into \`main\` and the working branch has been safely deleted."
+          PR_MSG=$(printf '🚀 **Pull Request #%s Successfully Merged!**\n\nMaintainer **@%s** has approved the architectural impact and signed off on this contribution.\nCode has been squash-merged into `main` and the working branch has been safely deleted.' "$PR_NUM" "$ACTOR")
+          gh pr comment "$PR_NUM" --body "$PR_MSG"
 
           # Find linked issue and post closure comment
           LINKED_ISSUE=$(gh pr view "$PR_NUM" --json headRefName,body --jq '.headRefName + " " + .body' | grep -oEi '(issue-[0-9]+|closes #[0-9]+|fixes #[0-9]+)' | head -n1 | grep -oE '[0-9]+' || true)
           if [ -n "$LINKED_ISSUE" ]; then
-            gh issue comment "$LINKED_ISSUE" --body "🎉 **Issue #${LINKED_ISSUE} Successfully Resolved & Merged!**
-            
-The approved implementation from PR #${PR_NUM} has been merged into \`main\` by maintainer **@${ACTOR}**." || true
+            ISSUE_MSG=$(printf '🎉 **Issue #%s Successfully Resolved & Merged!**\n\nThe approved implementation from PR #%s has been merged into `main` by maintainer **@%s**.' "$LINKED_ISSUE" "$PR_NUM" "$ACTOR")
+            gh issue comment "$LINKED_ISSUE" --body "$ISSUE_MSG" || true
           fi

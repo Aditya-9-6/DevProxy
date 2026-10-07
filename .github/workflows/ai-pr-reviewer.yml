@@ -28,7 +28,12 @@ jobs:
     # Trigger on PR open/synchronize by maintainer, workflow_dispatch, or authorized maintainer comment /review
     if: >
       github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'pull_request' && contains('["OWNER", "COLLABORATOR", "MEMBER"]', github.event.pull_request.author_association)) ||
+      (github.event_name == 'pull_request' && (
+        contains('["OWNER", "COLLABORATOR", "MEMBER"]', github.event.pull_request.author_association) ||
+        github.event.pull_request.user.login == 'aditya-s-agent[bot]' ||
+        github.event.pull_request.user.login == 'app/aditya-s-agent' ||
+        contains(github.event.pull_request.labels.*.name, 'ai-generated')
+      )) ||
       (github.event_name == 'issue_comment' && github.event.issue.pull_request &&
        contains('["OWNER", "COLLABORATOR", "MEMBER"]', github.event.comment.author_association) && (
         startsWith(github.event.comment.body, '/review') ||
@@ -152,11 +157,8 @@ jobs:
 
             if [ -n "$LINKED_ISSUE" ]; then
               SCORE=$(jq -r .score ai_review_status.json)
-              gh issue comment "$LINKED_ISSUE" --body "🌟 **Solution 100% Ready for Merge!**
-              
-The pull request (#${PR_NUM}) implementing this advancement has passed all autonomous architectural quality gates and anti-spaghetti checks with a score of **${SCORE}/100**.
-
-cc **@Aditya-9-6**: To finalize this advancement and merge into \`main\`, please approve PR #${PR_NUM} or comment \`/merge\` on the PR." || true
+              NOTIFY_MSG=$(printf '🌟 **Solution 100% Ready for Merge!**\n\nThe pull request (#%s) implementing this advancement has passed all autonomous architectural quality gates and anti-spaghetti checks with a score of **%s/100**.\n\ncc **@Aditya-9-6**: To finalize this advancement and merge into `main`, please approve PR #%s or comment `/merge` on the PR.' "$PR_NUM" "$SCORE" "$PR_NUM")
+              gh issue comment "$LINKED_ISSUE" --body "$NOTIFY_MSG" || true
             fi
           fi
 
