@@ -147,6 +147,7 @@ jobs:
 
           if [ "$VERDICT" = "APPROVED" ]; then
             echo "==> PR is 100% approved. Marking with ready-to-merge label."
+            gh label create "ready-to-merge" --color "0e8a16" --description "Approved by autonomous reviewer" --force || true
             gh pr edit "$PR_NUM" --add-label "ready-to-merge" || true
 
             # Extract linked issue number from branch or PR body
@@ -157,7 +158,7 @@ jobs:
 
             if [ -n "$LINKED_ISSUE" ]; then
               SCORE=$(jq -r .score ai_review_status.json)
-              NOTIFY_MSG=$(printf '🌟 **Solution 100% Ready for Merge!**\n\nThe pull request (#%s) implementing this advancement has passed all autonomous architectural quality gates and anti-spaghetti checks with a score of **%s/100**.\n\ncc **@Aditya-9-6**: To finalize this advancement and merge into `main`, please approve PR #%s or comment `/merge` on the PR.' "$PR_NUM" "$SCORE" "$PR_NUM")
+              NOTIFY_MSG=$(printf '🌟 **Solution 100%%%% Ready for Merge!**\n\nThe pull request (#%s) implementing this advancement has passed all autonomous architectural quality gates and anti-spaghetti checks with a score of **%s/100**.\n\ncc **@Aditya-9-6**: To finalize this advancement and merge into `main`, please approve PR #%s or comment `/merge` on the PR.' "$PR_NUM" "$SCORE" "$PR_NUM")
               gh issue comment "$LINKED_ISSUE" --body "$NOTIFY_MSG" || true
             fi
           fi
