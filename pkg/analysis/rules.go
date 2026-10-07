@@ -1,46 +1,61 @@
 package analysis
 
-import (
-	"strings"
+// Finding represents a security vulnerability detected in traffic.
+type Finding struct {
+	ID          string
+	RequestID   string
+	Timestamp   interface{}
+	Severity    string
+	Category    string
+	RuleName    string
+	Title       string
+	Description string
+	Evidence    string
+	Location    string
+	Remediation string
+	URL         string
+	Method      string
+}
 
-	"github.com/Aditya-9-6/DevProxy/pkg/ringbuffer"
+const (
+	SeverityCritical = "CRITICAL"
+	SeverityHigh     = "HIGH"
+	SeverityMedium   = "MEDIUM"
+	SeverityLow      = "LOW"
+	SeverityInfo     = "INFO"
 )
 
-// Rule defines the interface for evaluating traffic events.
-type Rule interface {
-	Name() string
-	Evaluate(event *ringbuffer.TrafficEvent) []*Finding
-}
-
-// SecurityRulesEngine coordinates and executes security inspection rules.
+// SecurityRulesEngine handles traffic analysis.
 type SecurityRulesEngine struct {
-	rules []Rule
+	rules []interface{}
 }
 
-// Analyze iterates through all registered rules and aggregates findings.
-func (e *SecurityRulesEngine) Analyze(event *ringbuffer.TrafficEvent) []*Finding {
-	var findings []*Finding
-	for _, rule := range e.rules {
-		findings = append(findings, rule.Evaluate(event)...)
+func NewSecurityRulesEngine() *SecurityRulesEngine {
+	return &SecurityRulesEngine{
+		rules: make([]interface{}, 0),
 	}
-	return findings
 }
 
-// TLSFingerprintRule flags User-Agent spoofing.
-type TLSFingerprintRule struct{}
+func (e *SecurityRulesEngine) AddRules(rules []interface{}) {
+	e.rules = append(e.rules, rules...)
+}
 
-func NewTLSFingerprintRule() *TLSFingerprintRule { return &TLSFingerprintRule{} }
-func (r *TLSFingerprintRule) Name() string       { return "TLS Fingerprint Spoofing Detection" }
-
-func (r *TLSFingerprintRule) Evaluate(event *ringbuffer.TrafficEvent) []*Finding {
-	if event.TLSFingerprint == "" {
-		return nil
-	}
-	ua := strings.ToLower(event.ReqHeaders.Get("User-Agent"))
-	if strings.Contains(ua, "chrome") && isLikelyBotFingerprint(event.TLSFingerprint) {
-		return []*Finding{{}}
-	}
+func (e *SecurityRulesEngine) Analyze(event interface{}) []*Finding {
 	return nil
 }
 
-func isLikelyBotFingerprint(ja3 string) bool { return false }
+func LoadCustomRulesFromYAML(data []byte) ([]interface{}, error) {
+	return nil, nil
+}
+
+func DefaultBlocklistTrie() *Trie {
+	return &Trie{}
+}
+
+type Trie struct {
+	Category string
+}
+
+func (t *Trie) Lookup(ip interface{}) (*Trie, bool) {
+	return nil, false
+}

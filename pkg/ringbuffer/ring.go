@@ -1,130 +1,92 @@
 package ringbuffer
 
 import (
+	"net/http"
 	"sync"
-	"sync/atomic"
+	"time"
 )
 
-// RingBuffer is a high-throughput bounded circular ring buffer designed to decouple
-// the real-time proxy data path from the asynchronous security analysis path.
+// TrafficEvent represents a captured HTTP transaction.
+type TrafficEvent struct {
+	ID          string
+	Timestamp   time.Time
+	Duration    time.Duration
+	ClientIP    string
+	Scheme      string
+	Host        string
+	Method      string
+	Path        string
+	URL         string
+	Proto       string
+	StatusCode  int
+	ReqHeaders  http.Header
+	ReqBody     []byte
+	RespHeaders http.Header
+	RespBody    []byte
+	TLS         bool
+}
+
+// RingBuffer is a thread-safe, fixed-size circular buffer for traffic events.
 type RingBuffer struct {
-	buffer      []*TrafficEvent
-	capacity    uint64
-	mask        uint64
-	head        atomic.Uint64 // write pointer
-	tail        atomic.Uint64 // read pointer
-	dropped     atomic.Uint64 // count of dropped events if analysis lags
-	totalPushed atomic.Uint64
-	mu          sync.Mutex // lightweight mutex for multi-consumer synchronization & cond
-	cond        *sync.Cond
-	closed      atomic.Bool
+	mu      sync.Mutex
+	data    []*TrafficEvent
+	head    int
+	tail    int
+	size    int
+	count   int
+	dropped int64
+	total   int64
+	closed  bool
 }
 
-// NewRingBuffer creates a circular ring buffer with the given size (rounded up to power of 2).
 func NewRingBuffer(size int) *RingBuffer {
-	if size < 16 {
-		size = 16
+	return &RingBuffer{
+		data: make([]*TrafficEvent, size),
+		size: size,
 	}
-	// Round up to power of 2
-	cap := uint64(1)
-	for cap < uint64(size) {
-		cap <<= 1
-	}
-
-	rb := &RingBuffer{
-		buffer:   make([]*TrafficEvent, cap),
-		capacity: cap,
-		mask:     cap - 1,
-	}
-	rb.cond = sync.NewCond(&rb.mu)
-	return rb
 }
 
-// Push adds an event to the ring buffer. It is completely non-blocking:
-// if the analysis pipeline falls behind and the buffer is full, it drops the item
-// and immediately returns to prevent any latency degradation in the proxy data path.
 func (rb *RingBuffer) Push(event *TrafficEvent) bool {
-	if rb.closed.Load() {
-		return false
-	}
-
 	rb.mu.Lock()
-	head := rb.head.Load()
-	tail := rb.tail.Load()
-
-	if head-tail >= rb.capacity {
-		// Buffer is full. Never block data path!
-		rb.dropped.Add(1)
-		rb.mu.Unlock()
+	defer rb.mu.Unlock()
+	if rb.closed {
 		return false
 	}
-
-	idx := head & rb.mask
-	rb.buffer[idx] = event
-	rb.head.Add(1)
-	rb.totalPushed.Add(1)
-
-	rb.cond.Signal()
-	rb.mu.Unlock()
+	rb.total++
+	if rb.count == rb.size {
+		rb.dropped++
+		return false
+	}
+	rb.data[rb.tail] = event
+	rb.tail = (rb.tail + 1) % rb.size
+	rb.count++
 	return true
 }
 
-// Pop retrieves the next event from the buffer. It blocks until an event is available or the buffer is closed.
 func (rb *RingBuffer) Pop() *TrafficEvent {
 	rb.mu.Lock()
 	defer rb.mu.Unlock()
-
-	for rb.head.Load() == rb.tail.Load() {
-		if rb.closed.Load() {
-			return nil
-		}
-		rb.cond.Wait()
-	}
-
-	tail := rb.tail.Load()
-	idx := tail & rb.mask
-	event := rb.buffer[idx]
-	rb.buffer[idx] = nil // allow GC
-	rb.tail.Add(1)
-
-	return event
-}
-
-// TryPop attempts to retrieve an event without blocking. Returns nil if empty.
-func (rb *RingBuffer) TryPop() *TrafficEvent {
-	rb.mu.Lock()
-	defer rb.mu.Unlock()
-
-	if rb.head.Load() == rb.tail.Load() {
+	if rb.count == 0 {
 		return nil
 	}
-
-	tail := rb.tail.Load()
-	idx := tail & rb.mask
-	event := rb.buffer[idx]
-	rb.buffer[idx] = nil
-	rb.tail.Add(1)
-
+	event := rb.data[rb.head]
+	rb.head = (rb.head + 1) % rb.size
+	rb.count--
 	return event
 }
 
-// Stats returns current operational metrics.
-func (rb *RingBuffer) Stats() (queued uint64, dropped uint64, total uint64) {
-	head := rb.head.Load()
-	tail := rb.tail.Load()
-	queued = 0
-	if head > tail {
-		queued = head - tail
-	}
-	return queued, rb.dropped.Load(), rb.totalPushed.Load()
+func (rb *RingBuffer) TryPop() *TrafficEvent {
+	return rb.Pop()
 }
 
-// Close shuts down the buffer and wakes up waiting consumers.
-func (rb *RingBuffer) Close() {
-	if rb.closed.Swap(true) {
-		return
-	}
+func (rb *RingBuffer) Stats() (queued int, dropped int64, total int64) {
 	rb.mu.Lock()
-	rb.cond.Broadcast()
-	rb.mu.Unlock()
+	defer rb.mu.Unlock()
+	return rb.count, rb.dropped, rb.total
+}
+
+func (rb *RingBuffer) Close() {
+	rb.mu.Lock()
+	defer rb.mu.Unlock()
+	rb.closed = true
 }
