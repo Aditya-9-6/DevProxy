@@ -7,9 +7,11 @@ import (
 	"sync"
 )
 
+const MaxGRPCFrameSize = 4 * 1024 * 1024 // 4MB limit
+
 var grpcBufferPool = sync.Pool{
 	New: func() interface{} {
-		return make([]byte, 32*1024)
+		return make([]byte, MaxGRPCFrameSize)
 	},
 }
 
@@ -20,9 +22,8 @@ type GRPCFrame struct {
 	Data       []byte
 }
 
-// ParseGRPCStream reads gRPC frames from an io.Reader.
-func ParseGRPCStream(r io.Reader) ([]GRPCFrame, error) {
-	var frames []GRPCFrame
+// ParseGRPCStream reads gRPC frames from an io.Reader using a callback to support streaming.
+func ParseGRPCStream(r io.Reader, callback func(GRPCFrame) error) error {
 	buf := grpcBufferPool.Get().([]byte)
 	defer grpcBufferPool.Put(buf)
 
@@ -30,26 +31,30 @@ func ParseGRPCStream(r io.Reader) ([]GRPCFrame, error) {
 		header := make([]byte, 5)
 		_, err := io.ReadFull(r, header)
 		if err == io.EOF {
-			break
+			return nil
 		}
 		if err != nil {
-			return frames, err
+			return err
 		}
 
 		compressed := header[0] != 0
 		length := binary.BigEndian.Uint32(header[1:])
 
-		data := make([]byte, length)
-		_, err = io.ReadFull(r, data)
-		if err != nil {
-			return frames, err
+		if length > MaxGRPCFrameSize {
+			return errors.New("gRPC frame exceeds maximum size")
 		}
 
-		frames = append(frames, GRPCFrame{
-			Compressed: compressed,
-			Length:     length,
-			Data:       data,
-		})
+		// Use pooled buffer for reading data
+		_, err = io.ReadFull(r, buf[:length])
+		if err != nil {
+			return err
+		}
+
+		frameData := make([]byte, length)
+		copy(frameData, buf[:length])
+
+		if err := callback(GRPCFrame{Compressed: compressed, Length: length, Data: frameData}); err != nil {
+			return err
+		}
 	}
-	return frames, nil
 }

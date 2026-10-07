@@ -56,7 +56,9 @@ func (h *Hub) Run() {
 		case message := <-h.broadcast:
 			h.mu.RLock()
 			for client := range h.clients {
-				_ = client.WriteMessage(websocket.TextMessage, message)
+				if err := client.WriteMessage(websocket.TextMessage, message); err != nil {
+					go func(c *websocket.Conn) { h.unregister <- c }(client)
+				}
 			}
 			h.mu.RUnlock()
 		}
