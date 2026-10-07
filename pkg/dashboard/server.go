@@ -213,7 +213,7 @@ func (s *Server) handleImportHAR(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if s.ringBuf == nil {
-	    http.Error(w, "RingBuffer is not configured", http.StatusInternalServerError)
+		http.Error(w, "RingBuffer is not configured", http.StatusInternalServerError)
 		return
 	}
 

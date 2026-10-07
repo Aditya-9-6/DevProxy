@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -87,6 +88,7 @@ type HARContent struct {
 	Size     int    `json:"size"`
 	MimeType string `json:"mimeType"`
 	Text     string `json:"text,omitempty"`
+	Encoding string `json:"encoding,omitempty"`
 }
 
 type HARTimings struct {
@@ -229,7 +231,16 @@ func ParseHAR(harBytes []byte) ([]*ringbuffer.TrafficEvent, error) {
 
 		var respBody []byte
 		if entry.Response.Content.Text != "" {
-			respBody = []byte(entry.Response.Content.Text)
+			if entry.Response.Content.Encoding == "base64" {
+				decoded, err := base64.StdEncoding.DecodeString(entry.Response.Content.Text)
+				if err == nil {
+					respBody = decoded
+				} else {
+					respBody = []byte(entry.Response.Content.Text) // Fallback
+				}
+			} else {
+				respBody = []byte(entry.Response.Content.Text)
+			}
 		}
 
 		event := &ringbuffer.TrafficEvent{
@@ -249,7 +260,7 @@ func ParseHAR(harBytes []byte) ([]*ringbuffer.TrafficEvent, error) {
 		}
 
 		if event.Host == "" {
-		    event.Host = reqHeaders.Get("Host")
+			event.Host = reqHeaders.Get("Host")
 		}
 
 		events = append(events, event)
