@@ -103,3 +103,27 @@ func TestJWTRuleEvaluation(t *testing.T) {
 		t.Fatal("expected critical severity finding for alg none")
 	}
 }
+
+func BenchmarkParseAndInspectJWT(b *testing.B) {
+	header := `{"alg": "HS256", "typ": "JWT"}`
+	payload := `{"sub": "user123", "exp": 2000000000, "role": "admin"}`
+	token := makeJWT(header, payload, "c2lnbmF0dXJl")
+
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_, _ = ParseAndInspectJWT(token, "req-bench", "https://api.test/profile", "GET", "Authorization")
+	}
+}
+
+func FuzzJWTInspection(f *testing.F) {
+	f.Add("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozS6-mNumI")
+	f.Add("header.payload.signature")
+	f.Add("..")
+	f.Add("invalid-token-without-dots")
+	f.Add("")
+
+	f.Fuzz(func(t *testing.T, token string) {
+		_, _ = ParseAndInspectJWT(token, "req-fuzz", "https://api.test/fuzz", "GET", "Authorization")
+	})
+}

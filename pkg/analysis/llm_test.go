@@ -393,3 +393,52 @@ func indexString(s, sub string) int {
 	}
 	return -1
 }
+
+func BenchmarkLLMRule_Evaluate(b *testing.B) {
+	rule := NewLLMRule()
+	reqBody := `{"model": "gpt-4o", "messages": [{"role": "user", "content": "Explain quantum computing in simple terms."}]}`
+	respBody := `{"id": "chatcmpl-123", "object": "chat.completion", "model": "gpt-4o", "usage": {"prompt_tokens": 150, "completion_tokens": 250, "total_tokens": 400}}`
+
+	event := &ringbuffer.TrafficEvent{
+		ID:          "bench-llm",
+		Method:      "POST",
+		Host:        "api.openai.com",
+		Path:        "/v1/chat/completions",
+		URL:         "https://api.openai.com/v1/chat/completions",
+		ReqHeaders:  http.Header{"Content-Type": []string{"application/json"}},
+		ReqBody:     []byte(reqBody),
+		RespHeaders: http.Header{"Content-Type": []string{"application/json"}},
+		RespBody:    []byte(respBody),
+		StatusCode:  200,
+	}
+
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_ = rule.Evaluate(event)
+	}
+}
+
+func FuzzLLMInspector(f *testing.F) {
+	f.Add([]byte(`{"model": "gpt-4o", "messages": [{"role": "user", "content": "test prompt"}]}`))
+	f.Add([]byte(`{"usage": {"prompt_tokens": 100, "completion_tokens": 50}}`))
+	f.Add([]byte(`invalid json data stream {[[[}`))
+	f.Add([]byte(""))
+
+	rule := NewLLMRule()
+	f.Fuzz(func(t *testing.T, payload []byte) {
+		event := &ringbuffer.TrafficEvent{
+			ID:          "fuzz-llm",
+			Method:      "POST",
+			Host:        "api.openai.com",
+			Path:        "/v1/chat/completions",
+			URL:         "https://api.openai.com/v1/chat/completions",
+			ReqHeaders:  http.Header{"Content-Type": []string{"application/json"}},
+			ReqBody:     payload,
+			RespHeaders: http.Header{"Content-Type": []string{"application/json"}},
+			RespBody:    payload,
+			StatusCode:  200,
+		}
+		_ = rule.Evaluate(event)
+	})
+}

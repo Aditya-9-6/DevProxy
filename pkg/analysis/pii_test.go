@@ -140,3 +140,42 @@ func TestPIIRule_NoFindingsOnCleanResponse(t *testing.T) {
 		t.Errorf("expected no findings on clean payload, got %d", len(findings))
 	}
 }
+
+func BenchmarkIsValidLuhn(b *testing.B) {
+	card := "4532015112830366"
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_ = IsValidLuhn(card)
+	}
+}
+
+func BenchmarkPIIRule_Evaluate(b *testing.B) {
+	rule := NewPIIRule()
+	event := &ringbuffer.TrafficEvent{
+		ID:          "bench-pii",
+		Method:      "GET",
+		URL:         "https://api.example.com/account",
+		StatusCode:  200,
+		RespHeaders: http.Header{"Content-Type": []string{"application/json"}},
+		RespBody:    []byte(`{"status": "ok", "user": {"payment_method": "4532-0151-1283-0366", "ssn": "123-45-6789"}}`),
+	}
+
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_ = rule.Evaluate(event)
+	}
+}
+
+func FuzzLuhnValidation(f *testing.F) {
+	f.Add("4532015112830366")
+	f.Add("4532-0151-1283-0366")
+	f.Add("1234567890123456")
+	f.Add("")
+	f.Add("abc-def-ghi-jkl")
+
+	f.Fuzz(func(t *testing.T, s string) {
+		_ = IsValidLuhn(s)
+	})
+}

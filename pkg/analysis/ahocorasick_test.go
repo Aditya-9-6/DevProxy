@@ -71,3 +71,32 @@ func TestAhoCorasickRuleEvaluation(t *testing.T) {
 		t.Fatalf("missing expected categories: %+v", categories)
 	}
 }
+
+func BenchmarkAhoCorasickMatcher_ScanBytes(b *testing.B) {
+	matcher := NewAhoCorasickMatcher(DefaultSecretSignatures())
+	payload := []byte(`
+	{
+		"token": "ghp_1234567890abcdefghijklmnopqrstuvwxyz",
+		"auth": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.e30.t-IDcSemACt8x4iTMCda8Yhe3iZaWbvV5XKSTbuAn0M",
+		"payload": "typical body text with lots of words and data that should be scanned efficiently",
+		"aws": "AKIAIOSFODNN7EXAMPLE"
+	}`)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_ = matcher.ScanBytes(payload)
+	}
+}
+
+func FuzzAhoCorasickMatcher_ScanBytes(f *testing.F) {
+	matcher := NewAhoCorasickMatcher(DefaultSecretSignatures())
+	f.Add([]byte("hello world with AKIAIOSFODNN7EXAMPLE"))
+	f.Add([]byte("ghp_1234567890abcdefghijklmnopqrstuvwxyz"))
+	f.Add([]byte("random binary \x00\xff\xfe\x01\x02\x03 string"))
+	f.Add([]byte(""))
+
+	f.Fuzz(func(t *testing.T, data []byte) {
+		_ = matcher.ScanBytes(data)
+	})
+}

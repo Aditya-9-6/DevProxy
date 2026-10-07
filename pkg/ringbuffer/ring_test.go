@@ -121,3 +121,62 @@ func TestRingBuffer_ConcurrentLoad(t *testing.T) {
 	}
 	t.Logf("Concurrent Test: Pushed=%d, Dropped=%d, Consumed=%d", total, dropped, consumedCount.Load())
 }
+
+func BenchmarkRingBuffer_PushTryPop(b *testing.B) {
+	rb := NewRingBuffer(16384)
+	defer rb.Close()
+	event := &TrafficEvent{
+		ID:     "bench-1",
+		Host:   "example.com",
+		Method: "GET",
+		URL:    "http://example.com/api",
+	}
+
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		if rb.Push(event) {
+			_ = rb.TryPop()
+		}
+	}
+}
+
+func BenchmarkRingBuffer_ParallelPush(b *testing.B) {
+	rb := NewRingBuffer(65536)
+	defer rb.Close()
+	event := &TrafficEvent{ID: "bench-p", Host: "example.com"}
+
+	b.ResetTimer()
+	b.ReportAllocs()
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			rb.Push(event)
+			_ = rb.TryPop()
+		}
+	})
+}
+
+func FuzzRingBuffer(f *testing.F) {
+	f.Add([]byte("event-payload-1"), uint16(16))
+	f.Add([]byte("large-event-payload-long-string-data"), uint16(128))
+	f.Add([]byte(""), uint16(1))
+
+	f.Fuzz(func(t *testing.T, payload []byte, size uint16) {
+		capacity := int(size%256) + 1
+		rb := NewRingBuffer(capacity)
+		defer rb.Close()
+
+		ev := &TrafficEvent{
+			ID:   string(payload),
+			Host: "fuzz.host",
+		}
+
+		pushed := rb.Push(ev)
+		if pushed {
+			popped := rb.TryPop()
+			if popped != nil && popped.ID != string(payload) {
+				t.Fatalf("mismatched payload in ringbuffer: expected %s, got %s", payload, popped.ID)
+			}
+		}
+	})
+}
