@@ -1,61 +1,31 @@
 package analysis
 
-// Finding represents a security vulnerability detected in traffic.
-type Finding struct {
-	ID          string
-	RequestID   string
-	Timestamp   interface{}
-	Severity    string
-	Category    string
-	RuleName    string
-	Title       string
-	Description string
-	Evidence    string
-	Location    string
-	Remediation string
-	URL         string
-	Method      string
+import "github.com/Aditya-9-6/DevProxy/pkg/ringbuffer"
+
+// SecurityRulesEngine handles traffic analysis using a rule-based approach.
+type SecurityRulesEngine struct {
+	rules []Rule
 }
 
-const (
-	SeverityCritical = "CRITICAL"
-	SeverityHigh     = "HIGH"
-	SeverityMedium   = "MEDIUM"
-	SeverityLow      = "LOW"
-	SeverityInfo     = "INFO"
-)
-
-// SecurityRulesEngine handles traffic analysis.
-type SecurityRulesEngine struct {
-	rules []interface{}
+// Rule defines the interface for security analysis modules.
+type Rule interface {
+	Evaluate(event *ringbuffer.TrafficEvent) []*Finding
 }
 
 func NewSecurityRulesEngine() *SecurityRulesEngine {
 	return &SecurityRulesEngine{
-		rules: make([]interface{}, 0),
+		rules: make([]Rule, 0),
 	}
 }
 
-func (e *SecurityRulesEngine) AddRules(rules []interface{}) {
+func (e *SecurityRulesEngine) AddRules(rules []Rule) {
 	e.rules = append(e.rules, rules...)
 }
 
-func (e *SecurityRulesEngine) Analyze(event interface{}) []*Finding {
-	return nil
-}
-
-func LoadCustomRulesFromYAML(data []byte) ([]interface{}, error) {
-	return nil, nil
-}
-
-func DefaultBlocklistTrie() *Trie {
-	return &Trie{}
-}
-
-type Trie struct {
-	Category string
-}
-
-func (t *Trie) Lookup(ip interface{}) (*Trie, bool) {
-	return nil, false
+func (e *SecurityRulesEngine) Analyze(event *ringbuffer.TrafficEvent) []*Finding {
+	var findings []*Finding
+	for _, rule := range e.rules {
+		findings = append(findings, rule.Evaluate(event)...)
+	}
+	return findings
 }
