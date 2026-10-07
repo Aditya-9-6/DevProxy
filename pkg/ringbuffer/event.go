@@ -24,4 +24,6 @@ type TrafficEvent struct {
 	RespBody    []byte        `json:"resp_body"`
 	TLS         bool          `json:"tls"`
 	TLSServer   string        `json:"tls_server,omitempty"`
+	TraceParent string        `json:"traceparent,omitempty"`
+	TraceState  string        `json:"tracestate,omitempty"`
 }
