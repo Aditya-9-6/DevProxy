@@ -2,6 +2,9 @@ param (
     [string]$Choice = "all"
 )
 
+Write-Host "==> Fetching existing issues index in a single fast call..."
+$script:ExistingTitles = @(gh issue list --state all --limit 200 --json title --jq '.[].title' 2>$null)
+
 function Create-Issue {
     param (
         [string]$Title,
@@ -10,13 +13,14 @@ function Create-Issue {
     )
 
     Write-Host "==> Checking if issue exists: $Title"
-    $existing = (gh issue list --search "$Title in:title" --state all --json number --jq 'length')
-    if ($existing -and [int]$existing -gt 0) {
+    if ($script:ExistingTitles -contains $Title) {
         Write-Host "Issue already exists, skipping."
-    } else {
-        Write-Host "Creating issue: $Title"
-        gh issue create --title $Title --body $Body --label $Labels
+        return
     }
+
+    Write-Host "Creating issue: $Title"
+    gh issue create --title $Title --body $Body --label $Labels
+    $script:ExistingTitles += $Title
 }
 
 function Create-GrpcIssue {
