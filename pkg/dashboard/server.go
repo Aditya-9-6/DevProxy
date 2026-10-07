@@ -14,7 +14,6 @@ import (
 	"github.com/Aditya-9-6/DevProxy/pkg/contract"
 	"github.com/Aditya-9-6/DevProxy/pkg/mock"
 	"github.com/Aditya-9-6/DevProxy/pkg/replay"
-	"github.com/Aditya-9-6/DevProxy/pkg/ringbuffer"
 	"github.com/Aditya-9-6/DevProxy/pkg/storage"
 	"github.com/Aditya-9-6/DevProxy/web"
 )
@@ -29,7 +28,6 @@ type Server struct {
 	mockEngine        *mock.Engine
 	contractValidator *contract.Validator
 	replayer          *replay.Replayer
-	ringBuf           *ringbuffer.RingBuffer
 }
 
 // NewServer creates a new dashboard Server instance.
@@ -48,11 +46,6 @@ func NewServer(addr string, store *storage.Store, hub *Hub, ca *certs.Certificat
 // SetMockEngine configures the mock & chaos engine.
 func (s *Server) SetMockEngine(eng *mock.Engine) {
 	s.mockEngine = eng
-}
-
-// SetRingBuffer configures the ring buffer for HAR import.
-func (s *Server) SetRingBuffer(rb *ringbuffer.RingBuffer) {
-	s.ringBuf = rb
 }
 
 // SetContractValidator configures the OpenAPI contract validator.
@@ -81,7 +74,6 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/requests/", s.handleRequestByID)
 	mux.HandleFunc("/api/findings", s.handleFindings)
 	mux.HandleFunc("/api/export/har", s.handleExportHAR)
-	mux.HandleFunc("/api/import/har", s.handleImportHAR)
 	mux.HandleFunc("/api/ca.crt", s.handleDownloadCACert)
 
 	// Developer Superpower APIs
@@ -191,45 +183,6 @@ func (s *Server) handleFindings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = json.NewEncoder(w).Encode(findings)
-}
-
-func (s *Server) handleImportHAR(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		http.Error(w, "Failed to read request body", http.StatusBadRequest)
-		return
-	}
-	defer r.Body.Close()
-
-	events, err := storage.ParseHAR(body)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to parse HAR: %v", err), http.StatusBadRequest)
-		return
-	}
-
-	if s.ringBuf == nil {
-		http.Error(w, "RingBuffer is not configured", http.StatusInternalServerError)
-		return
-	}
-
-	count := 0
-	for _, event := range events {
-		if s.ringBuf.Push(event) {
-			count++
-		}
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"status":          "success",
-		"imported_events": count,
-		"total_events":    len(events),
-	})
 }
 
 func (s *Server) handleExportHAR(w http.ResponseWriter, r *http.Request) {

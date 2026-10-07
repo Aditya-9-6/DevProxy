@@ -17,12 +17,7 @@ import (
 	"github.com/Aditya-9-6/DevProxy/pkg/certs"
 	"github.com/Aditya-9-6/DevProxy/pkg/mock"
 	"github.com/Aditya-9-6/DevProxy/pkg/ringbuffer"
-	"github.com/Aditya-9-6/DevProxy/pkg/telemetry"
 	"github.com/google/uuid"
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/propagation"
-	"go.opentelemetry.io/otel/trace"
-	"golang.org/x/net/http2"
 )
 
 // ProxyServer is the high-throughput asynchronous proxy engine.
@@ -37,7 +32,6 @@ type ProxyServer struct {
 	insecureUpstream bool
 	upstreamProxy    *url.URL
 	loopWarnOnce     sync.Once
-	telemetry        *telemetry.Exporter
 }
 
 // NewProxyServer creates a new ProxyServer.
@@ -48,7 +42,7 @@ func NewProxyServer(addr string, cm *certs.CertificateManager, rb *ringbuffer.Ri
 			Timeout:   10 * time.Second,
 			KeepAlive: 30 * time.Second,
 		}).DialContext,
-		ForceAttemptHTTP2:     true, // Enable gRPC/HTTP2 upstream capabilities
+		ForceAttemptHTTP2:     false, // Ensure clean HTTP/1.1 wire protocol for proxying
 		MaxIdleConns:          500,
 		MaxIdleConnsPerHost:   100,
 		IdleConnTimeout:       90 * time.Second,
@@ -75,9 +69,6 @@ func NewProxyServer(addr string, cm *certs.CertificateManager, rb *ringbuffer.Ri
 		IdleTimeout:  120 * time.Second,
 	}
 
-	// Configure HTTP/2 for gRPC multiplexing
-	http2.ConfigureServer(p.httpServer, &http2.Server{})
-
 	return p
 }
 
@@ -92,11 +83,6 @@ func (p *ProxyServer) SetInsecureUpstreamTLS(insecure bool) {
 // SetMockEngine configures the mock & chaos engine.
 func (p *ProxyServer) SetMockEngine(eng *mock.Engine) {
 	p.mockEngine = eng
-}
-
-// SetTelemetry attaches the OpenTelemetry exporter.
-func (p *ProxyServer) SetTelemetry(tel *telemetry.Exporter) {
-	p.telemetry = tel
 }
 
 // GetMockEngine returns the active mock & chaos engine.
@@ -405,25 +391,9 @@ func (p *ProxyServer) handleHTTP(w http.ResponseWriter, r *http.Request) {
 		r.Body = io.NopCloser(bytes.NewReader(allBody))
 	}
 
-	outReq := r.Clone(r.Context())
+	outReq := new(http.Request)
+	*outReq = *r
 	outReq.Body = io.NopCloser(bytes.NewReader(reqBodyBytes))
-
-	// OpenTelemetry W3C Trace Context Propagation
-	var traceID string
-	var spanID string
-	if p.telemetry != nil {
-		ctx := p.telemetry.Propagator().Extract(r.Context(), propagation.HeaderCarrier(r.Header))
-		ctx, span := p.telemetry.Tracer().Start(ctx, "devproxy.forward", trace.WithAttributes(
-			attribute.String("http.method", r.Method),
-			attribute.String("http.url", r.URL.String()),
-		))
-		defer span.End()
-		outReq = outReq.WithContext(ctx)
-		p.telemetry.Propagator().Inject(ctx, propagation.HeaderCarrier(outReq.Header))
-		sc := span.SpanContext()
-		traceID = sc.TraceID().String()
-		spanID = sc.SpanID().String()
-	}
 
 	if !outReq.URL.IsAbs() {
 		outReq.URL.Scheme = "http"
@@ -558,9 +528,6 @@ func (p *ProxyServer) handleHTTP(w http.ResponseWriter, r *http.Request) {
 		RespHeaders: cloneHeaders(resp.Header),
 		RespBody:    capWriter.Bytes(),
 		TLS:         false,
-		TraceID:     traceID,
-		SpanID:      spanID,
-		IsGRPC:      strings.HasPrefix(r.Header.Get("Content-Type"), "application/grpc"),
 	}
 
 	p.ringBuffer.Push(event)

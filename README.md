@@ -88,6 +88,11 @@ Traditional security scanning proxies insert synchronous inspection into the req
 
 ---
 
+## 🗺️ Enterprise Roadmap
+To see the detailed technical blueprints for upcoming industry-standard features (like **eBPF Zero-Config Interception**, **Machine Learning Anomaly Detection**, and **gRPC Dynamic Decoding**), please see our [Enterprise Roadmap](ROADMAP.md) and the `docs/roadmap/` directory.
+
+---
+
 ## 🚀 Quick Start
 
 ### 1. Installation & Build

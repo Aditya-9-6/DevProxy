@@ -1,8 +1,6 @@
 package main
 
 import (
-	"context"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
@@ -19,19 +17,12 @@ import (
 	"github.com/Aditya-9-6/DevProxy/pkg/proxy"
 	"github.com/Aditya-9-6/DevProxy/pkg/ringbuffer"
 	"github.com/Aditya-9-6/DevProxy/pkg/storage"
-	"github.com/Aditya-9-6/DevProxy/pkg/telemetry"
-
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/metric"
-	"go.opentelemetry.io/otel/trace"
 )
 
 // resultBridge forwards analysis results to storage and WebSocket hub.
 type resultBridge struct {
 	store *storage.Store
 	hub   *dashboard.Hub
-	tel   *telemetry.Exporter
-	metricsCounter metric.Int64Counter
 }
 
 func (b *resultBridge) HandleResult(event *ringbuffer.TrafficEvent, findings []*analysis.Finding) {
@@ -47,40 +38,6 @@ func (b *resultBridge) HandleResult(event *ringbuffer.TrafficEvent, findings []*
 	for _, f := range findings {
 		if f.Severity == analysis.SeverityCritical || f.Severity == analysis.SeverityHigh {
 			fmt.Printf("\033[1;31m[ALERT - %s]\033[0m %s: %s (%s %s)\n", f.Severity, f.Title, f.RuleName, f.Method, f.URL)
-		}
-	}
-
-	// Emit OpenTelemetry Security finding metrics and SIEM span events
-	if len(findings) > 0 && b.tel != nil {
-		ctx := context.Background()
-		if event.TraceID != "" && event.SpanID != "" {
-			// Synthesize a span context to attach events directly to the distributed trace
-			traceID, _ := trace.TraceIDFromHex(event.TraceID)
-			spanID, _ := trace.SpanIDFromHex(event.SpanID)
-			spanContext := trace.NewSpanContext(trace.SpanContextConfig{
-				TraceID:    traceID,
-				SpanID:     spanID,
-				TraceFlags: trace.FlagsSampled,
-				Remote:     true,
-			})
-			ctx = trace.ContextWithSpanContext(ctx, spanContext)
-		}
-
-		_, span := b.tel.Tracer().Start(ctx, "devproxy.security.analysis")
-		defer span.End()
-
-		for _, f := range findings {
-			span.AddEvent("security.finding", trace.WithAttributes(
-				attribute.String("rule", f.RuleName),
-				attribute.String("severity", f.Severity),
-				attribute.String("title", f.Title),
-				attribute.String("url", f.URL),
-			))
-			if b.metricsCounter != nil {
-				b.metricsCounter.Add(ctx, 1, metric.WithAttributes(
-					attribute.String("severity", f.Severity),
-				))
-			}
 		}
 	}
 }
@@ -99,8 +56,6 @@ func main() {
 	showInstallCA := flag.Bool("install-ca", false, "Display instructions to install and trust the Root CA")
 	insecureUpstream := flag.Bool("insecure-upstream", false, "Allow upstream HTTPS connections to skip TLS verification (for local self-signed dev microservices)")
 	upstreamProxy := flag.String("upstream-proxy", "", "Route DevProxy's own egress through an upstream proxy: http://, https:// or socks5://host:port (falls back to HTTPS_PROXY/ALL_PROXY when empty)")
-	otlpEndpoint := flag.String("otlp-endpoint", "", "OpenTelemetry OTLP gRPC endpoint for exporting distributed traces and SIEM metrics")
-	ciMode := flag.Bool("ci", false, "Enable Headless CI/CD mode. Exits with code 1 if CRITICAL/HIGH findings are detected, and skips Web UI.")
 	flag.Parse()
 
 	if *showVersion {
@@ -214,33 +169,12 @@ To prevent SSL certificate warnings in curl, browsers, and mobile emulators:
 		}
 	}
 
-	var tel *telemetry.Exporter
-	if *otlpEndpoint != "" {
-		log.Printf("[0/5] Initializing OpenTelemetry Exporter at %s...", *otlpEndpoint)
-		ctx := context.Background()
-		var err error
-		tel, err = telemetry.NewExporter(ctx, *otlpEndpoint)
-		if err != nil {
-			log.Fatalf("Failed to initialize OpenTelemetry: %v", err)
-		}
-		defer tel.Shutdown(ctx)
-	}
-
 	hub := dashboard.NewHub()
-	if !*ciMode {
-		go hub.Run()
-	}
-
-	var counter metric.Int64Counter
-	if tel != nil {
-		counter, _ = tel.Meter().Int64Counter("devproxy.security.findings")
-	}
+	go hub.Run()
 
 	bridge := &resultBridge{
 		store: store,
 		hub:   hub,
-		tel:   tel,
-		metricsCounter: counter,
 	}
 
 	workerPool := analysis.NewAnalysisWorkerPool(ringBuf, engine, bridge, *workers)
@@ -248,27 +182,20 @@ To prevent SSL certificate warnings in curl, browsers, and mobile emulators:
 	defer workerPool.Stop()
 
 	// 6. Initialize & Start Dashboard Server
-	var dashServer *dashboard.Server
-	if !*ciMode {
-		webAddr := fmt.Sprintf(":%d", *webPort)
-		dashServer = dashboard.NewServer(webAddr, store, hub, ca)
-		dashServer.SetMockEngine(mockEngine)
-		dashServer.SetContractValidator(contractValidator)
-		dashServer.SetRingBuffer(ringBuf)
-		go func() {
-			if err := dashServer.Start(); err != nil && err != http.ErrServerClosed {
-				log.Fatalf("Dashboard server error: %v", err)
-			}
-		}()
-	} else {
-		log.Println("[CI MODE] Headless execution enabled. Web UI Dashboard disabled.")
-	}
+	webAddr := fmt.Sprintf(":%d", *webPort)
+	dashServer := dashboard.NewServer(webAddr, store, hub, ca)
+	dashServer.SetMockEngine(mockEngine)
+	dashServer.SetContractValidator(contractValidator)
+	go func() {
+		if err := dashServer.Start(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("Dashboard server error: %v", err)
+		}
+	}()
 
 	// 7. Initialize & Start Primary Proxy Server
 	proxyAddr := fmt.Sprintf(":%d", *proxyPort)
 	proxyServer := proxy.NewProxyServer(proxyAddr, certManager, ringBuf)
 	proxyServer.SetMockEngine(mockEngine)
-	proxyServer.SetTelemetry(tel)
 	if *insecureUpstream {
 		proxyServer.SetInsecureUpstreamTLS(true)
 		log.Println(" Upstream TLS verification: INSECURE/SKIP (dev microservices mode)")
@@ -288,10 +215,8 @@ To prevent SSL certificate warnings in curl, browsers, and mobile emulators:
 	}()
 
 	log.Printf(" DevProxy is ACTIVE and listening on %s", proxyAddr)
-	if !*ciMode {
-		log.Printf(" Dashboard UI is live at http://localhost:%d", *webPort)
-		log.Printf(" Download Root CA certificate at http://localhost:%d/api/ca.crt", *webPort)
-	}
+	log.Printf(" Dashboard UI is live at http://localhost:%d", *webPort)
+	log.Printf(" Download Root CA certificate at http://localhost:%d/api/ca.crt", *webPort)
 	log.Println("--------------------------------------------------------------------------------")
 
 	// Wait for termination signal
@@ -301,58 +226,20 @@ To prevent SSL certificate warnings in curl, browsers, and mobile emulators:
 
 	fmt.Println("\n\nShutting down DevProxy gracefully...")
 	_ = proxyServer.Close()
-	if dashServer != nil {
-		_ = dashServer.Close()
-	}
+	_ = dashServer.Close()
 	workerPool.Stop()
 
 	// Print final stats
-	analyzed, findingsCount, avgUs := workerPool.Stats()
+	analyzed, findings, avgUs := workerPool.Stats()
 	_, dropped, total := ringBuf.Stats()
 	fmt.Println("--------------------------------------------------------------------------------")
-	fmt.Printf(" [DevProxy Session Summary]\n")
-	fmt.Printf("   - Packets Forwarded:    %d\n", total)
-	fmt.Printf("   - Traffic Analyzed:     %d requests\n", analyzed)
-	fmt.Printf("   - Dropped via Saturation: %d requests\n", dropped)
-	fmt.Printf("   - Vulnerabilities Found: %d\n", findingsCount)
-	fmt.Printf("   - Average Analysis Time: %.2f µs/request\n", avgUs)
+	fmt.Printf("Summary:\n")
+	fmt.Printf("  • Total Captured Events: %d\n", total)
+	fmt.Printf("  • Total Analyzed:        %d\n", analyzed)
+	fmt.Printf("  • Dropped (Buffer Full): %d\n", dropped)
+	fmt.Printf("  • Vulnerabilities Flagged: %d\n", findings)
+	fmt.Printf("  • Avg Analysis Overhead: %.2f µs (Zero Data-Path Latency)\n", avgUs)
 	fmt.Println("--------------------------------------------------------------------------------")
-
-	if *ciMode {
-		fmt.Println("[CI MODE] Generating CI Security Report...")
-		findings, err := store.GetRecentFindings(10000, "")
-
-		highOrCritical := 0
-		var reportFindings []*analysis.Finding
-		if err == nil {
-			reportFindings = findings
-			for _, f := range findings {
-				if f.Severity == analysis.SeverityCritical || f.Severity == analysis.SeverityHigh {
-					highOrCritical++
-				}
-			}
-		}
-
-		reportData, _ := json.MarshalIndent(map[string]interface{}{
-			"total_findings": len(reportFindings),
-			"critical_high_count": highOrCritical,
-			"findings": reportFindings,
-		}, "", "  ")
-
-		if err := os.WriteFile("devproxy-report.json", reportData, 0644); err != nil {
-			fmt.Printf("[CI MODE] Failed to write report: %v\n", err)
-		} else {
-			fmt.Println("[CI MODE] Wrote devproxy-report.json successfully.")
-		}
-
-		if highOrCritical > 0 {
-			fmt.Printf("\033[1;31m[CI MODE] FAILED: %d HIGH/CRITICAL security vulnerabilities detected.\033[0m\n", highOrCritical)
-			os.Exit(1)
-		} else {
-			fmt.Println("\033[1;32m[CI MODE] SUCCESS: No HIGH/CRITICAL vulnerabilities detected.\033[0m")
-			os.Exit(0)
-		}
-	}
 }
 
 func printBanner(proxyPort, webPort int) {
