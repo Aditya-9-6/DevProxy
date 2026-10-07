@@ -32,10 +32,19 @@ jobs:
       ))
     runs-on: ubuntu-latest
     steps:
+      - name: Generate GitHub App Token (Higher Rate Limits)
+        id: app-token
+        if: secrets.APP_ID != '' && secrets.APP_PRIVATE_KEY != ''
+        uses: actions/create-github-app-token@v1
+        continue-on-error: true
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
       - name: Resolve PR Metadata
         id: meta
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
@@ -83,7 +92,7 @@ jobs:
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           PR_NUM: ${{ steps.meta.outputs.pr_num }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
         run: |
           python3 .github/scripts/ai_ci_fixer.py \
@@ -99,9 +108,10 @@ jobs:
         env:
           HEAD_REF: ${{ steps.meta.outputs.head_ref }}
           PR_NUM: ${{ steps.meta.outputs.pr_num }}
+          AUTH_TOKEN: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
         run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git config --global user.name "devproxy-bot[bot]"
+          git config --global user.email "devproxy-bot[bot]@users.noreply.github.com"
           
           if git diff --quiet && git diff --staged --quiet; then
             echo "No changes needed or produced."
@@ -109,6 +119,7 @@ jobs:
           else
             git add -A
             git commit -m "fix(ci): autonomous repair for failing CI tests on PR #${PR_NUM}"
+            git remote set-url origin "https://x-access-token:${AUTH_TOKEN}@github.com/${{ github.repository }}.git"
             git push origin "$HEAD_REF"
             COMMIT_SHA=$(git rev-parse --short HEAD)
             echo "has_changes=true" >> $GITHUB_ENV
@@ -118,7 +129,7 @@ jobs:
       - name: Comment Resolution on PR
         if: always()
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
           PR_NUM: ${{ steps.meta.outputs.pr_num }}
           HEAD_REF: ${{ steps.meta.outputs.head_ref }}

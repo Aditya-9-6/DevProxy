@@ -40,10 +40,19 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Generate GitHub App Token (Higher Rate Limits)
+        id: app-token
+        if: secrets.APP_ID != '' && secrets.APP_PRIVATE_KEY != ''
+        uses: actions/create-github-app-token@v1
+        continue-on-error: true
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
       - name: Resolve Issue Metadata
         id: meta
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
@@ -73,7 +82,7 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           ISSUE_NUM: ${{ steps.meta.outputs.num }}
           ISSUE_TITLE: ${{ steps.meta.outputs.title }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
         run: |
           BODY=$(gh issue view "$ISSUE_NUM" --json body -q .body)
@@ -129,14 +138,16 @@ jobs:
         env:
           ISSUE_NUM: ${{ steps.meta.outputs.num }}
           ISSUE_TITLE: ${{ steps.meta.outputs.title }}
+          AUTH_TOKEN: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
         run: |
           BRANCH_NAME="ai/solve-issue-${ISSUE_NUM}"
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git config --global user.name "devproxy-bot[bot]"
+          git config --global user.email "devproxy-bot[bot]@users.noreply.github.com"
 
           git checkout -B "$BRANCH_NAME"
           git add -A
           git commit -m "feat: automated resolution for issue #${ISSUE_NUM} (${ISSUE_TITLE})"
+          git remote set-url origin "https://x-access-token:${AUTH_TOKEN}@github.com/${{ github.repository }}.git"
           git push origin "$BRANCH_NAME" --force
 
           echo "branch=$BRANCH_NAME" >> $GITHUB_ENV
@@ -144,7 +155,7 @@ jobs:
       - name: Open Pull Request
         if: steps.solver.outputs.missing_key != 'true'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
           ISSUE_NUM: ${{ steps.meta.outputs.num }}
           ISSUE_TITLE: ${{ steps.meta.outputs.title }}
