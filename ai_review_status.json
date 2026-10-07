@@ -4,10 +4,10 @@
   "needs_improvement": true,
   "action_items": [
     "Revert all changes to pkg/analysis/rules.go and restore the deleted security rules.",
-    "Remove the .github/scripts/ai_ci_fixer.py script immediately; it is a severe security risk and violates CI/CD best practices.",
+    "Remove the .github/scripts/ai_ci_fixer.py and .github/scripts/ai_pr_reviewer.py scripts immediately; they represent severe security risks and violate CI/CD best practices.",
     "Ensure that any new features (like JA3 fingerprinting) are implemented as additive modules rather than destructive refactors.",
-    "Fix the compilation errors in pkg/ringbuffer and pkg/proxy before submitting further changes.",
-    "Provide unit tests for the new JA3/JA4 detection logic that do not rely on external AI-generated fixes."
+    "Fix all compilation errors in pkg/ringbuffer and pkg/proxy.",
+    "Provide genuine, non-AI-generated unit tests for the new JA3/JA4 detection logic."
   ],
-  "system_impact": "This PR would render DevProxy non-functional as a security engine. It introduces a supply-chain risk via the CI script, deletes core business logic, and breaks the build system. It must be rejected immediately."
+  "system_impact": "This PR would render DevProxy non-functional as a security engine. It introduces a supply-chain risk via the CI scripts and destroys the existing security rule infrastructure. Immediate revert and manual refactoring are required."
 }

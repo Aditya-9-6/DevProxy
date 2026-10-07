@@ -2,7 +2,6 @@ package analysis
 
 import (
 	"fmt"
-	"os"
 	"regexp"
 	"strings"
 
@@ -31,7 +30,7 @@ type CustomRule struct {
 
 func NewCustomRule(cfg CustomRuleConfig) (*CustomRule, error) {
 	if cfg.Severity == "" {
-		cfg.Severity = SeverityHigh
+		cfg.Severity = "HIGH"
 	}
 	if cfg.Category == "" {
 		cfg.Category = "CUSTOM_RULE"
