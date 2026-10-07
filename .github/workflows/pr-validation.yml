@@ -97,7 +97,95 @@ jobs:
           fail-ci-on-error: false
 
   # ============================================================================
-  # 3. Cross-Platform Compilation Check
+  # 3. Performance & Memory Allocation Benchmarks
+  # ============================================================================
+  benchmark-performance:
+    name: Performance & Memory Benchmarks
+    needs: code-quality
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: true
+
+      - name: Run Microbenchmarks
+        run: |
+          echo "Running microbenchmarks to guard against throughput and memory allocation regressions..."
+          go test -v -run='^$' -bench=. -benchmem ./pkg/ringbuffer ./pkg/analysis
+
+  # ============================================================================
+  # 4. Security & Protocol Robustness Fuzz Testing
+  # ============================================================================
+  fuzz-testing:
+    name: Security & Protocol Fuzzing
+    needs: code-quality
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: true
+
+      - name: Fuzz Ring Buffer
+        run: go test -v -fuzz=FuzzRingBuffer -fuzztime=5s ./pkg/ringbuffer
+
+      - name: Fuzz Aho-Corasick Matcher
+        run: go test -v -fuzz=FuzzAhoCorasickMatcher -fuzztime=5s ./pkg/analysis
+
+      - name: Fuzz JWT Inspector
+        run: go test -v -fuzz=FuzzJWTInspection -fuzztime=5s ./pkg/analysis
+
+      - name: Fuzz Luhn & PII Validator
+        run: go test -v -fuzz=FuzzLuhnValidation -fuzztime=5s ./pkg/analysis
+
+      - name: Fuzz LLM Payload Inspector
+        run: go test -v -fuzz=FuzzLLMInspector -fuzztime=5s ./pkg/analysis
+
+  # ============================================================================
+  # 5. End-to-End (E2E) & Integration Smoke Tests
+  # ============================================================================
+  e2e-integration-tests:
+    name: End-to-End (E2E) Integration Tests
+    needs: code-quality
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: true
+
+      - name: Run E2E Test Suite with Race Detector
+        run: go test -v -race -timeout=3m ./test/e2e/...
+
+  # ============================================================================
+  # 6. Container Build & Packaging Smoke Test
+  # ============================================================================
+  docker-build-smoke:
+    name: Docker Container Build
+    needs: code-quality
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Build Docker Image
+        run: docker build -t devproxy:ci-smoke .
+
+  # ============================================================================
+  # 7. Cross-Platform Compilation Check
   # ============================================================================
   cross-compile-check:
     name: Build (${{ matrix.goos }}/${{ matrix.goarch }})
@@ -131,11 +219,11 @@ jobs:
           go build -v -ldflags="-s -w" -o "$OUTPUT" ./cmd/devproxy
 
   # ============================================================================
-  # 4. PR Quality Gate: Required Status Check for Merging
+  # 8. PR Quality Gate: Required Status Check for Merging
   # ============================================================================
   pr-ready-to-merge:
     name: "PR Gate: Ready to Merge"
-    needs: [code-quality, test-matrix, cross-compile-check]
+    needs: [code-quality, test-matrix, benchmark-performance, fuzz-testing, e2e-integration-tests, docker-build-smoke, cross-compile-check]
     runs-on: ubuntu-latest
     if: always()
     steps:
@@ -146,11 +234,27 @@ jobs:
             exit 1
           fi
           if [ "${{ needs.test-matrix.result }}" != "success" ]; then
-            echo "❌ Test suite failed on one or more platforms/runtimes."
+            echo "❌ Multi-OS Test suite failed on one or more platforms/runtimes."
+            exit 1
+          fi
+          if [ "${{ needs.benchmark-performance.result }}" != "success" ]; then
+            echo "❌ Benchmark performance checks failed."
+            exit 1
+          fi
+          if [ "${{ needs.fuzz-testing.result }}" != "success" ]; then
+            echo "❌ Security fuzz testing failed."
+            exit 1
+          fi
+          if [ "${{ needs.e2e-integration-tests.result }}" != "success" ]; then
+            echo "❌ End-to-End integration tests failed."
+            exit 1
+          fi
+          if [ "${{ needs.docker-build-smoke.result }}" != "success" ]; then
+            echo "❌ Docker container build failed."
             exit 1
           fi
           if [ "${{ needs.cross-compile-check.result }}" != "success" ]; then
             echo "❌ Cross-platform compilation failed."
             exit 1
           fi
-          echo "🎉 All PR validation checks passed! PR is clean and green to merge."
+          echo "🎉 All PR validation and specialized test suites passed! PR is clean and green to merge."

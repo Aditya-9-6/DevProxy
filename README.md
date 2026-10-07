@@ -154,12 +154,29 @@ refused.
 
 ---
 
-## 🧪 Testing
+## 🧪 Comprehensive Testing Suite
 
-Run the automated test suite covering CA generation, dynamic leaf certificate verification, ring buffer concurrency, rules engine detection, and end-to-end proxy forwarding:
+DevProxy enforces multiple testing tiers in CI to guarantee zero-latency performance, memory safety, and protocol resilience:
 
 ```bash
-go test -v ./...
+# 1. Multi-OS Unit Tests with Data Race Detection
+go test -v -race ./...
+
+# 2. Performance & Zero-Allocation Microbenchmarks
+go test -v -run='^$' -bench=. -benchmem ./pkg/ringbuffer ./pkg/analysis
+
+# 3. Security Protocol Fuzz Testing
+go test -v -fuzz=FuzzRingBuffer -fuzztime=10s ./pkg/ringbuffer
+go test -v -fuzz=FuzzAhoCorasickMatcher -fuzztime=10s ./pkg/analysis
+go test -v -fuzz=FuzzJWTInspection -fuzztime=10s ./pkg/analysis
+go test -v -fuzz=FuzzLuhnValidation -fuzztime=10s ./pkg/analysis
+go test -v -fuzz=FuzzLLMInspector -fuzztime=10s ./pkg/analysis
+
+# 4. End-to-End (E2E) Proxy & Dashboard Integration Tests
+go test -v -race ./test/e2e/...
+
+# 5. Docker Packaging & Container Smoke Test
+docker build -t devproxy:smoke .
 ```
 
 ---
