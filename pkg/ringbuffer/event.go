@@ -5,7 +5,6 @@ import (
 	"time"
 )
 
-// TrafficEvent captures the full request and response pair cloned from the data path.
 type TrafficEvent struct {
 	ID          string        `json:"id"`
 	Timestamp   time.Time     `json:"timestamp"`
