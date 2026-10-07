@@ -2,7 +2,7 @@ name: AI PR Validator & Reviewer Bot
 
 on:
   pull_request:
-    types: [opened, ready_for_review]
+    types: [opened, synchronize, reopened, ready_for_review]
   issue_comment:
     types: [created]
   workflow_dispatch:
@@ -13,18 +13,19 @@ on:
         type: string
 
 permissions:
-  contents: read
+  contents: write
   pull-requests: write
   issues: write
+  statuses: write
 
 concurrency:
   group: ai-reviewer-${{ github.event.pull_request.number || github.event.issue.number || github.event.inputs.pr_number }}
   cancel-in-progress: true
 
 jobs:
-  review-pr:
-    name: Autonomous PR Reviewer
-    # Trigger on PR open/ready by maintainer, workflow_dispatch, or authorized maintainer comment /review
+  review-and-heal-pr:
+    name: Autonomous PR Reviewer & Self-Healing Loop
+    # Trigger on PR open/synchronize by maintainer, workflow_dispatch, or authorized maintainer comment /review
     if: >
       github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'pull_request' && contains('["OWNER", "COLLABORATOR", "MEMBER"]', github.event.pull_request.author_association)) ||
@@ -58,32 +59,44 @@ jobs:
             PR_NUM="${{ github.event.issue.number }}"
           fi
 
-          PR_DATA=$(gh pr view "$PR_NUM" --json headRefName,title)
+          PR_DATA=$(gh pr view "$PR_NUM" --json headRefName,title,headRefOid)
           HEAD_REF=$(echo "$PR_DATA" | jq -r .headRefName)
           TITLE=$(echo "$PR_DATA" | jq -r .title)
+          HEAD_SHA=$(echo "$PR_DATA" | jq -r .headRefOid)
 
           echo "pr_num=$PR_NUM" >> $GITHUB_OUTPUT
           echo "head_ref=$HEAD_REF" >> $GITHUB_OUTPUT
           echo "title=$TITLE" >> $GITHUB_OUTPUT
+          echo "head_sha=$HEAD_SHA" >> $GITHUB_OUTPUT
 
       - name: Checkout Repository & PR Branch
         uses: actions/checkout@v4
         with:
           ref: ${{ steps.meta.outputs.head_ref }}
           fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
 
-      - name: Ensure PR Reviewer Script Present
+      - name: Ensure PR Reviewer & Fixer Scripts Present
         run: |
           if [ ! -f ".github/scripts/ai_pr_reviewer.py" ]; then
             git checkout origin/main -- .github/scripts/ai_pr_reviewer.py || true
           fi
+          if [ ! -f ".github/scripts/ai_ci_fixer.py" ]; then
+            git checkout origin/main -- .github/scripts/ai_ci_fixer.py || true
+          fi
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: true
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      - name: Run Autonomous PR Reviewer
+      - name: Run Autonomous PR Reviewer & Anti-Spaghetti Gate
         id: reviewer
         env:
           GEMINI_REVIEWER_KEY: ${{ secrets.GEMINI_REVIEWER_KEY }}
@@ -107,3 +120,79 @@ jobs:
           if [ -f "ai_pr_review.md" ]; then
             gh pr comment "$PR_NUM" --body-file "ai_pr_review.md"
           fi
+
+      - name: Evaluate Self-Healing Loop vs Approval
+        id: loop
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUM: ${{ steps.meta.outputs.pr_num }}
+          HEAD_REF: ${{ steps.meta.outputs.head_ref }}
+          AUTH_TOKEN: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
+        run: |
+          if [ ! -f "ai_review_status.json" ]; then
+            echo "No review status found, exiting."
+            exit 0
+          fi
+
+          VERDICT=$(jq -r .verdict ai_review_status.json)
+          NEEDS_IMP=$(jq -r .needs_improvement ai_review_status.json)
+          CYCLE_COUNT=$(git log origin/main..HEAD --grep="\[ai-repair-cycle" --oneline | wc -l)
+
+          echo "verdict=$VERDICT" >> $GITHUB_OUTPUT
+          echo "needs_improvement=$NEEDS_IMP" >> $GITHUB_OUTPUT
+          echo "cycle_count=$CYCLE_COUNT" >> $GITHUB_OUTPUT
+
+          echo "==> Review verdict: $VERDICT, Needs improvement: $NEEDS_IMP, Cycles completed: $CYCLE_COUNT"
+
+          if [ "$VERDICT" = "APPROVED" ]; then
+            echo "==> PR is 100% approved. Marking with ready-to-merge label."
+            gh pr edit "$PR_NUM" --add-label "ready-to-merge" || true
+          fi
+
+      - name: Execute Autonomous PR Fixer (Self-Healing Loop)
+        if: steps.loop.outputs.needs_improvement == 'true' && steps.loop.outputs.cycle_count < 3
+        env:
+          GEMINI_SOLVER_KEY: ${{ secrets.GEMINI_SOLVER_KEY }}
+          GEMINI_REVIEWER_KEY: ${{ secrets.GEMINI_REVIEWER_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          PR_NUM: ${{ steps.meta.outputs.pr_num }}
+          HEAD_REF: ${{ steps.meta.outputs.head_ref }}
+          AUTH_TOKEN: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          CYCLE: ${{ steps.loop.outputs.cycle_count }}
+        run: |
+          NEXT_CYCLE=$((CYCLE + 1))
+          echo "==> Triggering autonomous PR Fixer for Cycle $NEXT_CYCLE/3..."
+
+          python3 .github/scripts/ai_ci_fixer.py \
+            --pr-number "$PR_NUM" \
+            --workspace . \
+            --review-feedback-file "ai_pr_review.md"
+
+          # Verify formatting
+          gofmt -w .
+
+          # Check if there are changes to commit
+          if [ -n "$(git status --porcelain)" ]; then
+            git config --global user.name "devproxy-bot[bot]"
+            git config --global user.email "devproxy-bot[bot]@users.noreply.github.com"
+            git add -A
+            git commit -m "refactor(ai): architectural repair from reviewer audit [ai-repair-cycle ${NEXT_CYCLE}]"
+            git remote set-url origin "https://x-access-token:${AUTH_TOKEN}@github.com/${GH_REPO}.git"
+            git push origin "HEAD:${HEAD_REF}"
+
+            gh pr comment "$PR_NUM" --body "🔄 **Self-Healing Loop**: PR Fixer Agent refactored the code to resolve reviewer findings (Cycle ${NEXT_CYCLE}/3). Pushed updates to \`${HEAD_REF}\`. The AI Reviewer will now re-audit."
+          else
+            echo "No file changes produced during repair cycle."
+          fi
+
+      - name: Notify Maintainer if Repair Limit Exceeded
+        if: steps.loop.outputs.needs_improvement == 'true' && steps.loop.outputs.cycle_count >= 3
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUM: ${{ steps.meta.outputs.pr_num }}
+        run: |
+          gh pr comment "$PR_NUM" --body "⚠️ **Autonomous Repair Limit Reached**: 3 self-healing cycles completed. Maintainer review is requested from @Aditya-9-6 for final manual adjustments."

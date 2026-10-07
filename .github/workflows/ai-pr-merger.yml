@@ -1,0 +1,85 @@
+name: AI PR Auto-Merger Gate
+
+on:
+  pull_request_review:
+    types: [submitted]
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: ai-merger-${{ github.event.pull_request.number || github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  merge-approved-pr:
+    name: Auto-Merge Approved PR
+    # Run only if triggered by an authorized maintainer approval review or /merge comment
+    if: >
+      (github.event_name == 'pull_request_review' &&
+       github.event.review.state == 'approved' &&
+       contains('["OWNER", "COLLABORATOR", "MEMBER"]', github.event.review.author_association)) ||
+      (github.event_name == 'issue_comment' && github.event.issue.pull_request &&
+       contains('["OWNER", "COLLABORATOR", "MEMBER"]', github.event.comment.author_association) && (
+        startsWith(github.event.comment.body, '/merge') ||
+        startsWith(github.event.comment.body, '@devproxy-bot merge') ||
+        startsWith(github.event.comment.body, '@spryzen-bot merge')
+      ))
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate GitHub App Token (Higher Rate Limits)
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        continue-on-error: true
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
+      - name: Resolve PR Details and Maintainer
+        id: meta
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request_review" ]; then
+            PR_NUM="${{ github.event.pull_request.number }}"
+            ACTOR="${{ github.event.review.user.login }}"
+          else
+            PR_NUM="${{ github.event.issue.number }}"
+            ACTOR="${{ github.event.comment.user.login }}"
+          fi
+
+          echo "pr_num=$PR_NUM" >> $GITHUB_OUTPUT
+          echo "actor=$ACTOR" >> $GITHUB_OUTPUT
+
+          PR_DATA=$(gh pr view "$PR_NUM" --json state,labels,mergeable)
+          STATE=$(echo "$PR_DATA" | jq -r .state)
+          MERGEABLE=$(echo "$PR_DATA" | jq -r .mergeable)
+
+          echo "state=$STATE" >> $GITHUB_OUTPUT
+          echo "mergeable=$MERGEABLE" >> $GITHUB_OUTPUT
+
+      - name: Execute Squash Merge & Branch Deletion
+        if: steps.meta.outputs.state == 'OPEN'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUM: ${{ steps.meta.outputs.pr_num }}
+          ACTOR: ${{ steps.meta.outputs.actor }}
+        run: |
+          echo "==> Maintainer @${ACTOR} authorized merge for PR #${PR_NUM}."
+
+          # Attempt squash merge via GitHub CLI
+          gh pr merge "$PR_NUM" --squash --delete-branch || {
+            echo "Auto-merge failed. Checking if auto-merge can be queued or retried..."
+            gh pr merge "$PR_NUM" --squash --auto --delete-branch || exit 1
+          }
+
+          gh pr comment "$PR_NUM" --body "🚀 **Pull Request #${PR_NUM} Successfully Merged!**
+          
+          Maintainer **@${ACTOR}** has approved the architectural impact and signed off on this contribution.
+          Code has been squash-merged into \`main\` and the working branch has been safely deleted."
