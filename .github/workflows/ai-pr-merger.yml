@@ -73,10 +73,10 @@ jobs:
         run: |
           echo "==> Maintainer @${ACTOR} authorized merge for PR #${PR_NUM}."
 
-          # Attempt squash merge via GitHub CLI
-          gh pr merge "$PR_NUM" --squash --delete-branch || {
+          # Attempt squash merge via GitHub CLI with direct user author attribution
+          gh pr merge "$PR_NUM" --squash --delete-branch --author-email "aditya-9-6@users.noreply.github.com" || {
             echo "Auto-merge failed. Checking if auto-merge can be queued or retried..."
-            gh pr merge "$PR_NUM" --squash --auto --delete-branch || exit 1
+            gh pr merge "$PR_NUM" --squash --auto --delete-branch --author-email "aditya-9-6@users.noreply.github.com" || exit 1
           }
 
           gh pr comment "$PR_NUM" --body "🚀 **Pull Request #${PR_NUM} Successfully Merged!**

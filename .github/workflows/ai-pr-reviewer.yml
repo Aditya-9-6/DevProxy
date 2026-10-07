@@ -186,10 +186,10 @@ cc **@Aditya-9-6**: To finalize this advancement and merge into \`main\`, please
 
           # Check if there are changes to commit
           if [ -n "$(git status --porcelain)" ]; then
-            git config --global user.name "devproxy-bot[bot]"
-            git config --global user.email "devproxy-bot[bot]@users.noreply.github.com"
+            git config --global user.name "Aditya Dahale"
+            git config --global user.email "aditya-9-6@users.noreply.github.com"
             git add -A
-            git commit -m "refactor(ai): architectural repair from reviewer audit [ai-repair-cycle ${NEXT_CYCLE}]"
+            git commit -m "refactor(ai): architectural repair from reviewer audit [ai-repair-cycle ${NEXT_CYCLE}]" -m "Co-authored-by: Aditya Dahale <aditya-9-6@users.noreply.github.com>"
             git remote set-url origin "https://x-access-token:${AUTH_TOKEN}@github.com/${GH_REPO}.git"
             git push origin "HEAD:${HEAD_REF}"
 
