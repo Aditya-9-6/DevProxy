@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log"
@@ -17,12 +18,19 @@ import (
 	"github.com/Aditya-9-6/DevProxy/pkg/proxy"
 	"github.com/Aditya-9-6/DevProxy/pkg/ringbuffer"
 	"github.com/Aditya-9-6/DevProxy/pkg/storage"
+	"github.com/Aditya-9-6/DevProxy/pkg/telemetry"
+
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // resultBridge forwards analysis results to storage and WebSocket hub.
 type resultBridge struct {
 	store *storage.Store
 	hub   *dashboard.Hub
+	tel   *telemetry.Exporter
+	metricsCounter metric.Int64Counter
 }
 
 func (b *resultBridge) HandleResult(event *ringbuffer.TrafficEvent, findings []*analysis.Finding) {
@@ -38,6 +46,40 @@ func (b *resultBridge) HandleResult(event *ringbuffer.TrafficEvent, findings []*
 	for _, f := range findings {
 		if f.Severity == analysis.SeverityCritical || f.Severity == analysis.SeverityHigh {
 			fmt.Printf("\033[1;31m[ALERT - %s]\033[0m %s: %s (%s %s)\n", f.Severity, f.Title, f.RuleName, f.Method, f.URL)
+		}
+	}
+
+	// Emit OpenTelemetry Security finding metrics and SIEM span events
+	if len(findings) > 0 && b.tel != nil {
+		ctx := context.Background()
+		if event.TraceID != "" && event.SpanID != "" {
+			// Synthesize a span context to attach events directly to the distributed trace
+			traceID, _ := trace.TraceIDFromHex(event.TraceID)
+			spanID, _ := trace.SpanIDFromHex(event.SpanID)
+			spanContext := trace.NewSpanContext(trace.SpanContextConfig{
+				TraceID:    traceID,
+				SpanID:     spanID,
+				TraceFlags: trace.FlagsSampled,
+				Remote:     true,
+			})
+			ctx = trace.ContextWithSpanContext(ctx, spanContext)
+		}
+
+		_, span := b.tel.Tracer().Start(ctx, "devproxy.security.analysis")
+		defer span.End()
+
+		for _, f := range findings {
+			span.AddEvent("security.finding", trace.WithAttributes(
+				attribute.String("rule", f.RuleName),
+				attribute.String("severity", f.Severity),
+				attribute.String("title", f.Title),
+				attribute.String("url", f.URL),
+			))
+			if b.metricsCounter != nil {
+				b.metricsCounter.Add(ctx, 1, metric.WithAttributes(
+					attribute.String("severity", f.Severity),
+				))
+			}
 		}
 	}
 }
@@ -56,6 +98,7 @@ func main() {
 	showInstallCA := flag.Bool("install-ca", false, "Display instructions to install and trust the Root CA")
 	insecureUpstream := flag.Bool("insecure-upstream", false, "Allow upstream HTTPS connections to skip TLS verification (for local self-signed dev microservices)")
 	upstreamProxy := flag.String("upstream-proxy", "", "Route DevProxy's own egress through an upstream proxy: http://, https:// or socks5://host:port (falls back to HTTPS_PROXY/ALL_PROXY when empty)")
+	otlpEndpoint := flag.String("otlp-endpoint", "", "OpenTelemetry OTLP gRPC endpoint for exporting distributed traces and SIEM metrics")
 	flag.Parse()
 
 	if *showVersion {
@@ -169,12 +212,31 @@ To prevent SSL certificate warnings in curl, browsers, and mobile emulators:
 		}
 	}
 
+	var tel *telemetry.Exporter
+	if *otlpEndpoint != "" {
+		log.Printf("[0/5] Initializing OpenTelemetry Exporter at %s...", *otlpEndpoint)
+		ctx := context.Background()
+		var err error
+		tel, err = telemetry.NewExporter(ctx, *otlpEndpoint)
+		if err != nil {
+			log.Fatalf("Failed to initialize OpenTelemetry: %v", err)
+		}
+		defer tel.Shutdown(ctx)
+	}
+
 	hub := dashboard.NewHub()
 	go hub.Run()
+
+	var counter metric.Int64Counter
+	if tel != nil {
+		counter, _ = tel.Meter().Int64Counter("devproxy.security.findings")
+	}
 
 	bridge := &resultBridge{
 		store: store,
 		hub:   hub,
+		tel:   tel,
+		metricsCounter: counter,
 	}
 
 	workerPool := analysis.NewAnalysisWorkerPool(ringBuf, engine, bridge, *workers)
@@ -197,6 +259,7 @@ To prevent SSL certificate warnings in curl, browsers, and mobile emulators:
 	proxyAddr := fmt.Sprintf(":%d", *proxyPort)
 	proxyServer := proxy.NewProxyServer(proxyAddr, certManager, ringBuf)
 	proxyServer.SetMockEngine(mockEngine)
+	proxyServer.SetTelemetry(tel)
 	if *insecureUpstream {
 		proxyServer.SetInsecureUpstreamTLS(true)
 		log.Println(" Upstream TLS verification: INSECURE/SKIP (dev microservices mode)")

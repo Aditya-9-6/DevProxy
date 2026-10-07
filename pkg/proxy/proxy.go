@@ -17,7 +17,11 @@ import (
 	"github.com/Aditya-9-6/DevProxy/pkg/certs"
 	"github.com/Aditya-9-6/DevProxy/pkg/mock"
 	"github.com/Aditya-9-6/DevProxy/pkg/ringbuffer"
+	"github.com/Aditya-9-6/DevProxy/pkg/telemetry"
 	"github.com/google/uuid"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // ProxyServer is the high-throughput asynchronous proxy engine.
@@ -32,6 +36,7 @@ type ProxyServer struct {
 	insecureUpstream bool
 	upstreamProxy    *url.URL
 	loopWarnOnce     sync.Once
+	telemetry        *telemetry.Exporter
 }
 
 // NewProxyServer creates a new ProxyServer.
@@ -83,6 +88,11 @@ func (p *ProxyServer) SetInsecureUpstreamTLS(insecure bool) {
 // SetMockEngine configures the mock & chaos engine.
 func (p *ProxyServer) SetMockEngine(eng *mock.Engine) {
 	p.mockEngine = eng
+}
+
+// SetTelemetry attaches the OpenTelemetry exporter.
+func (p *ProxyServer) SetTelemetry(tel *telemetry.Exporter) {
+	p.telemetry = tel
 }
 
 // GetMockEngine returns the active mock & chaos engine.
@@ -391,9 +401,25 @@ func (p *ProxyServer) handleHTTP(w http.ResponseWriter, r *http.Request) {
 		r.Body = io.NopCloser(bytes.NewReader(allBody))
 	}
 
-	outReq := new(http.Request)
-	*outReq = *r
+	outReq := r.Clone(r.Context())
 	outReq.Body = io.NopCloser(bytes.NewReader(reqBodyBytes))
+
+	// OpenTelemetry W3C Trace Context Propagation
+	var traceID string
+	var spanID string
+	if p.telemetry != nil {
+		ctx := p.telemetry.Propagator().Extract(r.Context(), propagation.HeaderCarrier(r.Header))
+		ctx, span := p.telemetry.Tracer().Start(ctx, "devproxy.forward", trace.WithAttributes(
+			attribute.String("http.method", r.Method),
+			attribute.String("http.url", r.URL.String()),
+		))
+		defer span.End()
+		outReq = outReq.WithContext(ctx)
+		p.telemetry.Propagator().Inject(ctx, propagation.HeaderCarrier(outReq.Header))
+		sc := span.SpanContext()
+		traceID = sc.TraceID().String()
+		spanID = sc.SpanID().String()
+	}
 
 	if !outReq.URL.IsAbs() {
 		outReq.URL.Scheme = "http"
@@ -528,6 +554,8 @@ func (p *ProxyServer) handleHTTP(w http.ResponseWriter, r *http.Request) {
 		RespHeaders: cloneHeaders(resp.Header),
 		RespBody:    capWriter.Bytes(),
 		TLS:         false,
+		TraceID:     traceID,
+		SpanID:      spanID,
 	}
 
 	p.ringBuffer.Push(event)
