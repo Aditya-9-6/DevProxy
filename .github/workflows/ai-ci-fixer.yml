@@ -1,0 +1,124 @@
+name: AI CI Test Fixer Bot
+
+on:
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "Pull Request number to fix"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: ai-fixer-${{ github.event.issue.number || github.event.inputs.pr_number }}
+  cancel-in-progress: true
+
+jobs:
+  fix-ci:
+    name: Autonomous CI Fixer
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.issue.pull_request && (
+        startsWith(github.event.comment.body, '/fix') ||
+        startsWith(github.event.comment.body, '/fix-ci') ||
+        startsWith(github.event.comment.body, '@devproxy-bot fix') ||
+        startsWith(github.event.comment.body, '@devproxy-bot fix-ci')
+      ))
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve PR Metadata
+        id: meta
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            PR_NUM="${{ github.event.inputs.pr_number }}"
+          else
+            PR_NUM="${{ github.event.issue.number }}"
+          fi
+
+          echo "Fetching details for PR #$PR_NUM..."
+          PR_DATA=$(gh pr view "$PR_NUM" --json headRefName,headRepositoryOwner,title)
+          HEAD_REF=$(echo "$PR_DATA" | jq -r .headRefName)
+          TITLE=$(echo "$PR_DATA" | jq -r .title)
+
+          echo "pr_num=$PR_NUM" >> $GITHUB_OUTPUT
+          echo "head_ref=$HEAD_REF" >> $GITHUB_OUTPUT
+          echo "title=$TITLE" >> $GITHUB_OUTPUT
+
+          gh pr comment "$PR_NUM" --body "🤖 **DevProxy CI Auto-Fixer** is analyzing test and compiler diagnostics on branch \`$HEAD_REF\`..."
+
+      - name: Checkout PR Branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.meta.outputs.head_ref }}
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run Autonomous CI Repair Agent
+        id: repair
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          PR_NUM: ${{ steps.meta.outputs.pr_num }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          python3 .github/scripts/ai_ci_fixer.py \
+            --pr-number "$PR_NUM" \
+            --workspace .
+
+      - name: Verify Go Compilation & Format
+        run: |
+          gofmt -w .
+          go vet ./... || true
+
+      - name: Commit and Push Fix
+        env:
+          HEAD_REF: ${{ steps.meta.outputs.head_ref }}
+          PR_NUM: ${{ steps.meta.outputs.pr_num }}
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          
+          if git diff --quiet && git diff --staged --quiet; then
+            echo "No changes needed or produced."
+            echo "has_changes=false" >> $GITHUB_ENV
+          else
+            git add -A
+            git commit -m "fix(ci): autonomous repair for failing CI tests on PR #${PR_NUM}"
+            git push origin "$HEAD_REF"
+            COMMIT_SHA=$(git rev-parse --short HEAD)
+            echo "has_changes=true" >> $GITHUB_ENV
+            echo "commit_sha=$COMMIT_SHA" >> $GITHUB_ENV
+          fi
+
+      - name: Comment Resolution on PR
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUM: ${{ steps.meta.outputs.pr_num }}
+          HEAD_REF: ${{ steps.meta.outputs.head_ref }}
+        run: |
+          if [ -f "ci_fix_summary.md" ]; then
+            gh pr comment "$PR_NUM" --body-file "ci_fix_summary.md"
+          elif [ "$has_changes" = "true" ]; then
+            gh pr comment "$PR_NUM" --body "✅ **CI Fix Applied!** Pushed commit \`$commit_sha\` to \`$HEAD_REF\`."
+          fi
