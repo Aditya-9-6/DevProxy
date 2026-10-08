@@ -21,8 +21,8 @@ import argparse
 from pathlib import Path
 
 try:
-    sys.stdout.reconfigure(line_buffering=True)
-    sys.stderr.reconfigure(line_buffering=True)
+    sys.stdout.reconfigure(line_buffering=True, encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(line_buffering=True, encoding="utf-8", errors="replace")
 except Exception:
     pass
 
@@ -162,7 +162,7 @@ def heal_and_merge_open_prs(workspace: Path) -> bool:
     if not ai_prs:
         return False
 
-    print(f"\n[🔍 PR Sweeper] Found {len(ai_prs)} open AI PR(s). Checking for self-healing and auto-merge...", flush=True)
+    print(f"\n[PR Sweeper] Found {len(ai_prs)} open AI PR(s). Checking for self-healing and auto-merge...", flush=True)
     for pr in ai_prs:
         pr_num = pr["number"]
         head_ref = pr["headRefName"]
@@ -170,8 +170,10 @@ def heal_and_merge_open_prs(workspace: Path) -> bool:
         print(f"\n[*] Evaluating PR #{pr_num}: {title} (branch: {head_ref})...", flush=True)
 
         try:
-            run_cmd(["git", "checkout", head_ref], cwd=workspace)
-            run_cmd(["git", "pull", "origin", head_ref], cwd=workspace)
+            run_cmd("git reset --hard HEAD", cwd=workspace, check=False)
+            run_cmd("git clean -fd", cwd=workspace, check=False)
+            run_cmd(["git", "fetch", "origin", head_ref], cwd=workspace, check=False)
+            run_cmd(["git", "checkout", "-B", head_ref, f"origin/{head_ref}"], cwd=workspace)
         except Exception as e:
             print(f"[!] Could not checkout branch {head_ref}: {e}", file=sys.stderr)
             continue
@@ -194,7 +196,7 @@ def heal_and_merge_open_prs(workspace: Path) -> bool:
 
             code, error_log = run_diagnostics(workspace)
             if code == 0:
-                print(f"[🎉] PR #{pr_num} repaired to 100% GREEN! Committing and pushing...", flush=True)
+                print(f"[SUCCESS] PR #{pr_num} repaired to 100% GREEN! Committing and pushing...", flush=True)
                 run_cmd(["git", "config", "user.name", USER_NAME], cwd=workspace)
                 run_cmd(["git", "config", "user.email", USER_EMAIL], cwd=workspace)
                 run_cmd("git rm --cached -f ai_pr_*.md ai_review_*.json ci_fix_*.md 2>/dev/null || true", cwd=workspace, check=False)
@@ -231,10 +233,15 @@ def heal_and_merge_open_prs(workspace: Path) -> bool:
                     pass
 
             if verdict == "APPROVED" and score >= 90:
-                print(f"[🚀] PR #{pr_num} APPROVED ({score}/100)! Merging autonomously...", flush=True)
-                run_cmd(["gh", "pr", "merge", str(pr_num), "--repo", REPO, "--squash", "--admin"], cwd=workspace, check=False)
-                run_cmd(["git", "checkout", "main"], cwd=workspace)
-                run_cmd(["git", "pull", "origin", "main"], cwd=workspace)
+                print(f"[APPROVED] PR #{pr_num} APPROVED ({score}/100)! Merging autonomously...", flush=True)
+                run_cmd(["gh", "label", "create", "ready-to-merge", "--repo", REPO, "--color", "0E8A16", "-f"], cwd=workspace, check=False)
+                run_cmd(["gh", "pr", "edit", str(pr_num), "--repo", REPO, "--add-label", "ready-to-merge"], cwd=workspace, check=False)
+                res = subprocess.run(["gh", "pr", "merge", str(pr_num), "--repo", REPO, "--squash", "--admin"], cwd=workspace, capture_output=True, text=True)
+                if res.returncode != 0:
+                    subprocess.run(["gh", "pr", "merge", str(pr_num), "--repo", REPO, "--squash"], cwd=workspace)
+                print(f"[MERGED] Merged PR #{pr_num} into main! Contributor activity recorded for {USER_NAME}.", flush=True)
+                run_cmd("git checkout main", cwd=workspace)
+                run_cmd("git pull origin main", cwd=workspace)
                 run_cmd(f"git branch -D {head_ref}", cwd=workspace, check=False)
                 run_cmd(f"git push origin --delete {head_ref}", cwd=workspace, check=False)
                 return True
@@ -385,10 +392,12 @@ def solve_issue(workspace: Path, issue_num: int, issue_title: str, issue_body: s
         run_cmd(["gh", "pr", "comment", str(pr_num), "--repo", REPO, "--body-file", str(review_md_file)], cwd=workspace, check=False)
 
     if verdict == "APPROVED" and score >= 90:
-        print(f"[🚀] PR #{pr_num} APPROVED (Score: {score}/100)! Merging into main...", flush=True)
+        print(f"[APPROVED] PR #{pr_num} APPROVED (Score: {score}/100)! Merging into main...", flush=True)
         run_cmd(["gh", "label", "create", "ready-to-merge", "--repo", REPO, "--color", "0E8A16", "-f"], cwd=workspace, check=False)
         run_cmd(["gh", "pr", "edit", str(pr_num), "--repo", REPO, "--add-label", "ready-to-merge"], cwd=workspace, check=False)
-        merge_out = run_cmd(["gh", "pr", "merge", str(pr_num), "--repo", REPO, "--squash", "--admin"], cwd=workspace)
+        res = subprocess.run(["gh", "pr", "merge", str(pr_num), "--repo", REPO, "--squash", "--admin"], cwd=workspace, capture_output=True, text=True)
+        if res.returncode != 0:
+            subprocess.run(["gh", "pr", "merge", str(pr_num), "--repo", REPO, "--squash"], cwd=workspace)
         print(f"[SUCCESS] Merged PR #{pr_num} into main! Contributor activity recorded for {USER_NAME}.", flush=True)
         run_cmd("git checkout main", cwd=workspace)
         run_cmd("git pull origin main", cwd=workspace)
