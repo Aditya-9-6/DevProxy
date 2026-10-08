@@ -952,3 +952,24 @@ func mustDialTunnel(t *testing.T, p *ProxyServer, scheme, addr string) net.Conn 
 	}
 	return conn
 }
+
+func TestUpstreamProxy_GetAndClearURL(t *testing.T) {
+	p := newUpstreamTestProxy(t, "127.0.0.1:8080")
+	if got := p.UpstreamProxyURL(); got != "" {
+		t.Fatalf("expected empty initially, got %q", got)
+	}
+
+	raw := "socks5://127.0.0.1:1080"
+	if err := p.SetUpstreamProxy(raw); err != nil {
+		t.Fatalf("SetUpstreamProxy failed: %v", err)
+	}
+	if got := p.UpstreamProxyURL(); got != raw {
+		t.Fatalf("expected %q, got %q", raw, got)
+	}
+
+	p.ClearUpstreamProxy()
+	if got := p.UpstreamProxyURL(); got != "" {
+		t.Fatalf("expected empty after clear, got %q", got)
+	}
+}
+
