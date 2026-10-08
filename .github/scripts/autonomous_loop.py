@@ -175,7 +175,11 @@ def heal_and_merge_open_prs(workspace: Path) -> bool:
                 run_cmd("git clean -fd", cwd=workspace, check=False)
                 run_cmd(["git", "fetch", "origin", head_ref], cwd=workspace, check=False)
                 run_cmd(["git", "checkout", "-B", head_ref, f"origin/{head_ref}"], cwd=workspace)
-                run_cmd(["git", "merge", "origin/main", "--no-edit"], cwd=workspace, check=False)
+                merge_res = subprocess.run(["git", "merge", "origin/main", "--no-edit"], cwd=workspace, capture_output=True, text=True)
+                if merge_res.returncode != 0:
+                    run_cmd(["git", "checkout", "origin/main", "--", ".github/", "autonomous_loop.py"], cwd=workspace, check=False)
+                    run_cmd("git add -A", cwd=workspace, check=False)
+                    run_cmd(["git", "commit", "-m", "merge: resolve tooling conflicts with origin/main", "--no-edit"], cwd=workspace, check=False)
             except Exception as e:
                 print(f"[!] Could not checkout branch {head_ref}: {e}", file=sys.stderr)
                 continue
