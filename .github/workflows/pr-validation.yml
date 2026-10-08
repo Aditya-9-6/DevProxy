@@ -52,7 +52,6 @@ jobs:
   # ============================================================================
   test-matrix:
     name: Tests (${{ matrix.os }} - Go ${{ matrix.go-version }})
-    needs: code-quality
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -101,7 +100,6 @@ jobs:
   # ============================================================================
   benchmark-performance:
     name: Performance & Memory Benchmarks
-    needs: code-quality
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
@@ -116,14 +114,13 @@ jobs:
       - name: Run Microbenchmarks
         run: |
           echo "Running microbenchmarks to guard against throughput and memory allocation regressions..."
-          go test -v -run='^$' -bench=. -benchmem ./pkg/ringbuffer ./pkg/analysis
+          go test -v -run='^$' -bench=. -benchmem ./pkg/ringbuffer ./pkg/analysis ./pkg/proxy ./pkg/storage ./pkg/certs
 
   # ============================================================================
   # 4. Security & Protocol Robustness Fuzz Testing
   # ============================================================================
   fuzz-testing:
     name: Security & Protocol Fuzzing
-    needs: code-quality
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
@@ -139,7 +136,7 @@ jobs:
         run: go test -v -fuzz=FuzzRingBuffer -fuzztime=5s ./pkg/ringbuffer
 
       - name: Fuzz Aho-Corasick Matcher
-        run: go test -v -fuzz=FuzzAhoCorasickMatcher -fuzztime=5s ./pkg/analysis
+        run: go test -v -fuzz=FuzzAhoCorasickMatcher_ScanBytes -fuzztime=5s ./pkg/analysis
 
       - name: Fuzz JWT Inspector
         run: go test -v -fuzz=FuzzJWTInspection -fuzztime=5s ./pkg/analysis
@@ -155,7 +152,6 @@ jobs:
   # ============================================================================
   e2e-integration-tests:
     name: End-to-End (E2E) Integration Tests
-    needs: code-quality
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
@@ -175,7 +171,6 @@ jobs:
   # ============================================================================
   docker-build-smoke:
     name: Docker Container Build
-    needs: code-quality
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
@@ -189,7 +184,6 @@ jobs:
   # ============================================================================
   cross-compile-check:
     name: Build (${{ matrix.goos }}/${{ matrix.goarch }})
-    needs: code-quality
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -229,32 +223,55 @@ jobs:
     steps:
       - name: Check Upstream Pipeline Status
         run: |
+          FAILED=0
           if [ "${{ needs.code-quality.result }}" != "success" ]; then
             echo "❌ Code Quality / Lint checks failed."
-            exit 1
+            FAILED=1
+          else
+            echo "✅ Code Quality / Lint checks passed."
           fi
           if [ "${{ needs.test-matrix.result }}" != "success" ]; then
             echo "❌ Multi-OS Test suite failed on one or more platforms/runtimes."
-            exit 1
+            FAILED=1
+          else
+            echo "✅ Multi-OS Test suite passed."
           fi
           if [ "${{ needs.benchmark-performance.result }}" != "success" ]; then
             echo "❌ Benchmark performance checks failed."
-            exit 1
+            FAILED=1
+          else
+            echo "✅ Benchmark performance checks passed."
           fi
           if [ "${{ needs.fuzz-testing.result }}" != "success" ]; then
             echo "❌ Security fuzz testing failed."
-            exit 1
+            FAILED=1
+          else
+            echo "✅ Security fuzz testing passed."
           fi
           if [ "${{ needs.e2e-integration-tests.result }}" != "success" ]; then
             echo "❌ End-to-End integration tests failed."
-            exit 1
+            FAILED=1
+          else
+            echo "✅ End-to-End integration tests passed."
           fi
           if [ "${{ needs.docker-build-smoke.result }}" != "success" ]; then
             echo "❌ Docker container build failed."
-            exit 1
+            FAILED=1
+          else
+            echo "✅ Docker container build passed."
           fi
           if [ "${{ needs.cross-compile-check.result }}" != "success" ]; then
             echo "❌ Cross-platform compilation failed."
+            FAILED=1
+          else
+            echo "✅ Cross-platform compilation passed."
+          fi
+
+          if [ $FAILED -ne 0 ]; then
+            echo ""
+            echo "🚨 Pipeline failed. Review the failed suites above."
             exit 1
           fi
+
+          echo ""
           echo "🎉 All PR validation and specialized test suites passed! PR is clean and green to merge."
