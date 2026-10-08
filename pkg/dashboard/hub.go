@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"sync"
 
@@ -11,34 +12,40 @@ import (
 )
 
 var upgrader = websocket.Upgrader{
+	ReadBufferSize:  1024,
+	WriteBufferSize: 1024,
 	CheckOrigin: func(r *http.Request) bool {
-		return true
+		return true // Allow local dashboard connections
 	},
 }
 
+// Client represents a single WebSocket connection.
+type Client struct {
+	hub  *Hub
+	conn *websocket.Conn
+	send chan []byte
+}
+
+// Hub maintains the set of active WebSocket clients and broadcasts messages.
 type Hub struct {
-	clients    map[*websocket.Conn]bool
+	clients    map[*Client]bool
 	broadcast  chan []byte
-	register   chan *websocket.Conn
-	unregister chan *websocket.Conn
-	mu         sync.RWMutex
+	register   chan *Client
+	unregister chan *Client
+	mu         sync.Mutex
 }
 
-type WSMessage struct {
-	Type     string              `json:"type"`
-	Event    interface{}         `json:"event,omitempty"`
-	Findings []*analysis.Finding `json:"findings,omitempty"`
-}
-
+// NewHub creates a new WebSocket Hub instance.
 func NewHub() *Hub {
 	return &Hub{
-		clients:    make(map[*websocket.Conn]bool),
-		broadcast:  make(chan []byte, 1024),
-		register:   make(chan *websocket.Conn),
-		unregister: make(chan *websocket.Conn),
+		clients:    make(map[*Client]bool),
+		broadcast:  make(chan []byte, 256),
+		register:   make(chan *Client),
+		unregister: make(chan *Client),
 	}
 }
 
+// Run starts the hub loop.
 func (h *Hub) Run() {
 	for {
 		select {
@@ -46,60 +53,89 @@ func (h *Hub) Run() {
 			h.mu.Lock()
 			h.clients[client] = true
 			h.mu.Unlock()
+
 		case client := <-h.unregister:
 			h.mu.Lock()
 			if _, ok := h.clients[client]; ok {
 				delete(h.clients, client)
-				client.Close()
+				close(client.send)
 			}
 			h.mu.Unlock()
+
 		case message := <-h.broadcast:
-			h.mu.RLock()
+			h.mu.Lock()
 			for client := range h.clients {
-				if err := client.WriteMessage(websocket.TextMessage, message); err != nil {
-					go func(c *websocket.Conn) { h.unregister <- c }(client)
+				select {
+				case client.send <- message:
+				default:
+					// Client send buffer is full, drop to prevent blocking
+					close(client.send)
+					delete(h.clients, client)
 				}
 			}
-			h.mu.RUnlock()
+			h.mu.Unlock()
 		}
 	}
 }
 
+// BroadcastEvent marshals traffic events and findings into JSON and broadcasts to all connected clients.
 func (h *Hub) BroadcastEvent(event *ringbuffer.TrafficEvent, findings []*analysis.Finding) {
-	msg := WSMessage{
-		Type: "REQUEST",
-		Event: map[string]interface{}{
-			"id":            event.ID,
-			"timestamp":     event.Timestamp,
-			"method":        event.Method,
-			"url":           event.URL,
-			"content_type":  event.ReqHeaders.Get("Content-Type"),
-			"finding_count": len(findings),
-		},
-		Findings: findings,
+	payload := map[string]interface{}{
+		"event":    event,
+		"findings": findings,
 	}
 
-	bytes, err := json.Marshal(msg)
-	if err == nil {
-		select {
-		case h.broadcast <- bytes:
-		default:
-		}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		log.Printf("[Hub Error] Failed to marshal broadcast event: %v", err)
+		return
+	}
+
+	select {
+	case h.broadcast <- data:
+	default:
+		// Non-blocking send if hub broadcast channel is saturated
 	}
 }
 
+// ServeWS handles WebSocket requests from the dashboard.
 func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
+		log.Printf("[WebSocket Upgrade Error] %v", err)
 		return
 	}
-	h.register <- conn
-	go func() {
-		defer func() { h.unregister <- conn }()
-		for {
-			if _, _, err := conn.ReadMessage(); err != nil {
-				break
-			}
+
+	client := &Client{
+		hub:  h,
+		conn: conn,
+		send: make(chan []byte, 256),
+	}
+	h.register <- client
+
+	go client.writePump()
+	go client.readPump()
+}
+
+func (c *Client) writePump() {
+	defer c.conn.Close()
+	for message := range c.send {
+		err := c.conn.WriteMessage(websocket.TextMessage, message)
+		if err != nil {
+			break
 		}
+	}
+}
+
+func (c *Client) readPump() {
+	defer func() {
+		c.hub.unregister <- c
+		_ = c.conn.Close()
 	}()
+	for {
+		_, _, err := c.conn.ReadMessage()
+		if err != nil {
+			break
+		}
+	}
 }
