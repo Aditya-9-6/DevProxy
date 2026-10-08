@@ -58,7 +58,6 @@ func (p *ProxyServer) ClearUpstreamProxy() {
 	p.upstreamProxy = nil
 }
 
-
 func parseUpstreamProxy(raw string) (*url.URL, error) {
 	u, err := url.Parse(raw)
 	if err != nil {

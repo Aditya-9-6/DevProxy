@@ -994,5 +994,3 @@ func TestUpstreamProxy_ConcurrentAccess(t *testing.T) {
 	}
 	wg.Wait()
 }
-
-
