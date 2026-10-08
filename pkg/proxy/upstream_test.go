@@ -994,3 +994,37 @@ func TestUpstreamProxy_ConcurrentAccess(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+func TestUpstreamTransport_PooledKeepalive(t *testing.T) {
+	cfg := DefaultUpstreamPoolConfig()
+	if cfg.MaxIdleConns != 500 || cfg.MaxIdleConnsPerHost != 100 {
+		t.Fatalf("unexpected default pool config: %+v", cfg)
+	}
+
+	cfg.ProbeInterval = 10 * time.Millisecond
+	pt := NewPooledTransport(cfg)
+	if pt == nil || pt.Transport == nil {
+		t.Fatal("expected non-nil pooled transport")
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go pt.StartProbes(ctx)
+
+	time.Sleep(35 * time.Millisecond)
+	cancel()
+	pt.Close()
+	// Calling close a second time must be safe (sync.Once)
+	pt.Close()
+}
+
+func TestUpstreamTransport_PooledTransportFallbacks(t *testing.T) {
+	// Zero config should use robust defaults
+	pt := NewPooledTransport(UpstreamPoolConfig{})
+	if pt.Transport.MaxIdleConns != 500 {
+		t.Errorf("expected 500 max idle conns, got %d", pt.Transport.MaxIdleConns)
+	}
+	if pt.Transport.MaxIdleConnsPerHost != 100 {
+		t.Errorf("expected 100 max idle conns per host, got %d", pt.Transport.MaxIdleConnsPerHost)
+	}
+	pt.Close()
+}

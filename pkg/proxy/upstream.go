@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"sync"
 	"time"
 
 	"golang.org/x/net/http/httpproxy"
@@ -332,3 +333,99 @@ type bufferedConn struct {
 }
 
 func (c *bufferedConn) Read(p []byte) (int, error) { return c.r.Read(p) }
+
+// UpstreamPoolConfig holds connection pooling and active probe settings for upstream connections.
+type UpstreamPoolConfig struct {
+	MaxIdleConns        int
+	MaxIdleConnsPerHost int
+	IdleConnTimeout     time.Duration
+	ProbeInterval       time.Duration
+	KeepAlive           time.Duration
+	Insecure            bool
+}
+
+// DefaultUpstreamPoolConfig returns default pooled transport settings.
+func DefaultUpstreamPoolConfig() UpstreamPoolConfig {
+	return UpstreamPoolConfig{
+		MaxIdleConns:        500,
+		MaxIdleConnsPerHost: 100,
+		IdleConnTimeout:     90 * time.Second,
+		ProbeInterval:       30 * time.Second,
+		KeepAlive:           15 * time.Second,
+		Insecure:            false,
+	}
+}
+
+// PooledTransport wraps http.Transport with active keepalive health-check probes
+// to eliminate 502 Bad Gateway race conditions from stale or closed connections.
+type PooledTransport struct {
+	*http.Transport
+	probeInterval time.Duration
+	stopChan      chan struct{}
+	closeOnce     sync.Once
+}
+
+// NewPooledTransport creates an optimized upstream transport with active connection keepalive probes.
+func NewPooledTransport(cfg UpstreamPoolConfig) *PooledTransport {
+	if cfg.MaxIdleConns <= 0 {
+		cfg.MaxIdleConns = 500
+	}
+	if cfg.MaxIdleConnsPerHost <= 0 {
+		cfg.MaxIdleConnsPerHost = 100
+	}
+	if cfg.IdleConnTimeout <= 0 {
+		cfg.IdleConnTimeout = 90 * time.Second
+	}
+	if cfg.KeepAlive <= 0 {
+		cfg.KeepAlive = 15 * time.Second
+	}
+	if cfg.ProbeInterval <= 0 {
+		cfg.ProbeInterval = 30 * time.Second
+	}
+
+	transport := &http.Transport{
+		Proxy: http.ProxyFromEnvironment,
+		DialContext: (&net.Dialer{
+			Timeout:   upstreamDialTimeout,
+			KeepAlive: cfg.KeepAlive,
+		}).DialContext,
+		ForceAttemptHTTP2:     false,
+		MaxIdleConns:          cfg.MaxIdleConns,
+		MaxIdleConnsPerHost:   cfg.MaxIdleConnsPerHost,
+		IdleConnTimeout:       cfg.IdleConnTimeout,
+		TLSHandshakeTimeout:   5 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+		TLSClientConfig:       &tls.Config{InsecureSkipVerify: cfg.Insecure},
+	}
+
+	return &PooledTransport{
+		Transport:     transport,
+		probeInterval: cfg.ProbeInterval,
+		stopChan:      make(chan struct{}),
+	}
+}
+
+// StartProbes runs periodic health checks on idle connections to prevent silent TCP drops.
+func (pt *PooledTransport) StartProbes(ctx context.Context) {
+	ticker := time.NewTicker(pt.probeInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			pt.Transport.CloseIdleConnections()
+		case <-ctx.Done():
+			return
+		case <-pt.stopChan:
+			return
+		}
+	}
+}
+
+// Close stops the active probe goroutine and closes idle connections.
+func (pt *PooledTransport) Close() {
+	pt.closeOnce.Do(func() {
+		close(pt.stopChan)
+		pt.Transport.CloseIdleConnections()
+	})
+}
