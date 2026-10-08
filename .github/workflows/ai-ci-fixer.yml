@@ -24,13 +24,7 @@ jobs:
     name: Autonomous CI Fixer
     if: >
       github.event_name == 'workflow_dispatch' ||
-      (github.event.issue.pull_request &&
-       contains('["OWNER", "COLLABORATOR", "MEMBER"]', github.event.comment.author_association) && (
-        startsWith(github.event.comment.body, '/fix') ||
-        startsWith(github.event.comment.body, '/fix-ci') ||
-        startsWith(github.event.comment.body, '@devproxy-bot fix') ||
-        startsWith(github.event.comment.body, '@devproxy-bot fix-ci')
-      ))
+      (github.event.issue.pull_request && contains(github.event.comment.body, '/fix'))
     runs-on: ubuntu-latest
     steps:
       - name: Generate GitHub App Token (Higher Rate Limits)
@@ -96,10 +90,12 @@ jobs:
         run: |
           python3 .github/scripts/ai_ci_fixer.py \
             --pr-number "$PR_NUM" \
-            --workspace .
+            --workspace . \
+            --max-iterations 6
 
       - name: Verify Go Compilation & Format
         run: |
+          go mod tidy
           gofmt -w .
           go vet ./... || true
 
