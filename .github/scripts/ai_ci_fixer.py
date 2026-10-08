@@ -17,12 +17,11 @@ import subprocess
 import time
 from pathlib import Path
 
-DEFAULT_MODEL = "gemini-3.1-flash-lite"
+DEFAULT_MODEL = "gemini-flash-lite-latest"
 FALLBACK_MODELS = [
-    "gemini-3.1-flash-lite",
-    "gemini-3.5-flash",
-    "gemini-3.8-flash",
-    "gemini-3.7-flash",
+    "gemini-flash-lite-latest",
+    "gemini-flash-latest",
+    "gemini-pro-latest",
 ]
 
 SYSTEM_PROMPT = """You are an expert autonomous Go systems engineer and compiler repair agent for DevProxy.
@@ -30,11 +29,11 @@ Your mission is to fix failing Go build errors, compiler errors, data races, bro
 
 CRITICAL RULES:
 1. ANTI-SPAGHETTI & MODULARITY: Ensure functions are concise (<60 LOC), single-purpose, and decoupled. Refactor any tangled or duplicate logic identified by the reviewer.
-2. PRESERVE EXISTING INTERFACES & EXPORTS: Never remove or omit existing structs, interfaces, methods, or helper functions that other files or packages depend on.
+2. PRESERVE EXISTING INTERFACES & EXPORTS: Never remove or omit existing structs, interfaces, methods, or helper functions that other files or packages depend on. NEVER truncate a file or replace it with a skeleton stub.
 3. COMPILE-READY CODE: All files must be syntactically valid Go, with correct imports, correct types, and no undefined identifiers.
 4. CONCURRENCY & PERFORMANCE: Maintain DevProxy's zero-allocation streaming patterns (sync.Pool) and race-free concurrency.
 5. UNIT TEST GENERATION: Add comprehensive unit tests covering newly added functions, edge cases, and error branches.
-6. COMPLETE FILE CONTENT: When updating a file, provide the COMPLETE, FULL file content so it can replace the file directly.
+6. COMPLETE FILE CONTENT: When updating a file, provide the COMPLETE, FULL file content so it can replace the file directly. Never write partial snippets or omit existing methods.
 
 CRITICAL OUTPUT FORMAT:
 Respond ONLY with a single valid JSON object and nothing else (no conversational filler, no markdown wrappers outside JSON):
@@ -124,8 +123,11 @@ def call_gemini(api_key: str, prompt: str, fallback_key: str = "", model: str = 
 
 def run_diagnostics(workspace: Path) -> tuple[int, str]:
     """Runs compiler and test suite, returning exit code and combined error output."""
-    print("[*] Running local diagnostic checks (gofmt, go vet, go test)...", flush=True)
+    print("[*] Running local diagnostic checks (go mod tidy, gofmt, go vet, go test)...", flush=True)
     out_lines = []
+
+    # Run go mod tidy
+    subprocess.run(["go", "mod", "tidy"], cwd=workspace, capture_output=True, text=True)
 
     # Check gofmt
     fmt_res = subprocess.run(["gofmt", "-l", "."], cwd=workspace, capture_output=True, text=True)
@@ -202,6 +204,7 @@ def main():
     parser.add_argument("--workspace", default=".", help="Workspace root directory")
     parser.add_argument("--error-log-file", default="", help="Optional pre-captured error log file")
     parser.add_argument("--review-feedback-file", default="", help="Optional reviewer feedback markdown file")
+    parser.add_argument("--max-iterations", type=int, default=6, help="Maximum self-healing loop passes (default: 6)")
     args = parser.parse_args()
 
     primary_key = os.environ.get("GEMINI_SOLVER_KEY", "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
@@ -224,24 +227,26 @@ def main():
     post_code = 1
     post_errors = ""
 
-    max_iterations = 2
+    max_iterations = args.max_iterations
     for iteration in range(1, max_iterations + 1):
-        print(f"\n=== Autonomous Repair Pass {iteration}/{max_iterations} ===", flush=True)
+        print(f"\n=======================================================", flush=True)
+        print(f"[*] Autonomous Repair Pass {iteration}/{max_iterations}", flush=True)
+        print(f"=======================================================", flush=True)
 
         # Step 1: Run diagnostics
         code, error_log = run_diagnostics(workspace)
-        if code == 0 and not error_log and not review_feedback:
-            print(f"[OK] All local checks pass cleanly at pass {iteration}!")
+        if code == 0 and not error_log:
+            print(f"\n[🎉 SUCCESS] All checks passed 100% GREEN at pass {iteration}! 0 errors, 0 test failures.", flush=True)
             post_code = 0
             post_errors = ""
             break
 
-        print(f"[*] Diagnostics identified {len(error_log)} chars of error output at pass {iteration}.")
+        print(f"[*] Diagnostics identified failing checks at pass {iteration}:\n{error_log[:500]}...", flush=True)
 
         # Step 2: Extract referenced files & context
         combined_context_text = error_log + "\n" + review_feedback
         referenced_files = extract_referenced_files(combined_context_text, workspace)
-        print(f"[*] Files in repair scope: {referenced_files}")
+        print(f"[*] Files in repair scope: {referenced_files}", flush=True)
 
         file_contents = {}
         for rf in referenced_files[:12]:
@@ -255,75 +260,95 @@ def main():
         pr_diff = get_pr_diff(workspace)
 
         # Step 3: Construct prompt for Gemini
-        prompt = f"""Pull Request #{args.pr_number} requires autonomous refactoring / CI repair (Pass {iteration}/{max_iterations}).
-
-=== ARCHITECTURAL REVIEW FEEDBACK & ANTI-SPAGHETTI DIRECTIVES ===
-{review_feedback[:18000] if review_feedback else "No external reviewer feedback provided. Fix diagnostics."}
+        prompt = f"""Pull Request #{args.pr_number} has failing Go tests or compiler errors (Pass {iteration}/{max_iterations}).
+Your goal: Fix all compiler errors and broken tests so that 'go test -v ./...' passes 100% GREEN.
 
 === CI DIAGNOSTIC ERROR LOG ===
-{error_log[:18000] if error_log else "Clean compiler output."}
+{error_log[:15000]}
 
-=== PULL REQUEST GIT DIFF ===
-{pr_diff[:12000]}
+{f"=== ARCHITECTURAL REVIEW FEEDBACK ==={chr(10)}{review_feedback[:10000]}" if review_feedback else ""}
 
-=== REFERENCED SOURCE FILES CONTENT ===
+=== CURRENT GIT DIFF ===
+{pr_diff[:10000]}
+
+=== REFERENCED SOURCE FILES (PRESERVE ALL EXISTING CODE) ===
 {chr(10).join(f"--- File: {path} ---{chr(10)}{content}" for path, content in file_contents.items())}
 
 Instructions:
-1. Address all architectural issues, anti-spaghetti recommendations, missing tests, and compiler/lint errors above.
-2. Refactor any god functions (>60 lines) into clean, single-purpose helper functions.
-3. Preserve all existing exported types, functions, structs, and interfaces needed across packages.
-4. If missing unit tests were flagged, provide the full test file with table-driven tests.
-5. Provide the full replacement content for each file that needs to be updated or created.
-6. Output valid JSON adhering to the specified schema.
+1. Examine the exact go compiler errors and failing unit tests above.
+2. Fix broken logic, type mismatches, missing imports, or missing methods.
+3. PRESERVATION MANDATE: You MUST preserve all existing structs, methods, interfaces, and packages. NEVER delete or truncate existing functionality.
+4. Provide the full replacement content for each file that needs to be updated.
+5. Output valid JSON adhering to the specified schema.
 """
 
         # Step 4: Request fix from Gemini
-        result = call_gemini(primary_key, prompt, fallback_key=fallback_key)
-        latest_summary = result.get("summary", "Automated repair for architectural feedback and CI errors.")
+        try:
+            result = call_gemini(primary_key, prompt, fallback_key=fallback_key)
+        except Exception as e:
+            print(f"[!] Gemini call failed on pass {iteration}: {e}", file=sys.stderr)
+            time.sleep(5)
+            continue
+
+        latest_summary = result.get("summary", "Automated repair for Go CI diagnostics.")
         files = result.get("files", [])
 
         if not files:
             print("[!] No file changes provided by AI.", file=sys.stderr)
             break
 
-        print(f"[*] Applying {len(files)} fixed files...")
+        print(f"[*] Applying {len(files)} fixed file(s)...", flush=True)
         for f in files:
             rel_path = f["path"].replace("\\", "/")
             content = f["content"]
             target = workspace / rel_path
+
+            # Code Integrity Guard: Prevent destructive file truncation
+            if target.is_file():
+                orig_lines = len(target.read_text(encoding="utf-8", errors="replace").splitlines())
+                new_lines = len(content.splitlines())
+                if orig_lines > 80 and new_lines < int(orig_lines * 0.65):
+                    print(f"[!] WARNING: Proposed fix for {rel_path} shrunk lines from {orig_lines} to {new_lines}. Truncation detected! Skipping destructive overwrite.", flush=True)
+                    continue
+
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(content, encoding="utf-8")
             all_repaired_files.add(rel_path)
-            print(f"    [+] Wrote fixed file: {rel_path}")
+            print(f"    [+] Wrote fixed file: {rel_path}", flush=True)
 
         # Step 5: Format & verify
+        subprocess.run(["go", "mod", "tidy"], cwd=workspace)
         subprocess.run(["gofmt", "-w", "."], cwd=workspace)
-        post_code, post_errors = run_diagnostics(workspace)
-        if post_code == 0:
-            print(f"[SUCCESS] Build and tests passed cleanly after pass {iteration}!")
-            # Consume review feedback once applied
-            review_feedback = ""
-            break
 
-    # Write summary
+    final_code, final_log = run_diagnostics(workspace)
+    post_code = final_code
+
     summary_file = workspace / "ci_fix_summary.md"
-    summary_content = f"""## 🛠️ Autonomous Architectural Repair & CI Fix Applied
+    status_label = "✅ **ALL TESTS 100% GREEN (Passed)**" if post_code == 0 else "⚠️ **CHECKS STILL REPORTING ERRORS**"
+    summary_content = f"""## 🛠️ Autonomous CI Test Fixer Report (DevProxy Go)
 
 **Target**: Pull Request #{args.pr_number}
+**Status**: {status_label}
 
-### 📋 Fix Summary
+### 📋 Resolution Summary
 {latest_summary}
 
-### 📂 Files Repaired
-{chr(10).join(f"- `{f}`" for f in sorted(list(all_repaired_files)))}
+### 📂 Files Modified
+{chr(10).join(f"- `{f}`" for f in sorted(list(all_repaired_files))) if all_repaired_files else "None"}
 
 ### 🧪 Diagnostic Verification
-- Local build & test status after fix: **{'PASSED (Clean)' if post_code == 0 else 'WARNING (Some checks still reporting errors)'}**
-{f"```text{chr(10)}{post_errors[:1500]}{chr(10)}```" if post_code != 0 else ""}
+- Local build & test exit code: **{post_code}**
+{f"```text{chr(10)}{final_log[:1500]}{chr(10)}```" if post_code != 0 else "```text\nAll Go packages passed go vet and go test cleanly.\n```"}
 """
     summary_file.write_text(summary_content, encoding="utf-8")
-    print(f"[OK] Fix cycle completed. Final verification status: code {post_code}")
+    print(f"\n[OK] Fix cycle completed. Final verification status: exit code {post_code}")
+
+    if post_code == 0:
+        print("[🎉 100% GREEN] CI suite passed cleanly. PR is ready for merge.")
+        sys.exit(0)
+    else:
+        print(f"[!] Tests still failing after {max_iterations} passes.")
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()
