@@ -18,14 +18,14 @@ permissions:
   issues: write
   actions: write
 
+concurrency:
+  group: continuous-advancement-loop
+  cancel-in-progress: true
+
 jobs:
   advance:
-    name: Autonomous Engine (${{ matrix.worker }})
+    name: Autonomous Engine
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        worker: [alpha, beta]
-      fail-fast: false
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -63,10 +63,3 @@ jobs:
           GEMINI_SOLVER_KEY: ${{ secrets.GEMINI_SOLVER_KEY || '' }}
         run: |
           python3 .github/scripts/autonomous_loop.py --workspace . --interval 5 --max-cycles 5 --timeout-mins 20
-
-      - name: Self-Trigger Next Advancement Run (Zero-Downtime Chain)
-        if: always()
-        run: |
-          gh workflow run continuous-advancement.yml --repo ${{ github.repository }} || true
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
