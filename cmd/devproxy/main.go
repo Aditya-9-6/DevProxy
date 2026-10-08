@@ -15,6 +15,7 @@ import (
 	"github.com/Aditya-9-6/DevProxy/pkg/dashboard"
 	"github.com/Aditya-9-6/DevProxy/pkg/mock"
 	"github.com/Aditya-9-6/DevProxy/pkg/proxy"
+	"github.com/Aditya-9-6/DevProxy/pkg/replay"
 	"github.com/Aditya-9-6/DevProxy/pkg/ringbuffer"
 	"github.com/Aditya-9-6/DevProxy/pkg/storage"
 )
@@ -56,7 +57,24 @@ func main() {
 	showInstallCA := flag.Bool("install-ca", false, "Display instructions to install and trust the Root CA")
 	insecureUpstream := flag.Bool("insecure-upstream", false, "Allow upstream HTTPS connections to skip TLS verification (for local self-signed dev microservices)")
 	upstreamProxy := flag.String("upstream-proxy", "", "Route DevProxy's own egress through an upstream proxy: http://, https:// or socks5://host:port (falls back to HTTPS_PROXY/ALL_PROXY when empty)")
+	replayHAR := flag.String("replay-har", "", "Path to HAR file to replay as deterministic mock server")
+	replayPort := flag.Int("replay-port", 8085, "Port for deterministic HAR playback mock server")
+	replayLatency := flag.Bool("replay-latency", false, "Simulate recorded network timings during HAR playback")
 	flag.Parse()
+
+	if *replayHAR != "" {
+		addr := fmt.Sprintf(":%d", *replayPort)
+		log.Printf("Starting DevProxy Deterministic HAR Playback Server on %s from %s...", addr, *replayHAR)
+		server, err := replay.NewHARPlaybackServerFromFile(addr, *replayHAR, *replayLatency)
+		if err != nil {
+			log.Fatalf("Failed to initialize HAR playback server: %v", err)
+		}
+		log.Printf("HAR Mock Playback active on http://localhost:%d", *replayPort)
+		if err := server.Start(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("HAR playback server error: %v", err)
+		}
+		return
+	}
 
 	if *showVersion {
 		fmt.Println("DevProxy v1.0.0 - Zero-Latency Decoupled Development Security Proxy")
