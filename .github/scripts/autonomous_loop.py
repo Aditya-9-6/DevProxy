@@ -4,17 +4,19 @@ Autonomous Multi-Agent GitHub Advancement Loop for DevProxy (Local Daemon & Clou
 
 Executes the continuous hyper-scale development cycle:
 1. Dynamic Key Pooling: Rotates Gemini API keys round-robin to maximize RPM/TPM quota.
-2. Issue Generation: Creates architecture advancement specifications.
+2. Issue Generation: Creates architecture advancement specifications (strictly deduplicated).
 3. AI Solver: Implements solutions with zero-allocation, anti-spaghetti invariants.
 4. Pre-Commit Quality Gate: Runs gofmt -w ., go vet ./..., and go test -race ./...
 5. Contribution Attribution: Commits with 'Aditya Dahale <aditya-9-6@users.noreply.github.com>'.
 6. Autonomous Reviewer Gate: Audits PR against strict performance and decoupling invariants.
-7. Auto-Merger: Squash-merges approved PRs to continuously illuminate GitHub contribution chart.
+7. Auto-Merger: Squash-merges approved PRs to continuously illuminate GitHub contribution chart,
+   and explicitly closes linked issues to prevent duplicate solutions.
 """
 
 import os
 import sys
 import json
+import re
 import time
 import subprocess
 import argparse
@@ -46,7 +48,7 @@ class KeyPool:
                 extra_keys.append(val)
 
         # Check local gitignored .gemini_keys file in workspace root
-        for check_dir in (Path("."), Path(__file__).resolve().parent):
+        for check_dir in (Path("."), Path(__file__).resolve().parent, Path(__file__).resolve().parent.parent):
             key_file = check_dir / ".gemini_keys"
             if key_file.exists():
                 try:
@@ -89,14 +91,66 @@ def run_cmd(cmd, cwd=None, check=True):
         raise RuntimeError(f"Command failed ({res.returncode}): {cmd}\nStderr: {res.stderr}\nStdout: {res.stdout}")
     return res.stdout.strip()
 
-def get_open_advancement_issues(workspace: Path):
-    """Fetches open advancement issues."""
+def get_open_advancement_issues(workspace: Path) -> list:
+    """
+    Fetches open advancement issues, strictly filtering out any that
+    already have active PRs or were already solved by previous merged PRs.
+    """
     try:
         out = run_cmd(["gh", "issue", "list", "--repo", REPO, "--label", "advancement", "--state", "open", "--json", "number,title,body"], cwd=workspace)
-        return json.loads(out) if out else []
+        all_issues = json.loads(out) if out else []
     except Exception as e:
         print(f"[Warning] Failed to fetch issues: {e}", file=sys.stderr, flush=True)
         return []
+
+    if not all_issues:
+        return []
+
+    # Fetch recent PRs to check for active or merged solutions
+    try:
+        prs_out = run_cmd(["gh", "pr", "list", "--repo", REPO, "--state", "all", "--limit", "50", "--json", "number,title,headRefName,state"], cwd=workspace)
+        prs = json.loads(prs_out) if prs_out else []
+    except Exception:
+        prs = []
+
+    active_issue_nums = set()
+    merged_issue_nums = set()
+
+    for p in prs:
+        head = p.get("headRefName", "")
+        title = p.get("title", "")
+        p_state = p.get("state", "").upper()
+
+        cand_num = None
+        if "issue-" in head:
+            try:
+                cand_num = int(head.split("issue-")[-1].split("-")[0])
+            except Exception:
+                pass
+        if not cand_num:
+            match = re.search(r"#(\d+)", title)
+            if match:
+                cand_num = int(match.group(1))
+
+        if cand_num:
+            if p_state == "OPEN":
+                active_issue_nums.add(cand_num)
+            elif p_state == "MERGED":
+                merged_issue_nums.add(cand_num)
+
+    unaddressed = []
+    for iss in all_issues:
+        num = iss.get("number")
+        if num in merged_issue_nums:
+            print(f"[*] Issue #{num} is already solved by a merged PR. Closing issue on GitHub...", flush=True)
+            run_cmd(["gh", "issue", "close", str(num), "--repo", REPO, "--comment", "Closed autonomously as already solved by a merged PR."], cwd=workspace, check=False)
+            continue
+        if num in active_issue_nums:
+            print(f"[*] Issue #{num} already has an active open PR in progress. Skipping duplicate solve.", flush=True)
+            continue
+        unaddressed.append(iss)
+
+    return unaddressed
 
 def generate_new_issue(workspace: Path):
     """Runs the issue generator script with rotated key."""
@@ -170,6 +224,29 @@ def heal_and_merge_open_prs(workspace: Path) -> bool:
             title = pr["title"]
             print(f"\n[*] Evaluating PR #{pr_num}: {title} (branch: {head_ref})...", flush=True)
 
+            # Determine linked issue number
+            linked_issue = None
+            if "issue-" in head_ref:
+                try:
+                    linked_issue = int(head_ref.split("issue-")[-1].split("-")[0])
+                except Exception:
+                    pass
+            if not linked_issue:
+                match = re.search(r"#(\d+)", title)
+                if match:
+                    linked_issue = int(match.group(1))
+
+            # If the linked issue is already closed in GitHub, close this PR as obsolete!
+            if linked_issue:
+                try:
+                    iss_out = run_cmd(["gh", "issue", "view", str(linked_issue), "--repo", REPO, "--json", "state"], cwd=workspace, check=False)
+                    if iss_out and '"state":"CLOSED"' in iss_out:
+                        print(f"[*] PR #{pr_num} resolves Issue #{linked_issue} which is ALREADY CLOSED. Closing obsolete PR...", flush=True)
+                        run_cmd(["gh", "pr", "close", str(pr_num), "--repo", REPO, "--comment", f"Closed obsolete PR: Issue #{linked_issue} is already resolved and closed.", "--delete-branch"], cwd=workspace, check=False)
+                        continue
+                except Exception:
+                    pass
+
             try:
                 run_cmd("git reset --hard HEAD", cwd=workspace, check=False)
                 run_cmd("git clean -fd", cwd=workspace, check=False)
@@ -197,7 +274,7 @@ def heal_and_merge_open_prs(workspace: Path) -> bool:
                     sys.executable, ".github/scripts/ai_ci_fixer.py",
                     "--pr-number", str(pr_num),
                     "--workspace", str(workspace),
-                    "--max-iterations", "6"
+                    "--max-iterations", "4"
                 ], cwd=workspace, env=fix_env, capture_output=True, text=True, encoding="utf-8", errors="replace")
 
                 code, error_log = run_diagnostics(workspace)
@@ -238,27 +315,21 @@ def heal_and_merge_open_prs(workspace: Path) -> bool:
                     except Exception:
                         pass
 
-                # If reviewer found issues, autonomously resolve them using review feedback!
                 if verdict != "APPROVED" or score < 90:
-                    review_md = workspace / "ai_pr_review.md"
-                    print(f"[*] PR #{pr_num} review requested improvements ({score}/100). Launching fixer to resolve action items...", flush=True)
+                    print(f"[*] PR #{pr_num} review scored {score}/100. Applying reviewer-guided self-healing...", flush=True)
                     fix_env = os.environ.copy()
                     fix_env["GEMINI_SOLVER_KEY"] = GLOBAL_POOL.next_key()
                     fix_env["GH_REPO"] = REPO
-                    fix_cmd = [
+
+                    subprocess.run([
                         sys.executable, ".github/scripts/ai_ci_fixer.py",
                         "--pr-number", str(pr_num),
                         "--workspace", str(workspace),
-                        "--max-iterations", "4"
-                    ]
-                    if review_md.exists():
-                        fix_cmd.extend(["--review-feedback-file", str(review_md)])
+                        "--max-iterations", "3"
+                    ], cwd=workspace, env=fix_env, capture_output=True, text=True, encoding="utf-8", errors="replace")
 
-                    subprocess.run(fix_cmd, cwd=workspace, env=fix_env, capture_output=True, text=True, encoding="utf-8", errors="replace")
-
-                    code, error_log = run_diagnostics(workspace)
-                    if code == 0:
-                        print(f"[SUCCESS] Applied review refactorings for PR #{pr_num}! Pushing commit...", flush=True)
+                    c2, _ = run_diagnostics(workspace)
+                    if c2 == 0:
                         run_cmd(["git", "config", "--replace-all", "user.name", USER_NAME], cwd=workspace, check=False)
                         run_cmd(["git", "config", "--replace-all", "user.email", USER_EMAIL], cwd=workspace, check=False)
                         run_cmd("git rm --cached -f ai_pr_*.md ai_review_*.json ci_fix_*.md 2>/dev/null || true", cwd=workspace, check=False)
@@ -266,7 +337,7 @@ def heal_and_merge_open_prs(workspace: Path) -> bool:
                         run_cmd("git reset -- ai_pr_*.md ai_review_*.json ci_fix_*.md 2>/dev/null || true", cwd=workspace, check=False)
                         run_cmd([
                             "git", "commit",
-                            "-m", f"refactor(audit): address architectural review feedback for PR #{pr_num}",
+                            "-m", f"fix(review): apply architectural improvements for PR #{pr_num}",
                             "-m", f"Co-authored-by: {USER_NAME} <{USER_EMAIL}>"
                         ], cwd=workspace, check=False)
                         run_cmd(["git", "push", "origin", head_ref], cwd=workspace, check=False)
@@ -295,6 +366,12 @@ def heal_and_merge_open_prs(workspace: Path) -> bool:
                     if res.returncode != 0:
                         subprocess.run(["gh", "pr", "merge", str(pr_num), "--repo", REPO, "--squash"], cwd=workspace)
                     print(f"[MERGED] Merged PR #{pr_num} into main! Contributor activity recorded for {USER_NAME}.", flush=True)
+
+                    # Explicitly close linked issue to prevent duplicate solve
+                    if linked_issue:
+                        print(f"[*] Closing linked Issue #{linked_issue}...", flush=True)
+                        run_cmd(["gh", "issue", "close", str(linked_issue), "--repo", REPO, "--comment", f"Resolved and closed autonomously after merging PR #{pr_num}."], cwd=workspace, check=False)
+
                     run_cmd("git checkout main", cwd=workspace)
                     run_cmd("git pull origin main", cwd=workspace)
                     run_cmd(f"git branch -D {head_ref}", cwd=workspace, check=False)
@@ -302,7 +379,6 @@ def heal_and_merge_open_prs(workspace: Path) -> bool:
                     return True
     finally:
         run_cmd("git checkout main", cwd=workspace, check=False)
-    return False
     return False
 
 def solve_issue(workspace: Path, issue_num: int, issue_title: str, issue_body: str):
@@ -382,7 +458,7 @@ def solve_issue(workspace: Path, issue_num: int, issue_title: str, issue_body: s
     run_cmd("git add -A", cwd=workspace)
     run_cmd("git reset -- ai_pr_*.md ai_review_*.json ci_fix_*.md 2>/dev/null || true", cwd=workspace, check=False)
 
-    commit_msg = f"feat: automated resolution for issue #{issue_num} ({issue_title})"
+    commit_msg = f"feat: automated resolution for issue #{issue_num} ({issue_title})\n\nCloses #{issue_num}"
     run_cmd([
         "git", "commit",
         "-m", commit_msg,
@@ -395,6 +471,8 @@ def solve_issue(workspace: Path, issue_num: int, issue_title: str, issue_body: s
     print("[*] Creating / updating Pull Request...", flush=True)
     summary_file = workspace / "ai_pr_summary.md"
     body_content = summary_file.read_text(encoding="utf-8") if summary_file.exists() else f"Automated resolution for Issue #{issue_num}."
+    if f"Closes #{issue_num}" not in body_content and f"Fixes #{issue_num}" not in body_content:
+        body_content += f"\n\n---\n*Closes #{issue_num}*"
 
     pr_url = ""
     pr_num = None
@@ -455,6 +533,11 @@ def solve_issue(workspace: Path, issue_num: int, issue_title: str, issue_body: s
         if res.returncode != 0:
             subprocess.run(["gh", "pr", "merge", str(pr_num), "--repo", REPO, "--squash"], cwd=workspace)
         print(f"[SUCCESS] Merged PR #{pr_num} into main! Contributor activity recorded for {USER_NAME}.", flush=True)
+
+        # Explicitly close linked issue on GitHub
+        print(f"[*] Closing linked Issue #{issue_num}...", flush=True)
+        run_cmd(["gh", "issue", "close", str(issue_num), "--repo", REPO, "--comment", f"Resolved and closed autonomously after merging PR #{pr_num}."], cwd=workspace, check=False)
+
         run_cmd("git checkout main", cwd=workspace)
         run_cmd("git pull origin main", cwd=workspace)
         # Clean up feature branch
@@ -484,13 +567,12 @@ def run_loop_iteration(workspace: Path):
     # Phase 1: Heal and merge existing open PRs
     handled_pr = heal_and_merge_open_prs(workspace)
     if handled_pr:
-        print("[OK] Successfully healed/merged an open PR in this cycle.", flush=True)
-        return
+        print("[OK] Processed open PRs in this cycle.", flush=True)
 
     # Phase 2: Solve open advancement issues
     issues = get_open_advancement_issues(workspace)
     if not issues:
-        print("[*] No open advancement issues found. Generating one...", flush=True)
+        print("[*] No unaddressed open advancement issues found. Generating one...", flush=True)
         generate_new_issue(workspace)
         time.sleep(5)
         issues = get_open_advancement_issues(workspace)

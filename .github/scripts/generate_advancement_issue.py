@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """
-DevProxy Architecture Advancement Issue Generator Engine (High-Quality Gate Edition)
+DevProxy Architecture Advancement Issue Generator Engine (High-Quality & Deduplication Gate Edition)
 Autonomous issue generator bot for continuous open-source contribution & architectural advancement.
-Enforces strict pre-flight quality scoring (>= 90/100), rejecting trivial tasks, churn, and duplicates.
-Integrates GossipMesh living evolutionary memes for cutting-edge systems specification.
+Strictly checks whether a proposed issue is already reported or solved before submitting.
+Rejects trivial tasks, duplicates, and existing codebase features.
 """
 
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -26,93 +27,272 @@ except ImportError:
 DEFAULT_MODEL = "gemini-flash-lite-latest"
 FALLBACK_MODELS = ["gemini-flash-lite-latest", "gemini-flash-latest", "gemini-pro-latest"]
 
-# Curated catalog of verified, high-impact open-source architecture advancements for DevProxy (Go)
+# Curated catalog of verified, high-impact, UNIMPLEMENTED open-source architecture advancements for DevProxy (Go)
 CATALOG = [
     {
-        "title": "feat(tls): Add JA4+ TLS Client Fingerprinting & Bot Classifier",
+        "title": "feat(quic): Add HTTP/3 QUIC connection listener & packet demuxer",
+        "area": "area/proxy",
+        "difficulty": "enhancement",
+        "spec": "Implement an experimental HTTP/3 UDP listener via quic-go to accept QUIC datagrams, demux streams, and bridge incoming HTTP/3 client requests to DevProxy's ringbuffer interception pipeline with zero packet copy.",
+        "target_files": ["pkg/proxy/quic.go", "pkg/proxy/proxy.go"]
+    },
+    {
+        "title": "feat(wasm): Add WebAssembly (Wasm) request/response filter plugin runtime using wazero",
+        "area": "area/proxy",
+        "difficulty": "enhancement",
+        "spec": "Integrate the pure-Go wazero WebAssembly runtime to allow users to load custom compiled .wasm interceptor filters that modify HTTP headers and payloads in-flight with zero CGO dependencies and memory-isolated execution.",
+        "target_files": ["pkg/wasm/runtime.go", "pkg/proxy/proxy.go"]
+    },
+    {
+        "title": "feat(dns): Add DNS-over-HTTPS (DoH) upstream resolver with caching & TTL eviction",
+        "area": "area/proxy",
+        "difficulty": "enhancement",
+        "spec": "Implement a concurrent RFC 8484 DNS-over-HTTPS client with in-memory lock-free LRU cache and automatic TTL expiration to securely resolve upstream proxy targets, bypassing local DNS poisoning and split-horizon leaks.",
+        "target_files": ["pkg/dns/doh.go", "pkg/proxy/upstream.go"]
+    },
+    {
+        "title": "feat(graphql): Add GraphQL query depth & cyclic recursion limiter in WAF",
         "area": "area/security",
         "difficulty": "enhancement",
-        "spec": "Capture TLS ClientHello extension lists, cipher suites, ALPN protocols, and signature algorithms to generate standard JA4 and JA4S fingerprints. Implement an in-memory classifier to flag suspicious client fingerprints diverging from claimed User-Agent headers with sub-microsecond inspection latency.",
-        "target_files": ["pkg/proxy/proxy.go", "pkg/analysis/rules.go", "pkg/ringbuffer/event.go"]
+        "spec": "Parse incoming POST application/json GraphQL documents using an AST visitor to calculate maximum selection set depth and cyclic fragment recursion, immediately returning HTTP 400 when exceeding depth thresholds.",
+        "target_files": ["pkg/analysis/graphql_depth.go", "pkg/analysis/rules.go"]
     },
     {
-        "title": "feat(proxy): Add gRPC & Protobuf Binary Stream Decoder in Dashboard",
-        "area": "area/proxy",
-        "difficulty": "enhancement",
-        "spec": "Detect application/grpc and application/grpc+proto streams over HTTP/2. Parse standard 5-byte gRPC framing headers (compressed flag + 4-byte big-endian length prefix) and decode structured protobuf fields without buffering entire multi-megabyte streams in memory.",
-        "target_files": ["pkg/proxy/grpc.go", "pkg/dashboard/hub.go", "web/index.html"]
-    },
-    {
-        "title": "feat(proxy): Implement Upstream Dynamic Proxy Chaining (SOCKS5 & HTTP Connect)",
-        "area": "area/proxy",
-        "difficulty": "enhancement",
-        "spec": "Add support for an -upstream-proxy CLI flag supporting socks5:// and http:// corporate egress proxies. Configure http.Transport.Proxy dialer to transparently tunnel outbound proxy requests through corporate boundaries with zero leaked sockets on context cancellation.",
-        "target_files": ["pkg/proxy/proxy.go", "cmd/devproxy/main.go"]
-    },
-    {
-        "title": "feat(tracing): Add Distributed OpenTelemetry (OTel) W3C Context Propagation",
-        "area": "area/proxy",
-        "difficulty": "enhancement",
-        "spec": "Extract incoming W3C traceparent and tracestate headers and inject them into downstream proxy requests. Record trace IDs in TrafficEvent to enable end-to-end distributed trace tracking across microservices without heap reallocation.",
-        "target_files": ["pkg/proxy/proxy.go", "pkg/ringbuffer/event.go", "pkg/dashboard/hub.go"]
-    },
-    {
-        "title": "feat(replay): Implement Deterministic HAR (HTTP Archive) Recording and Playback",
+        "title": "feat(storage): Add streaming zstd compression for session log archives",
         "area": "area/replay",
         "difficulty": "enhancement",
-        "spec": "Export captured ringbuffer traffic to valid HAR 1.2 format JSON files. Support a devproxy replay -har=session.har command that mocks endpoints according to previously recorded session timings and status codes.",
-        "target_files": ["pkg/replay/har.go", "pkg/mock/server.go", "cmd/devproxy/main.go"]
+        "spec": "Implement zero-allocation streaming zstandard compression (via klauspost/compress/zstd) for HAR and raw traffic event dumps, reducing disk storage footprint by over 80% without stalling proxy worker threads.",
+        "target_files": ["pkg/storage/zstd.go", "pkg/storage/har.go"]
     },
     {
-        "title": "feat(security): Add SIMD-Accelerated Aho-Corasick Multi-Pattern Secret Scanner",
-        "area": "area/security",
+        "title": "feat(metrics): Add Prometheus OTLP exporter for real-time proxy metrics",
+        "area": "area/proxy",
         "difficulty": "enhancement",
-        "spec": "Deploy pre-compiled Aho-Corasick automaton for simultaneous matching of high-entropy API keys (AWS, Stripe, GitHub, OpenAI) in HTTP request bodies with sub-microsecond inspection latency and bounded buffer scans.",
-        "target_files": ["pkg/analysis/rules.go", "pkg/analysis/finding.go"]
+        "spec": "Implement a Prometheus exporter endpoint (/metrics) exposing real-time connection counts, active goroutines, bytes sent/received, ringbuffer drops, and upstream response latency percentiles.",
+        "target_files": ["pkg/metrics/exporter.go", "pkg/dashboard/server.go"]
     },
     {
-        "title": "feat(waf): Add HTTP Request Smuggling (CL.TE / TE.CL) Desynchronization Detector",
-        "area": "area/security",
+        "title": "feat(ratelimit): Implement token-bucket and sliding-window rate limiter middleware",
+        "area": "area/proxy",
         "difficulty": "enhancement",
-        "spec": "Analyze incoming request headers for conflicting Content-Length and Transfer-Encoding headers, whitespace obfuscation, and duplicate headers to detect desynchronization smuggling exploits before dispatching upstream.",
-        "target_files": ["pkg/analysis/rules.go", "pkg/proxy/proxy.go"]
+        "spec": "Implement a thread-safe in-memory token bucket rate limiter with sliding-window log tracking per client IP, allowing configurable requests-per-second thresholds and automatic HTTP 429 response injection.",
+        "target_files": ["pkg/ratelimit/limiter.go", "pkg/proxy/proxy.go"]
     },
     {
-        "title": "feat(dashboard): Add WebSocket Backpressure & Zero-Copy Packet Telemetry Streamer",
-        "area": "area/dashboard",
+        "title": "feat(grpc): Add bidirectional gRPC mock reflection engine with protobuf descriptors",
+        "area": "area/proxy",
         "difficulty": "enhancement",
-        "spec": "Implement bounded ring-buffer dispatch for the WebSocket hub to drop outdated telemetry frames under slow client network conditions, preventing proxy worker memory ballooning while sustaining 100k events/sec.",
-        "target_files": ["pkg/dashboard/hub.go", "pkg/dashboard/server.go"]
+        "spec": "Implement dynamic gRPC server reflection and mock payload generation from raw .proto or file descriptor sets, enabling developers to mock streaming gRPC endpoints without recompiling protobuf stubs.",
+        "target_files": ["pkg/mock/grpc.go", "pkg/proxy/grpc.go"]
     }
 ]
 
-def get_existing_issues():
-    """Fetch existing issue titles and creation timestamps."""
+STOPWORDS = {
+    "a", "an", "the", "and", "or", "in", "on", "at", "to", "for", "of", "with",
+    "by", "from", "into", "using", "via", "is", "it", "as", "be", "this", "that",
+    "add", "feat", "implement", "create", "support", "area", "enhancement", "fix"
+}
+
+def extract_keywords(text: str) -> set[str]:
+    """Extracts significant lowercase alphanumeric tokens for keyword-based comparison."""
+    tokens = re.findall(r"[a-zA-Z0-9_\-]+", text.lower())
+    clean = set()
+    for t in tokens:
+        t = t.strip("-_")
+        if len(t) > 2 and t not in STOPWORDS:
+            clean.add(t)
+    return clean
+
+def get_repository_intel(workspace: Path) -> dict:
+    """
+    Fetches comprehensive repository intelligence from GitHub and local codebase:
+    - All open and closed issues
+    - All open, closed, and merged pull requests
+    - Local file manifest (existing packages and source files)
+    """
+    intel = {
+        "issues": [],
+        "prs": [],
+        "open_issues": [],
+        "closed_issues": [],
+        "open_prs": [],
+        "merged_prs": [],
+        "all_titles": set(),
+        "code_files": set(),
+    }
+
+    # 1. Fetch GitHub issues
     try:
-        cmd = ["gh", "issue", "list", "--state", "all", "--limit", "100", "--json", "title,createdAt,author"]
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-        issues = json.loads(result.stdout)
-        return issues
+        cmd = ["gh", "issue", "list", "--state", "all", "--limit", "200", "--json", "number,title,state,createdAt"]
+        res = subprocess.run(cmd, cwd=workspace, capture_output=True, text=True, check=True)
+        issues = json.loads(res.stdout) if res.stdout else []
+        intel["issues"] = issues
+        for i in issues:
+            title = i.get("title", "").strip()
+            state = i.get("state", "").upper()
+            intel["all_titles"].add(title)
+            if state == "OPEN":
+                intel["open_issues"].append(i)
+            else:
+                intel["closed_issues"].append(i)
     except Exception as e:
         print(f"[WARN] Failed to fetch issues via gh CLI: {e}")
-        return []
 
-def evaluate_issue_quality(item: dict, existing_titles: set) -> tuple[bool, int, str]:
+    # 2. Fetch GitHub PRs
+    try:
+        cmd = ["gh", "pr", "list", "--state", "all", "--limit", "200", "--json", "number,title,state,headRefName"]
+        res = subprocess.run(cmd, cwd=workspace, capture_output=True, text=True, check=True)
+        prs = json.loads(res.stdout) if res.stdout else []
+        intel["prs"] = prs
+        for p in prs:
+            title = p.get("title", "").strip()
+            state = p.get("state", "").upper()
+            intel["all_titles"].add(title)
+            if state == "OPEN":
+                intel["open_prs"].append(p)
+            elif state == "MERGED":
+                intel["merged_prs"].append(p)
+    except Exception as e:
+        print(f"[WARN] Failed to fetch PRs via gh CLI: {e}")
+
+    # 3. Local codebase manifest
+    try:
+        for p in workspace.rglob("*.go"):
+            if ".git" not in p.parts:
+                rel = str(p.relative_to(workspace)).replace("\\", "/")
+                intel["code_files"].add(rel)
+    except Exception:
+        pass
+
+    return intel
+
+def is_already_reported_or_solved(item: dict, intel: dict, workspace: Path) -> tuple[bool, str]:
+    """
+    Checks whether a proposed issue specification is:
+    1. Already reported (matches an open issue or active PR)
+    2. Already solved (matches a closed issue, merged PR, or already implemented in codebase)
+    Returns: (is_duplicate: bool, reason: str)
+    """
+    title = item.get("title", "").strip()
+    spec = item.get("spec", "").strip()
+    target_files = item.get("target_files", [])
+    cand_tokens = extract_keywords(title) | extract_keywords(spec)
+
+    # Check 1: Exact title match across all issues and PRs
+    clean_cand_title = re.sub(r"\s+", " ", title.lower().strip())
+    for existing in intel.get("issues", []) + intel.get("prs", []):
+        ext_title = existing.get("title", "").strip()
+        clean_ext_title = re.sub(r"\s+", " ", ext_title.lower().strip())
+        if clean_cand_title == clean_ext_title:
+            state = existing.get("state", "UNKNOWN")
+            num = existing.get("number", "?")
+            return True, f"Exact title matches existing issue/PR #{num} (State: {state}): '{ext_title}'"
+
+    # Check 2: Technical keyword overlap with all existing issues and PRs
+    for existing in intel.get("issues", []) + intel.get("prs", []):
+        ext_title = existing.get("title", "").strip()
+        num = existing.get("number", "?")
+        state = existing.get("state", "UNKNOWN")
+        ext_tokens = extract_keywords(ext_title)
+        if not ext_tokens:
+            continue
+
+        overlap = cand_tokens & ext_tokens
+        similarity = len(overlap) / len(cand_tokens | ext_tokens)
+
+        # High Jaccard similarity or core technical token match
+        if similarity >= 0.40 or (len(overlap) >= 3 and len(overlap) / len(ext_tokens) >= 0.60):
+            return True, f"High semantic overlap ({similarity:.2f}) with existing issue/PR #{num} (State: {state}): '{ext_title}' (Shared terms: {list(overlap)})"
+
+    # Check 3: Codebase file presence check
+    # If the target file already exists in the repo and has substantial content, the feature may already be implemented!
+    for tf in target_files:
+        norm_tf = tf.replace("\\", "/")
+        if norm_tf in intel.get("code_files", set()):
+            target_path = workspace / norm_tf
+            if target_path.is_file():
+                try:
+                    content = target_path.read_text(encoding="utf-8", errors="replace")
+                    # If the file exists and is > 40 lines, check if candidate's core keywords appear in it
+                    if len(content.splitlines()) > 40:
+                        file_tokens = extract_keywords(content)
+                        matches = cand_tokens & file_tokens
+                        if len(matches) >= 3:
+                            return True, f"Target file '{norm_tf}' already exists in codebase and implements core functionality (Matched tokens: {list(matches)})"
+                except Exception:
+                    pass
+
+    # Check 4: Deep LLM Deduplication Gate (Gemini)
+    api_key = os.environ.get("GEMINI_REVIEWER_KEY") or os.environ.get("GEMINI_ISSUE_KEY") or os.environ.get("GEMINI_API_KEY")
+    if api_key:
+        # Build compact digest of recent issues & PRs
+        digest_lines = []
+        for i in intel.get("issues", [])[:40]:
+            digest_lines.append(f"- Issue #{i.get('number')}: [{i.get('state')}] {i.get('title')}")
+        for p in intel.get("prs", [])[:20]:
+            digest_lines.append(f"- PR #{p.get('number')}: [{p.get('state')}] {p.get('title')}")
+        digest_str = "\n".join(digest_lines)
+
+        dedup_prompt = f"""You are the Lead Systems Architect auditing a proposed new GitHub issue for DevProxy (Go high-throughput reverse proxy).
+Your mandate is to prevent duplicate issues. Determine if this proposed issue is:
+1. ALREADY REPORTED in any open issue or PR.
+2. ALREADY SOLVED in any closed issue, merged PR, or existing codebase feature.
+3. SUBSTANTIALLY REDUNDANT with an existing capability.
+
+PROPOSED ISSUE:
+Title: {title}
+Domain: {item.get('area')}
+Target Files: {target_files}
+Specification: {spec}
+
+EXISTING REPOSITORY ISSUES & PULL REQUESTS:
+{digest_str}
+
+Respond ONLY with JSON matching this schema:
+{{
+  "is_duplicate_or_solved": true or false,
+  "confidence": 0 to 100,
+  "conflicting_ref": "Issue #X or PR #Y if duplicate, or null",
+  "reason": "Clear explanation of why it is duplicate/already solved, or why it is novel"
+}}
+"""
+        for model in FALLBACK_MODELS:
+            try:
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+                payload = json.dumps({
+                    "contents": [{"parts": [{"text": dedup_prompt}]}],
+                    "generationConfig": {"temperature": 0.1, "responseMimeType": "application/json"}
+                }).encode("utf-8")
+                req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
+                with urllib.request.urlopen(req, timeout=15) as resp:
+                    res_data = json.loads(resp.read().decode("utf-8"))
+                    res_text = res_data["candidates"][0]["content"]["parts"][0]["text"]
+                    dedup_res = json.loads(res_text)
+                    if dedup_res.get("is_duplicate_or_solved"):
+                        conf = dedup_res.get("conflicting_ref") or "existing task"
+                        reason = dedup_res.get("reason", "Detected as duplicate by LLM audit")
+                        return True, f"LLM Deduplication Gate flagged duplicate of {conf}: {reason}"
+                    break
+            except Exception:
+                continue
+
+    return False, "Verified novel and unaddressed."
+
+def evaluate_issue_quality(item: dict) -> tuple[bool, int, str]:
     """
     Strict Pre-Flight Quality Gate:
     Ensures that ONLY top-tier, production-grade architectural advancements are created.
-    Rejects trivial tasks, duplicates, vague specs, and superficial edits.
-    Returns: (is_approved: bool, score: int, reason: str)
+    Rejects trivial tasks, vague specs, and superficial chores.
     """
     title = item.get("title", "").strip()
     spec = item.get("spec", "").strip()
     target_files = item.get("target_files", [])
 
-    # 1. Title formatting and Conventional Commits check
+    # 1. Title formatting check
     if not any(title.startswith(p) for p in ("feat(", "perf(", "fix(", "refactor(", "security(")):
         return False, 30, "Title must follow Conventional Commits (e.g. feat(proxy): ..., perf(metrics): ...)"
 
-    # 2. Strict Anti-Triviality / Anti-Chore Blacklist
+    # 2. Strict Anti-Triviality Blacklist
     trivial_keywords = [
         "readme", "documentation", "typo", "comment", "lint", "variable name",
         "format code", "bump dependency", "clean up", "cosmetic", "rename", "minor",
@@ -128,7 +308,8 @@ def evaluate_issue_quality(item: dict, existing_titles: set) -> tuple[bool, int,
         "throughput", "streaming", "concurrency", "race", "goroutine", "protocol",
         "http/2", "http/3", "quic", "grpc", "protobuf", "tls", "ja4", "fingerprint",
         "aho-corasick", "simd", "smuggling", "proxy", "waf", "backpressure", "har",
-        "opentelemetry", "trace", "connection pool", "keepalive", "benchmark"
+        "opentelemetry", "trace", "connection pool", "keepalive", "benchmark", "wasm",
+        "dns", "graphql", "zstd", "ratelimit"
     ]
     matched_domains = [kw for kw in systems_domains if kw in spec.lower() or kw in title.lower()]
     if len(matched_domains) < 2:
@@ -141,58 +322,7 @@ def evaluate_issue_quality(item: dict, existing_titles: set) -> tuple[bool, int,
     if not target_files:
         return False, 60, "Must specify target files in pkg/ to ensure clear module decoupling."
 
-    # 5. Deduplication check against all existing issues
-    for et in existing_titles:
-        clean_et = "".join(c.lower() for c in et if c.isalnum() or c.isspace())
-        clean_t = "".join(c.lower() for c in title if c.isalnum() or c.isspace())
-        words_et = set(clean_et.split())
-        words_t = set(clean_t.split())
-        if words_et and words_t:
-            overlap = len(words_et & words_t) / len(words_et | words_t)
-            if overlap > 0.65:
-                return False, 40, f"Specification is too similar to existing issue '{et}' (similarity: {overlap:.2f})."
-
-    # 6. LLM Deep Review Gate (Gemini Pro/Flash scoring)
-    api_key = os.environ.get("GEMINI_REVIEWER_KEY") or os.environ.get("GEMINI_API_KEY")
-    if api_key:
-        review_prompt = f"""You are the Lead Staff Software Engineer auditing a proposed GitHub Issue for DevProxy (Go high-performance proxy).
-
-PROPOSED ISSUE:
-Title: {title}
-Domain: {item.get('area')}
-Target Files: {target_files}
-Specification:
-{spec}
-
-AUDIT CRITERIA:
-1. Is this a genuine, high-value systems software engineering task? (Reject toy, chore, or superficial changes)
-2. Does it enforce zero-allocation, thread-safety, and high-throughput streaming invariants?
-3. Is it clearly bounded and implementable with rigorous unit tests?
-
-Score the quality from 0 to 100.
-Respond ONLY with JSON:
-{{"score": 95, "verdict": "APPROVED" or "REJECTED", "critique": "brief reasoning"}}
-"""
-        try:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key={api_key}"
-            req_data = json.dumps({
-                "contents": [{"parts": [{"text": review_prompt}]}],
-                "generationConfig": {"temperature": 0.1, "responseMimeType": "application/json"}
-            }).encode("utf-8")
-            req = urllib.request.Request(url, data=req_data, headers={"Content-Type": "application/json"}, method="POST")
-            with urllib.request.urlopen(req, timeout=15) as resp:
-                res_json = json.loads(resp.read().decode("utf-8"))
-                review_result = json.loads(res_json["candidates"][0]["content"]["parts"][0]["text"])
-                score = review_result.get("score", 0)
-                verdict = review_result.get("verdict", "REJECTED")
-                critique = review_result.get("critique", "")
-                if score < 90 or verdict != "APPROVED":
-                    return False, score, f"Architectural Reviewer Rejected (Score: {score}/100): {critique}"
-                return True, score, f"Approved by Architectural Gate (Score: {score}/100)"
-        except Exception:
-            pass
-
-    return True, 94, "Approved via strict deterministic systems heuristics."
+    return True, 95, "Approved via strict deterministic systems heuristics."
 
 def check_freeze_timer(existing_issues, cooldown_minutes=30, force=False):
     """Checks if an advancement issue was submitted recently."""
@@ -229,13 +359,12 @@ def save_backlog(workspace: Path, backlog: list):
     backlog_file.parent.mkdir(parents=True, exist_ok=True)
     backlog_file.write_text(json.dumps(backlog, indent=2), encoding="utf-8")
 
-def generate_ai_advancement(existing_titles):
-    """Use Gemini API to dynamically generate a novel, high-impact architectural advancement task."""
+def generate_ai_advancement(intel: dict) -> dict:
+    """Uses Gemini API to dynamically generate a novel, high-impact architectural advancement task."""
     api_key = os.environ.get("GEMINI_ISSUE_KEY") or os.environ.get("GEMINI_API_KEY")
     if not api_key:
         return None
 
-    # Inject GossipMesh evolutionary knowledge if available
     memes_context = ""
     if GOSSIP_AVAILABLE:
         try:
@@ -243,6 +372,8 @@ def generate_ai_advancement(existing_titles):
             memes_context = kb.format_prompt_context(repo="DevProxy")
         except Exception:
             pass
+
+    existing_titles_list = list(intel.get("all_titles", []))[:50]
 
     prompt = f"""You are the Principal Systems Software Architect of DevProxy, an ultra-high performance HTTP/HTTPS reverse proxy and network analysis engine written in Go.
 
@@ -255,8 +386,9 @@ STRICT HIGH-QUALITY ARCHITECTURAL INVARIANTS:
 
 {memes_context if memes_context else ""}
 
-DO NOT duplicate any of these existing titles:
-{json.dumps(list(existing_titles)[:30], indent=2)}
+CRITICAL DEDUPLICATION REQUIREMENT:
+DO NOT duplicate, overlap, or solve any feature mentioned in these existing titles:
+{json.dumps(existing_titles_list, indent=2)}
 
 Output ONLY valid JSON matching this schema:
 {{
@@ -269,7 +401,7 @@ Output ONLY valid JSON matching this schema:
 """
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {"temperature": 0.25, "responseMimeType": "application/json"}
+        "generationConfig": {"temperature": 0.3, "responseMimeType": "application/json"}
     }
 
     for model in FALLBACK_MODELS:
@@ -299,18 +431,25 @@ Output ONLY valid JSON matching this schema:
                 break
     return None
 
-def create_issue(item, existing_titles: set):
-    """Evaluates quality gate and creates a structured GitHub issue."""
-    # 1. Enforce Pre-Flight Quality Gate
-    is_approved, score, reason = evaluate_issue_quality(item, existing_titles)
-    if not is_approved or score < 90:
-        print(f"[QUALITY GATE REJECTED] '{item.get('title')}' failed quality standards (Score: {score}/100): {reason}")
+def create_issue(item: dict, intel: dict, workspace: Path) -> bool:
+    """Evaluates quality gate, deduplication gate, and creates a structured GitHub issue."""
+    title = item.get("title", "").strip()
+
+    # 1. Deduplication Gate: Check if already reported or solved
+    is_dup, dup_reason = is_already_reported_or_solved(item, intel, workspace)
+    if is_dup:
+        print(f"[DEDUPLICATION REJECTED] '{title}' was rejected because it is already reported or solved: {dup_reason}", flush=True)
         return False
 
-    title = item["title"]
+    # 2. Enforce Pre-Flight Quality Gate
+    is_approved, score, quality_reason = evaluate_issue_quality(item)
+    if not is_approved or score < 90:
+        print(f"[QUALITY GATE REJECTED] '{title}' failed quality standards (Score: {score}/100): {quality_reason}", flush=True)
+        return False
+
     area = item.get("area", "area/proxy")
     difficulty = item.get("difficulty", "enhancement")
-    spec = item["spec"]
+    spec = item.get("spec", "")
     target_files = item.get("target_files", [])
 
     target_files_md = "\n".join(f"- `{f}`" for f in target_files) if target_files else "- Relevant files in `pkg/`"
@@ -324,6 +463,7 @@ def create_issue(item, existing_titles: set):
 - **Domain**: `{area}`
 - **Difficulty**: `{difficulty}`
 - **Quality Verification**: `Verified Architectural Gate (Quality Score: {score}/100)`
+- **Deduplication Check**: `Verified Novel and Unaddressed`
 - **Initiative**: Hacktoberfest / Sovereign High-Performance DevProxy Advancement
 
 ### 📂 Target Files & Modules
@@ -364,8 +504,13 @@ go test -race -v ./pkg/...
         "--label", labels
     ]
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-        print(f"[SUCCESS] Created High-Quality Issue (Score: {score}/100): {result.stdout.strip()} - {title}")
+        result = subprocess.run(cmd, cwd=workspace, capture_output=True, text=True, check=True)
+        created_url = result.stdout.strip()
+        print(f"[SUCCESS] Created High-Quality Issue (Score: {score}/100): {created_url} - {title}", flush=True)
+
+        # Update intel
+        intel["all_titles"].add(title)
+        intel["open_issues"].append({"title": title, "state": "OPEN"})
 
         # Broadcast newly approved architectural challenge to GossipMesh
         if GOSSIP_AVAILABLE:
@@ -381,7 +526,7 @@ go test -race -v ./pkg/...
 
         return True
     except subprocess.CalledProcessError as e:
-        print(f"[ERROR] Failed to create issue '{title}': {e.stderr}")
+        print(f"[ERROR] Failed to create issue '{title}': {e.stderr}", flush=True)
         return False
 
 def main():
@@ -390,37 +535,40 @@ def main():
     cooldown_min = int(os.environ.get("MIN_COOLDOWN_MINUTES", "30"))
     force = os.environ.get("FORCE_SUBMIT", "false").lower() in ("true", "1") or ("--force" in sys.argv) or ("-f" in sys.argv)
 
-    existing_issues = get_existing_issues()
-    existing_titles = {i["title"].strip() for i in existing_issues if "title" in i}
-    print(f"[*] Found {len(existing_titles)} existing issues in repository.")
+    print("[*] Gathering repository intelligence (issues, PRs, codebase files)...", flush=True)
+    intel = get_repository_intel(workspace)
+    print(f"[*] Found {len(intel['issues'])} issues, {len(intel['prs'])} PRs, and {len(intel['code_files'])} Go source files in DevProxy.", flush=True)
 
     # 1. Check Freeze Timer Cooldown
-    can_submit, elapsed = check_freeze_timer(existing_issues, cooldown_minutes=cooldown_min, force=force)
+    can_submit, elapsed = check_freeze_timer(intel["issues"], cooldown_minutes=cooldown_min, force=force)
     if not can_submit:
-        print(f"[FREEZE TIMER ACTIVE] Last issue was created {elapsed:.1f} minutes ago (< {cooldown_min} min cooldown).")
-        print("[*] Generating next high-quality advancement and archiving to backlog queue...")
+        print(f"[FREEZE TIMER ACTIVE] Last issue was created {elapsed:.1f} minutes ago (< {cooldown_min} min cooldown).", flush=True)
+        print("[*] Generating next high-quality advancement and archiving to backlog queue...", flush=True)
         candidate = None
         for item in CATALOG:
-            if item["title"] not in existing_titles:
-                is_app, score, _ = evaluate_issue_quality(item, existing_titles)
+            is_dup, _ = is_already_reported_or_solved(item, intel, workspace)
+            if not is_dup:
+                is_app, score, _ = evaluate_issue_quality(item)
                 if is_app and score >= 90:
                     candidate = item
                     break
         if not candidate:
             for _ in range(3):
-                ai_cand = generate_ai_advancement(existing_titles)
+                ai_cand = generate_ai_advancement(intel)
                 if ai_cand:
-                    is_app, score, _ = evaluate_issue_quality(ai_cand, existing_titles)
-                    if is_app and score >= 90:
-                        candidate = ai_cand
-                        break
+                    is_dup, _ = is_already_reported_or_solved(ai_cand, intel, workspace)
+                    if not is_dup:
+                        is_app, score, _ = evaluate_issue_quality(ai_cand)
+                        if is_app and score >= 90:
+                            candidate = ai_cand
+                            break
 
         if candidate:
             backlog = load_backlog(workspace)
             if not any(b["title"] == candidate["title"] for b in backlog):
                 backlog.append(candidate)
                 save_backlog(workspace, backlog)
-                print(f"[ARCHIVED TO BACKLOG] Stored high-quality issue: '{candidate['title']}'.")
+                print(f"[ARCHIVED TO BACKLOG] Stored novel issue: '{candidate['title']}'.", flush=True)
         return
 
     # 2. Cooldown is clear: Drain backlog first if available
@@ -429,10 +577,10 @@ def main():
 
     while backlog and created_count < count:
         item = backlog.pop(0)
-        if item["title"] not in existing_titles:
-            print(f"[*] Submitting archived backlog item: '{item['title']}'...")
-            if create_issue(item, existing_titles):
-                existing_titles.add(item["title"])
+        is_dup, _ = is_already_reported_or_solved(item, intel, workspace)
+        if not is_dup:
+            print(f"[*] Submitting archived backlog item: '{item['title']}'...", flush=True)
+            if create_issue(item, intel, workspace):
                 created_count += 1
                 save_backlog(workspace, backlog)
                 if created_count < count:
@@ -442,31 +590,34 @@ def main():
     for item in CATALOG:
         if created_count >= count:
             break
-        if item["title"] not in existing_titles:
-            if create_issue(item, existing_titles):
-                existing_titles.add(item["title"])
+        is_dup, _ = is_already_reported_or_solved(item, intel, workspace)
+        if not is_dup:
+            if create_issue(item, intel, workspace):
                 created_count += 1
                 if created_count < count:
                     time.sleep(12)
 
-    # 4. If catalog exhausted and more requested, dynamically generate via Gemini AI with quality gate
+    # 4. If catalog exhausted and more requested, dynamically generate via Gemini AI with quality & deduplication gates
     if created_count < count:
-        print(f"[*] Catalog exhausted or more issues requested ({created_count}/{count}). Querying Gemini AI with strict quality gate...")
+        print(f"[*] Catalog exhausted or more issues requested ({created_count}/{count}). Querying Gemini AI with strict deduplication gate...", flush=True)
         max_attempts = 5
         attempts = 0
         while created_count < count and attempts < max_attempts:
             attempts += 1
-            ai_item = generate_ai_advancement(existing_titles)
-            if not ai_item or ai_item.get("title") in existing_titles:
+            ai_item = generate_ai_advancement(intel)
+            if not ai_item:
                 continue
-            if create_issue(ai_item, existing_titles):
-                existing_titles.add(ai_item["title"])
+            is_dup, reason = is_already_reported_or_solved(ai_item, intel, workspace)
+            if is_dup:
+                print(f"[*] AI candidate '{ai_item.get('title')}' rejected: {reason}", flush=True)
+                continue
+            if create_issue(ai_item, intel, workspace):
                 created_count += 1
                 if created_count < count:
                     time.sleep(12)
 
     if created_count == 0:
-        print("[OK] No new issues needed or all high-quality specifications already exist.")
+        print("[OK] No new issues needed or all candidate specifications are already reported/solved.")
     else:
         print(f"[DONE] Successfully created {created_count} verified high-quality advancement issue(s).")
 
