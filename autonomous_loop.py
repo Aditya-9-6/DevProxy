@@ -152,14 +152,33 @@ def solve_issue(workspace: Path, issue_num: int, issue_title: str, issue_body: s
 
     print("[*] Verifying Go compilation & static analysis (go vet)...", flush=True)
     vet_res = subprocess.run(["go", "vet", "./..."], cwd=workspace, capture_output=True, text=True, encoding="utf-8", errors="replace")
+
+    print("[*] Verifying Go concurrency & race safety (go test -race)...", flush=True)
+    check_res = subprocess.run(["go", "test", "-race", "./..."], cwd=workspace, capture_output=True, text=True, encoding="utf-8", errors="replace")
+
+    if vet_res.returncode != 0 or check_res.returncode != 0:
+        print("[*] Pre-commit gate detected build/test issues. Triggering autonomous compiler repair pass...", flush=True)
+        fix_env = os.environ.copy()
+        fix_env["GEMINI_SOLVER_KEY"] = solver_key
+        fix_env["GEMINI_API_KEY"] = solver_key
+        fixer_cmd = [
+            sys.executable, ".github/scripts/ai_ci_fixer.py",
+            "--workspace", str(workspace),
+            "--pr-number", str(issue_num)
+        ]
+        fix_proc = subprocess.run(fixer_cmd, cwd=workspace, env=fix_env, capture_output=True, text=True, encoding="utf-8", errors="replace")
+        print(fix_proc.stdout, flush=True)
+        run_cmd(["go", "mod", "tidy"], cwd=workspace, check=False)
+        run_cmd(["gofmt", "-w", "."], cwd=workspace, check=False)
+        vet_res = subprocess.run(["go", "vet", "./..."], cwd=workspace, capture_output=True, text=True, encoding="utf-8", errors="replace")
+        check_res = subprocess.run(["go", "test", "-race", "./..."], cwd=workspace, capture_output=True, text=True, encoding="utf-8", errors="replace")
+
     if vet_res.returncode != 0:
         print(f"[!] go vet failed: {vet_res.stderr}", file=sys.stderr, flush=True)
         run_cmd("git reset --hard HEAD", cwd=workspace, check=False)
         run_cmd("git clean -fd", cwd=workspace, check=False)
         return False
 
-    print("[*] Verifying Go concurrency & race safety (go test -race)...", flush=True)
-    check_res = subprocess.run(["go", "test", "-race", "./..."], cwd=workspace, capture_output=True, text=True, encoding="utf-8", errors="replace")
     if check_res.returncode != 0:
         print(f"[!] go test failed: {check_res.stderr}", file=sys.stderr, flush=True)
         run_cmd("git reset --hard HEAD", cwd=workspace, check=False)
@@ -291,7 +310,9 @@ def main():
     parser = argparse.ArgumentParser(description="DevProxy Autonomous Multi-Agent Daemon")
     parser.add_argument("--workspace", default=".", help="Path to DevProxy repository root")
     parser.add_argument("--once", action="store_true", help="Run once and exit instead of continuous daemon")
-    parser.add_argument("--interval", type=int, default=120, help="Interval in seconds between cycles (default: 120s)")
+    parser.add_argument("--interval", type=int, default=10, help="Interval in seconds between cycles (default: 10s)")
+    parser.add_argument("--max-cycles", type=int, default=0, help="Maximum number of cycles to execute (0 = unlimited)")
+    parser.add_argument("--timeout-mins", type=int, default=0, help="Maximum minutes to run before exiting (0 = unlimited)")
     parser.add_argument("--add-keys", nargs="*", default=[], help="Additional Gemini API keys to add to the round-robin pool")
     args = parser.parse_args()
 
@@ -305,10 +326,19 @@ def main():
     if args.once:
         run_loop_iteration(workspace)
     else:
-        print(f"[*] Starting DevProxy Continuous Autonomous Daemon (interval: {args.interval}s)...", flush=True)
+        print(f"[*] Starting DevProxy Continuous Autonomous Daemon (interval: {args.interval}s, max_cycles: {args.max_cycles or 'unlimited'}, timeout: {args.timeout_mins or 'unlimited'}m)...", flush=True)
+        start_time = time.time()
+        cycles = 0
         while True:
             try:
                 run_loop_iteration(workspace)
+                cycles += 1
+                if args.max_cycles and cycles >= args.max_cycles:
+                    print(f"[OK] Completed target max cycles ({cycles}). Exiting batch gracefully.", flush=True)
+                    break
+                if args.timeout_mins and (time.time() - start_time) >= args.timeout_mins * 60:
+                    print(f"[OK] Reached batch time limit ({args.timeout_mins}m). Exiting batch gracefully.", flush=True)
+                    break
             except Exception as e:
                 print(f"[Error in loop]: {e}", file=sys.stderr, flush=True)
             print(f"[*] Sleeping for {args.interval} seconds until next iteration...", flush=True)

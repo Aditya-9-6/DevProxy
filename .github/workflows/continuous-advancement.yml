@@ -2,27 +2,30 @@ name: Continuous Autonomous Advancement Engine
 
 on:
   schedule:
-    - cron: '*/15 * * * *' # Executes 24/7 every 15 minutes in GitHub Actions Cloud (Free & Unlimited for Public Repos)
+    - cron: '*/5 * * * *' # Executes 24/7 every 5 minutes in GitHub Actions Cloud (Free & Unlimited for Public Repos)
+  issues:
+    types: [opened]       # Instant event-driven trigger whenever an issue is created
   workflow_dispatch:
     inputs:
       iterations:
         description: 'Number of autonomous development cycles to run'
         required: false
-        default: '1'
+        default: '5'
 
 permissions:
   contents: write
   pull-requests: write
   issues: write
-
-concurrency:
-  group: continuous-advancement-loop
-  cancel-in-progress: false
+  actions: write
 
 jobs:
   advance:
-    name: Autonomous Advancement Cycle
+    name: Autonomous Engine (${{ matrix.worker }})
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        worker: [alpha, beta]
+      fail-fast: false
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -49,7 +52,7 @@ jobs:
           git config user.name "Aditya Dahale"
           git config user.email "aditya-9-6@users.noreply.github.com"
 
-      - name: Execute Autonomous Development Cycle
+      - name: Execute Continuous Multi-Cycle Development Batch
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
@@ -59,4 +62,11 @@ jobs:
           GEMINI_REVIEWER_KEY: ${{ secrets.GEMINI_REVIEWER_KEY || '' }}
           GEMINI_SOLVER_KEY: ${{ secrets.GEMINI_SOLVER_KEY || '' }}
         run: |
-          python3 .github/scripts/autonomous_loop.py --workspace . --once
+          python3 .github/scripts/autonomous_loop.py --workspace . --interval 5 --max-cycles 5 --timeout-mins 20
+
+      - name: Self-Trigger Next Advancement Run (Zero-Downtime Chain)
+        if: always()
+        run: |
+          gh workflow run continuous-advancement.yml --repo ${{ github.repository }} || true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
