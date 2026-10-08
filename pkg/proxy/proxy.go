@@ -2,17 +2,21 @@ package proxy
 
 import (
 	"bufio"
+	"bytes"
 	"crypto/tls"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/url"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/Aditya-9-6/DevProxy/pkg/certs"
 	"github.com/Aditya-9-6/DevProxy/pkg/mock"
 	"github.com/Aditya-9-6/DevProxy/pkg/ringbuffer"
+	"github.com/google/uuid"
 )
 
 type ProxyServer struct {
@@ -70,6 +74,7 @@ func (p *ProxyServer) handleConnect(w http.ResponseWriter, r *http.Request) {
 }
 
 func (p *ProxyServer) handleHTTP(w http.ResponseWriter, r *http.Request) {
+	removeHopByHopHeaders(r.Header)
 	resp, err := p.transport.RoundTrip(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
@@ -82,7 +87,9 @@ func (p *ProxyServer) handleHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	w.WriteHeader(resp.StatusCode)
-	io.Copy(w, resp.Body)
+	buf := GetBuffer()
+	defer PutBuffer(buf)
+	io.CopyBuffer(w, resp.Body, *buf)
 }
 
 func (p *ProxyServer) bumpTLSConnection(c net.Conn, host string) { defer c.Close() }
@@ -91,3 +98,10 @@ func (p *ProxyServer) Close() error                              { return p.http
 func (p *ProxyServer) SetInsecureUpstreamTLS(b bool)             { p.insecureUpstream = b }
 func (p *ProxyServer) SetMockEngine(e *mock.Engine)              { p.mockEngine = e }
 func (p *ProxyServer) GetMockEngine() *mock.Engine               { return p.mockEngine }
+
+func removeHopByHopHeaders(h http.Header) {
+	hopHeaders := []string{"Connection", "Proxy-Connection", "Keep-Alive", "Proxy-Authenticate", "Proxy-Authorization", "Te", "Trailers", "Transfer-Encoding", "Upgrade"}
+	for _, header := range hopHeaders {
+		h.Del(header)
+	}
+}
