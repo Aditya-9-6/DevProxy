@@ -35,9 +35,29 @@ func (p *ProxyServer) SetUpstreamProxy(raw string) error {
 	if p.upstreamLoop(u) {
 		return fmt.Errorf("upstream proxy would loop back into DevProxy's own listen address; pick a different port")
 	}
+	p.upstreamProxyMu.Lock()
 	p.upstreamProxy = u
+	p.upstreamProxyMu.Unlock()
 	return nil
 }
+
+// UpstreamProxyURL returns the string representation of the configured upstream proxy, or empty.
+func (p *ProxyServer) UpstreamProxyURL() string {
+	p.upstreamProxyMu.RLock()
+	defer p.upstreamProxyMu.RUnlock()
+	if p.upstreamProxy == nil {
+		return ""
+	}
+	return p.upstreamProxy.String()
+}
+
+// ClearUpstreamProxy removes any explicitly configured upstream proxy.
+func (p *ProxyServer) ClearUpstreamProxy() {
+	p.upstreamProxyMu.Lock()
+	defer p.upstreamProxyMu.Unlock()
+	p.upstreamProxy = nil
+}
+
 
 func parseUpstreamProxy(raw string) (*url.URL, error) {
 	u, err := url.Parse(raw)
@@ -61,11 +81,15 @@ func parseUpstreamProxy(raw string) (*url.URL, error) {
 // resolveUpstream returns the proxy to use when reaching host over scheme.
 // A nil result means "connect directly".
 func (p *ProxyServer) resolveUpstream(scheme, host string) (*url.URL, error) {
-	if p.upstreamProxy != nil {
-		if p.upstreamLoop(p.upstreamProxy) {
+	p.upstreamProxyMu.RLock()
+	configured := p.upstreamProxy
+	p.upstreamProxyMu.RUnlock()
+
+	if configured != nil {
+		if p.upstreamLoop(configured) {
 			return nil, fmt.Errorf("upstream proxy would loop back into DevProxy's own listen address")
 		}
-		return p.upstreamProxy, nil
+		return configured, nil
 	}
 
 	u := p.envUpstream(scheme, host)
