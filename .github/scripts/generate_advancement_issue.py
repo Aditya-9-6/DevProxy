@@ -279,7 +279,7 @@ def main():
     manual_spec = os.environ.get("INPUT_SPEC", "").strip()
     count = int(os.environ.get("INPUT_COUNT", "1") or "1")
     cooldown_min = int(os.environ.get("MIN_COOLDOWN_MINUTES", "30"))
-    force = os.environ.get("FORCE_SUBMIT", "false").lower() in ("true", "1")
+    force = os.environ.get("FORCE_SUBMIT", "false").lower() in ("true", "1") or ("--force" in sys.argv) or ("-f" in sys.argv)
 
     # If manual submission specified
     if manual_title and manual_area != "auto":
