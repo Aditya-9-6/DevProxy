@@ -2,43 +2,46 @@ package proxy
 
 import (
 	"bytes"
-	"encoding/binary"
+	"net/http"
+	"net/http/httptest"
 	"testing"
+
+	"github.com/Aditya-9-6/DevProxy/pkg/mock"
+	"github.com/Aditya-9-6/DevProxy/pkg/ringbuffer"
 )
 
-func TestParseGRPCStream(t *testing.T) {
-	payload := []byte("hello world")
-	buf := new(bytes.Buffer)
+func TestHandleGRPCInterceptionMock(t *testing.T) {
+	engine := mock.NewGRPCDescriptorEngine()
+	fullMethod := "/my.service.Greeter/SayHello"
+	engine.RegisterMock(fullMethod, []byte("Hello gRPC mock"))
 
-	buf.WriteByte(0)
-	binary.Write(buf, binary.BigEndian, uint32(len(payload)))
-	buf.Write(payload)
+	ringBuf := ringbuffer.NewRingBuffer(100)
 
-	var frames []GRPCFrame
-	err := ParseGRPCStream(buf, func(f GRPCFrame) error {
-		frames = append(frames, f)
-		return nil
-	})
+	req := httptest.NewRequest("POST", "/my.service.Greeter/SayHello", bytes.NewBuffer([]byte("req-payload")))
+	req.Header.Set("Content-Type", "application/grpc")
+	rec := httptest.NewRecorder()
 
-	if err != nil {
-		t.Fatalf("Failed to parse: %v", err)
+	handled := HandleGRPCInterception(rec, req, engine, ringBuf)
+	if !handled {
+		t.Errorf("Expected gRPC request to be handled")
 	}
 
-	if len(frames) != 1 {
-		t.Errorf("Expected 1 frame, got %d", len(frames))
+	if rec.Code != http.StatusOK {
+		t.Errorf("Expected status 200, got %d", rec.Code)
 	}
-	if !bytes.Equal(frames[0].Data, payload) {
-		t.Errorf("Payload mismatch")
+
+	ct := rec.Header().Get("Content-Type")
+	if ct != "application/grpc" {
+		t.Errorf("Expected Content-Type application/grpc, got %s", ct)
 	}
 }
 
-func TestParseGRPCStream_Limit(t *testing.T) {
-	buf := new(bytes.Buffer)
-	buf.WriteByte(0)
-	binary.Write(buf, binary.BigEndian, uint32(MaxGRPCFrameSize+1))
+func TestHandleGRPCInterceptionNonGRPC(t *testing.T) {
+	req := httptest.NewRequest("GET", "/api/v1/health", nil)
+	rec := httptest.NewRecorder()
 
-	err := ParseGRPCStream(buf, func(f GRPCFrame) error { return nil })
-	if err == nil {
-		t.Error("Expected error for oversized frame, got nil")
+	handled := HandleGRPCInterception(rec, req, nil, nil)
+	if handled {
+		t.Errorf("Expected non-gRPC request not to be handled")
 	}
 }
