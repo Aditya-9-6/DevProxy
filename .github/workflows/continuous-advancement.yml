@@ -2,7 +2,7 @@ name: Continuous Autonomous Advancement Engine
 
 on:
   schedule:
-    - cron: '*/30 * * * *' # Runs every 30 minutes in GitHub cloud
+    - cron: '*/15 * * * *' # Executes 24/7 every 15 minutes in GitHub Actions Cloud (Free & Unlimited for Public Repos)
   workflow_dispatch:
     inputs:
       iterations:
@@ -40,6 +40,10 @@ jobs:
         with:
           python-version: '3.12'
 
+      - name: Install GossipMesh
+        run: |
+          pip install git+https://github.com/Aditya-9-6/GossipMesh.git
+
       - name: Configure Git User Identity
         run: |
           git config user.name "Aditya Dahale"
@@ -53,5 +57,6 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY || '' }}
           GEMINI_ISSUE_KEY: ${{ secrets.GEMINI_ISSUE_KEY || '' }}
           GEMINI_REVIEWER_KEY: ${{ secrets.GEMINI_REVIEWER_KEY || '' }}
+          GEMINI_SOLVER_KEY: ${{ secrets.GEMINI_SOLVER_KEY || '' }}
         run: |
           python3 .github/scripts/autonomous_loop.py --workspace . --once
