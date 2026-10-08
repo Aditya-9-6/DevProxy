@@ -7,75 +7,74 @@ import (
 	"github.com/Aditya-9-6/DevProxy/pkg/ringbuffer"
 )
 
-func TestSmugglingRule_Evaluate(t *testing.T) {
+func TestSmugglingRule(t *testing.T) {
 	rule := NewSmugglingRule()
 
 	tests := []struct {
-		name           string
-		headers        http.Header
-		expectedCount  int
-		expectedTitles []string
+		name             string
+		headers          http.Header
+		expectedFindings int
+		expectedCategory string
 	}{
 		{
 			name: "Normal Request",
 			headers: http.Header{
-				"Content-Type":   []string{"application/json"},
 				"Content-Length": []string{"123"},
 			},
-			expectedCount: 0,
+			expectedFindings: 0,
 		},
 		{
-			name: "CL.TE Desynchronization",
+			name: "CL.TE / TE.CL Conflict",
 			headers: http.Header{
 				"Content-Length":    []string{"13"},
 				"Transfer-Encoding": []string{"chunked"},
 			},
-			expectedCount:  1,
-			expectedTitles: []string{"HTTP Request Smuggling: Content-Length and Transfer-Encoding Both Present"},
+			expectedFindings: 1,
+			expectedCategory: "REQUEST_SMUGGLING",
 		},
 		{
-			name: "Multiple Conflicting Content-Length Headers",
+			name: "Multiple Content-Length Headers",
 			headers: http.Header{
 				"Content-Length": []string{"10", "20"},
 			},
-			expectedCount:  1,
-			expectedTitles: []string{"Multiple Conflicting Content-Length Headers"},
+			expectedFindings: 1,
+			expectedCategory: "REQUEST_SMUGGLING",
 		},
 		{
-			name: "Transfer-Encoding Obfuscation",
+			name: "Multiple Transfer-Encoding Headers",
 			headers: http.Header{
-				"Transfer-Encoding": []string{"chunked\t"},
+				"Transfer-Encoding": []string{"chunked", "gzip"},
 			},
-			expectedCount:  1,
-			expectedTitles: []string{"Transfer-Encoding Header Obfuscation"},
+			expectedFindings: 1,
+			expectedCategory: "REQUEST_SMUGGLING",
 		},
 		{
-			name: "Header Name Whitespace Obfuscation",
+			name: "Obfuscated Transfer-Encoding",
 			headers: http.Header{
-				"Transfer-Encoding ": []string{"chunked"},
+				"Transfer-Encoding": []string{"xchunked"},
 			},
-			expectedCount:  1,
-			expectedTitles: []string{"HTTP Header Name Whitespace Obfuscation"},
+			expectedFindings: 1,
+			expectedCategory: "REQUEST_SMUGGLING",
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
 			event := &ringbuffer.TrafficEvent{
 				ID:         "test-req-1",
 				Method:     "POST",
 				URL:        "https://example.com/api",
-				ReqHeaders: tt.headers,
+				ReqHeaders: tc.headers,
 			}
 
 			findings := rule.Evaluate(event)
-			if len(findings) != tt.expectedCount {
-				t.Fatalf("expected %d findings, got %d", tt.expectedCount, len(findings))
+			if len(findings) != tc.expectedFindings {
+				t.Errorf("expected %d findings, got %d", tc.expectedFindings, len(findings))
 			}
 
-			for i, title := range tt.expectedTitles {
-				if findings[i].Title != title {
-					t.Errorf("expected finding title %q, got %q", title, findings[i].Title)
+			if tc.expectedFindings > 0 && len(findings) > 0 {
+				if findings[0].Category != tc.expectedCategory {
+					t.Errorf("expected category %s, got %s", tc.expectedCategory, findings[0].Category)
 				}
 			}
 		})

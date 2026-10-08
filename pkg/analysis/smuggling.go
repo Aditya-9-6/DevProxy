@@ -8,10 +8,10 @@ import (
 	"github.com/Aditya-9-6/DevProxy/pkg/ringbuffer"
 )
 
-// SmugglingRule inspects HTTP requests for Content-Length and Transfer-Encoding desynchronization headers (CL.TE, TE.CL, multiple Content-Length headers, and obfuscated transfer encodings).
+// SmugglingRule detects HTTP Request Smuggling indicators (CL.TE, TE.CL, duplicate headers, and transfer-encoding obfuscation).
 type SmugglingRule struct{}
 
-// NewSmugglingRule creates a new HTTP Request Smuggling detector rule.
+// NewSmugglingRule creates a new HTTP Request Smuggling detection rule instance.
 func NewSmugglingRule() *SmugglingRule {
 	return &SmugglingRule{}
 }
@@ -20,32 +20,21 @@ func (r *SmugglingRule) Name() string {
 	return "HTTP Request Smuggling (CL.TE / TE.CL) Detector"
 }
 
-// httpCanonicalHeaderKey normalizes a header key to its canonical form (e.g. content-length -> Content-Length).
-func httpCanonicalHeaderKey(key string) string {
-	parts := strings.Split(strings.TrimSpace(key), "-")
-	for i, part := range parts {
-		if len(part) > 0 {
-			parts[i] = strings.ToUpper(part[:1]) + strings.ToLower(part[1:])
-		}
-	}
-	return strings.Join(parts, "-")
-}
-
 func (r *SmugglingRule) Evaluate(event *ringbuffer.TrafficEvent) []*Finding {
-	if event == nil || event.ReqHeaders == nil {
+	if event.ReqHeaders == nil {
 		return nil
 	}
 
 	var findings []*Finding
 	now := time.Now()
 
-	// 1. Check for both Content-Length and Transfer-Encoding headers present
-	hasCL := false
-	hasTE := false
+	hasContentLength := false
 	var clValues []string
+	hasTransferEncoding := false
 	var teValues []string
 
-	for k, vals := range event.ReqHeaders {
+	// Check all request headers case-insensitively for Content-Length and Transfer-Encoding
+	for k, vv := range event.ReqHeaders {
 		// Check for whitespace obfuscation in header names
 		if strings.Contains(k, " ") || strings.Contains(k, "\t") || strings.Contains(k, "\r") || strings.Contains(k, "\n") {
 			findings = append(findings, &Finding{
@@ -65,47 +54,18 @@ func (r *SmugglingRule) Evaluate(event *ringbuffer.TrafficEvent) []*Finding {
 			})
 		}
 
-		canonicalKey := httpCanonicalHeaderKey(k)
-		if canonicalKey == "Content-Length" {
-			hasCL = true
-			clValues = append(clValues, vals...)
-		} else if canonicalKey == "Transfer-Encoding" {
-			hasTE = true
-			teValues = append(teValues, vals...)
+		lowerKey := strings.ToLower(strings.TrimSpace(k))
+		if lowerKey == "content-length" {
+			hasContentLength = true
+			clValues = append(clValues, vv...)
+		} else if lowerKey == "transfer-encoding" {
+			hasTransferEncoding = true
+			teValues = append(teValues, vv...)
 		}
 	}
 
-	// A. Multiple Content-Length headers with conflicting values
-	if len(clValues) > 1 {
-		firstVal := clValues[0]
-		conflicting := false
-		for _, val := range clValues[1:] {
-			if val != firstVal {
-				conflicting = true
-				break
-			}
-		}
-		if conflicting {
-			findings = append(findings, &Finding{
-				ID:          fmt.Sprintf("smuggle-multi-cl-%s", event.ID),
-				RequestID:   event.ID,
-				Timestamp:   now,
-				Severity:    SeverityCritical,
-				Category:    "REQUEST_SMUGGLING",
-				RuleName:    r.Name(),
-				Title:       "Multiple Conflicting Content-Length Headers",
-				Description: "Request contains multiple Content-Length headers with conflicting values. Front-end and back-end proxies may interpret message boundaries differently, causing request smuggling.",
-				Evidence:    fmt.Sprintf("Content-Length values: %v", clValues),
-				Location:    "HTTP Request Headers",
-				Remediation: "Reject requests with multiple Content-Length headers at the gateway.",
-				URL:         event.URL,
-				Method:      event.Method,
-			})
-		}
-	}
-
-	// B. CL.TE / TE.CL Desynchronization (Both Content-Length and Transfer-Encoding present)
-	if hasCL && hasTE {
+	// 1. Dual Content-Length and Transfer-Encoding Header Presence (CL.TE or TE.CL vector)
+	if hasContentLength && hasTransferEncoding {
 		findings = append(findings, &Finding{
 			ID:          fmt.Sprintf("smuggle-cl-te-%s", event.ID),
 			RequestID:   event.ID,
@@ -113,36 +73,76 @@ func (r *SmugglingRule) Evaluate(event *ringbuffer.TrafficEvent) []*Finding {
 			Severity:    SeverityCritical,
 			Category:    "REQUEST_SMUGGLING",
 			RuleName:    r.Name(),
-			Title:       "HTTP Request Smuggling: Content-Length and Transfer-Encoding Both Present",
-			Description: "The request specifies both Content-Length and Transfer-Encoding headers. According to RFC 7230, Transfer-Encoding overrides Content-Length, but discrepancies lead to CL.TE or TE.CL smuggling attacks.",
+			Title:       "HTTP Request Smuggling: Conflicting Content-Length and Transfer-Encoding",
+			Description: "The request contains both Content-Length and Transfer-Encoding headers. Front-end and back-end servers interpret these competing headers differently (CL.TE or TE.CL), allowing attackers to smuggle arbitrary HTTP requests.",
 			Evidence:    fmt.Sprintf("Content-Length: %v | Transfer-Encoding: %v", clValues, teValues),
 			Location:    "HTTP Request Headers",
-			Remediation: "Reject any request containing both Content-Length and Transfer-Encoding headers.",
+			Remediation: "Reject requests containing both Content-Length and Transfer-Encoding headers at the gateway/proxy boundary, or normalize HTTP/1.1 requests to HTTP/2.",
 			URL:         event.URL,
 			Method:      event.Method,
 		})
 	}
 
-	// C. Transfer-Encoding Obfuscation & Malformed Transfer-Encoding
-	if hasTE {
+	// 2. Multiple Content-Length headers or duplicate conflicting values
+	if hasContentLength && len(clValues) > 1 {
+		findings = append(findings, &Finding{
+			ID:          fmt.Sprintf("smuggle-multi-cl-%s", event.ID),
+			RequestID:   event.ID,
+			Timestamp:   now,
+			Severity:    SeverityHigh,
+			Category:    "REQUEST_SMUGGLING",
+			RuleName:    r.Name(),
+			Title:       "HTTP Request Smuggling: Multiple Content-Length Headers",
+			Description: fmt.Sprintf("The request includes %d Content-Length headers. Front-end and back-end servers may disagree on which length header takes precedence.", len(clValues)),
+			Evidence:    fmt.Sprintf("Content-Length values: %v", clValues),
+			Location:    "HTTP Request Headers",
+			Remediation: "Ensure API gateways reject requests with multiple Content-Length headers.",
+			URL:         event.URL,
+			Method:      event.Method,
+		})
+	}
+
+	// 3. Multiple Transfer-Encoding headers or Obfuscation
+	if hasTransferEncoding {
+		if len(teValues) > 1 {
+			findings = append(findings, &Finding{
+				ID:          fmt.Sprintf("smuggle-multi-te-%s", event.ID),
+				RequestID:   event.ID,
+				Timestamp:   now,
+				Severity:    SeverityHigh,
+				Category:    "REQUEST_SMUGGLING",
+				RuleName:    r.Name(),
+				Title:       "HTTP Request Smuggling: Multiple Transfer-Encoding Headers",
+				Description: fmt.Sprintf("The request includes %d Transfer-Encoding headers, which is often used in TE.TE desynchronization attacks.", len(teValues)),
+				Evidence:    fmt.Sprintf("Transfer-Encoding values: %v", teValues),
+				Location:    "HTTP Request Headers",
+				Remediation: "Reject requests with multiple Transfer-Encoding headers.",
+				URL:         event.URL,
+				Method:      event.Method,
+			})
+		}
+
 		for _, teVal := range teValues {
-			if strings.HasSuffix(teVal, "\t") || strings.HasSuffix(teVal, " ") || strings.Contains(teVal, "\r") || strings.Contains(teVal, "\n") {
-				findings = append(findings, &Finding{
-					ID:          fmt.Sprintf("smuggle-te-obf-%s", event.ID),
-					RequestID:   event.ID,
-					Timestamp:   now,
-					Severity:    SeverityCritical,
-					Category:    "REQUEST_SMUGGLING",
-					RuleName:    r.Name(),
-					Title:       "Transfer-Encoding Header Obfuscation",
-					Description: fmt.Sprintf("Transfer-Encoding header contains whitespace or obfuscation characters (%q), facilitating request desynchronization.", teVal),
-					Evidence:    fmt.Sprintf("Transfer-Encoding: %q", teVal),
-					Location:    "HTTP Request Headers",
-					Remediation: "Strictly validate and normalize Transfer-Encoding header values.",
-					URL:         event.URL,
-					Method:      event.Method,
-				})
-				break
+			for _, token := range strings.Split(teVal, ",") {
+				lowerTE := strings.ToLower(strings.TrimSpace(token))
+				if lowerTE != "chunked" && lowerTE != "compress" && lowerTE != "deflate" && lowerTE != "gzip" && lowerTE != "identity" {
+					findings = append(findings, &Finding{
+						ID:          fmt.Sprintf("smuggle-obfuscated-te-%s", event.ID),
+						RequestID:   event.ID,
+						Timestamp:   now,
+						Severity:    SeverityHigh,
+						Category:    "REQUEST_SMUGGLING",
+						RuleName:    r.Name(),
+						Title:       "HTTP Request Smuggling: Obfuscated Transfer-Encoding Header",
+						Description: fmt.Sprintf("The Transfer-Encoding header value '%s' appears obfuscated or non-standard, designed to bypass front-end proxy validation while being parsed by back-end servers.", teVal),
+						Evidence:    fmt.Sprintf("Transfer-Encoding: %s", teVal),
+						Location:    "HTTP Request Headers",
+						Remediation: "Strictly validate Transfer-Encoding against RFC 9110 (only allow 'chunked', etc.).",
+						URL:         event.URL,
+						Method:      event.Method,
+					})
+					break
+				}
 			}
 		}
 	}

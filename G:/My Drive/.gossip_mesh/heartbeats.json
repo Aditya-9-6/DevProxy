@@ -1,6 +1,10 @@
 {
   "devproxy_daemon": {
-    "last_seen": 1791470623.1770077,
+    "last_seen": 1791470738.8783083,
+    "clock_seq": 0
+  },
+  "devproxy_reviewer": {
+    "last_seen": 1791470725.6318958,
     "clock_seq": 0
   }
 }
