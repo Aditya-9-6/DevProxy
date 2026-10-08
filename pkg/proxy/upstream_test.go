@@ -973,3 +973,26 @@ func TestUpstreamProxy_GetAndClearURL(t *testing.T) {
 	}
 }
 
+func TestUpstreamProxy_ConcurrentAccess(t *testing.T) {
+	t.Parallel()
+	p := newUpstreamTestProxy(t, "127.0.0.1:8080")
+
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		wg.Add(2)
+		go func(idx int) {
+			defer wg.Done()
+			proxyURL := fmt.Sprintf("socks5://127.0.0.1:%d", 1080+idx)
+			_ = p.SetUpstreamProxy(proxyURL)
+			_ = p.UpstreamProxyURL()
+		}(i)
+		go func() {
+			defer wg.Done()
+			_ = p.UpstreamProxyURL()
+			p.ClearUpstreamProxy()
+		}()
+	}
+	wg.Wait()
+}
+
+

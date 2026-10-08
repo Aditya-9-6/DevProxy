@@ -30,6 +30,7 @@ type ProxyServer struct {
 	reqCounter       atomic.Uint64
 	mockEngine       *mock.Engine
 	insecureUpstream bool
+	upstreamProxyMu  sync.RWMutex
 	upstreamProxy    *url.URL
 	loopWarnOnce     sync.Once
 }
