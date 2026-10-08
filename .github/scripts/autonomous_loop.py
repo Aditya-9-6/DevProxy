@@ -232,6 +232,55 @@ def heal_and_merge_open_prs(workspace: Path) -> bool:
                 except Exception:
                     pass
 
+            # If reviewer found issues, autonomously resolve them using review feedback!
+            if verdict != "APPROVED" or score < 90:
+                review_md = workspace / "ai_pr_review.md"
+                print(f"[*] PR #{pr_num} review requested improvements ({score}/100). Launching fixer to resolve action items...", flush=True)
+                fix_env = os.environ.copy()
+                fix_env["GEMINI_SOLVER_KEY"] = GLOBAL_POOL.next_key()
+                fix_env["GH_REPO"] = REPO
+                fix_cmd = [
+                    sys.executable, ".github/scripts/ai_ci_fixer.py",
+                    "--pr-number", str(pr_num),
+                    "--workspace", str(workspace),
+                    "--max-iterations", "4"
+                ]
+                if review_md.exists():
+                    fix_cmd.extend(["--review-feedback-file", str(review_md)])
+
+                subprocess.run(fix_cmd, cwd=workspace, env=fix_env, capture_output=True, text=True, encoding="utf-8", errors="replace")
+
+                code, error_log = run_diagnostics(workspace)
+                if code == 0:
+                    print(f"[SUCCESS] Applied review refactorings for PR #{pr_num}! Pushing commit...", flush=True)
+                    run_cmd(["git", "config", "user.name", USER_NAME], cwd=workspace)
+                    run_cmd(["git", "config", "user.email", USER_EMAIL], cwd=workspace)
+                    run_cmd("git rm --cached -f ai_pr_*.md ai_review_*.json ci_fix_*.md 2>/dev/null || true", cwd=workspace, check=False)
+                    run_cmd("git add -A", cwd=workspace)
+                    run_cmd("git reset -- ai_pr_*.md ai_review_*.json ci_fix_*.md 2>/dev/null || true", cwd=workspace, check=False)
+                    run_cmd([
+                        "git", "commit",
+                        "-m", f"refactor(audit): address architectural review feedback for PR #{pr_num}",
+                        "-m", f"Co-authored-by: {USER_NAME} <{USER_EMAIL}>"
+                    ], cwd=workspace, check=False)
+                    run_cmd(["git", "push", "origin", head_ref], cwd=workspace, check=False)
+
+                    # Re-run reviewer to verify approval
+                    rev_env["GEMINI_REVIEWER_KEY"] = GLOBAL_POOL.next_key()
+                    subprocess.run([
+                        sys.executable, ".github/scripts/ai_pr_reviewer.py",
+                        "--pr-number", str(pr_num),
+                        "--workspace", str(workspace)
+                    ], cwd=workspace, env=rev_env, capture_output=True, text=True, encoding="utf-8", errors="replace")
+
+                    if status_file.exists():
+                        try:
+                            s_data = json.loads(status_file.read_text(encoding="utf-8"))
+                            score = s_data.get("score", 0)
+                            verdict = s_data.get("verdict", "ACTION_REQUIRED")
+                        except Exception:
+                            pass
+
             if verdict == "APPROVED" and score >= 90:
                 print(f"[APPROVED] PR #{pr_num} APPROVED ({score}/100)! Merging autonomously...", flush=True)
                 run_cmd(["gh", "label", "create", "ready-to-merge", "--repo", REPO, "--color", "0E8A16", "-f"], cwd=workspace, check=False)

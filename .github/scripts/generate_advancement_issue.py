@@ -23,8 +23,8 @@ try:
 except ImportError:
     GOSSIP_AVAILABLE = False
 
-DEFAULT_MODEL = "gemini-3.8-flash"
-FALLBACK_MODELS = ["gemini-3.8-flash", "gemini-3.1-flash-lite", "gemini-3.1-pro-preview"]
+DEFAULT_MODEL = "gemini-flash-lite-latest"
+FALLBACK_MODELS = ["gemini-flash-lite-latest", "gemini-flash-latest", "gemini-pro-latest"]
 
 # Curated catalog of verified, high-impact open-source architecture advancements for DevProxy (Go)
 CATALOG = [
