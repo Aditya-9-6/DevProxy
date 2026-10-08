@@ -118,6 +118,130 @@ def generate_new_issue(workspace: Path):
     if res.returncode != 0:
         print(f"[!] Generator error: {res.stderr}", file=sys.stderr, flush=True)
 
+def run_diagnostics(workspace: Path) -> tuple[int, str]:
+    """Runs Go compiler diagnostics, vet, and unit tests."""
+    out_lines = []
+    subprocess.run(["go", "mod", "tidy"], cwd=workspace, capture_output=True, text=True)
+
+    fmt_res = subprocess.run(["gofmt", "-l", "."], cwd=workspace, capture_output=True, text=True)
+    if fmt_res.stdout.strip():
+        out_lines.append("=== GOFMT FORMATTING ERRORS ===")
+        out_lines.append(fmt_res.stdout.strip())
+
+    vet_res = subprocess.run(["go", "vet", "./..."], cwd=workspace, capture_output=True, text=True)
+    if vet_res.returncode != 0:
+        out_lines.append("=== GO VET COMPILATION ERRORS ===")
+        out_lines.append(vet_res.stderr.strip() or vet_res.stdout.strip())
+
+    test_res = subprocess.run(["go", "test", "-v", "./..."], cwd=workspace, capture_output=True, text=True)
+    if test_res.returncode != 0:
+        out_lines.append("=== GO TEST FAILURES ===")
+        out_lines.append((test_res.stdout + "\n" + test_res.stderr).strip())
+
+    combined = "\n".join(out_lines).strip()
+    return (0 if not combined else 1), combined
+
+def heal_and_merge_open_prs(workspace: Path) -> bool:
+    """Finds all open AI PRs, self-heals failing checks or /fix comments, reviews, and merges them."""
+    try:
+        out = run_cmd([
+            "gh", "pr", "list",
+            "--repo", REPO,
+            "--state", "open",
+            "--json", "number,title,headRefName,url,comments"
+        ], cwd=workspace)
+        prs = json.loads(out) if out else []
+    except Exception as e:
+        print(f"[Warning] Failed to fetch open PRs: {e}", file=sys.stderr)
+        return False
+
+    if not prs:
+        return False
+
+    ai_prs = [p for p in prs if p["headRefName"].startswith("ai/") or "feat(ai)" in p["title"]]
+    if not ai_prs:
+        return False
+
+    print(f"\n[🔍 PR Sweeper] Found {len(ai_prs)} open AI PR(s). Checking for self-healing and auto-merge...", flush=True)
+    for pr in ai_prs:
+        pr_num = pr["number"]
+        head_ref = pr["headRefName"]
+        title = pr["title"]
+        print(f"\n[*] Evaluating PR #{pr_num}: {title} (branch: {head_ref})...", flush=True)
+
+        try:
+            run_cmd(["git", "checkout", head_ref], cwd=workspace)
+            run_cmd(["git", "pull", "origin", head_ref], cwd=workspace)
+        except Exception as e:
+            print(f"[!] Could not checkout branch {head_ref}: {e}", file=sys.stderr)
+            continue
+
+        code, error_log = run_diagnostics(workspace)
+        has_fix_request = any("/fix" in c.get("body", "") for c in pr.get("comments", []))
+
+        if code != 0 or has_fix_request:
+            print(f"[*] PR #{pr_num} requires repair (exit code: {code}, /fix requested: {has_fix_request}). Launching autonomous fixer...", flush=True)
+            fix_env = os.environ.copy()
+            fix_env["GEMINI_SOLVER_KEY"] = GLOBAL_POOL.next_key()
+            fix_env["GH_REPO"] = REPO
+
+            subprocess.run([
+                sys.executable, ".github/scripts/ai_ci_fixer.py",
+                "--pr-number", str(pr_num),
+                "--workspace", str(workspace),
+                "--max-iterations", "6"
+            ], cwd=workspace, env=fix_env, capture_output=True, text=True, encoding="utf-8", errors="replace")
+
+            code, error_log = run_diagnostics(workspace)
+            if code == 0:
+                print(f"[🎉] PR #{pr_num} repaired to 100% GREEN! Committing and pushing...", flush=True)
+                run_cmd(["git", "config", "user.name", USER_NAME], cwd=workspace)
+                run_cmd(["git", "config", "user.email", USER_EMAIL], cwd=workspace)
+                run_cmd("git rm --cached -f ai_pr_*.md ai_review_*.json ci_fix_*.md 2>/dev/null || true", cwd=workspace, check=False)
+                run_cmd("git add -A", cwd=workspace)
+                run_cmd("git reset -- ai_pr_*.md ai_review_*.json ci_fix_*.md 2>/dev/null || true", cwd=workspace, check=False)
+                run_cmd([
+                    "git", "commit",
+                    "-m", f"fix(ci): autonomous 100% green self-healing repair for PR #{pr_num}",
+                    "-m", f"Co-authored-by: {USER_NAME} <{USER_EMAIL}>"
+                ], cwd=workspace, check=False)
+                run_cmd(["git", "push", "origin", head_ref], cwd=workspace, check=False)
+                run_cmd(["gh", "pr", "comment", str(pr_num), "--repo", REPO, "--body", f"✅ **Autonomous Fix Applied!** Diagnostics passed 100% GREEN on branch `{head_ref}`."], cwd=workspace, check=False)
+
+        if code == 0:
+            print(f"[*] Running Reviewer on PR #{pr_num}...", flush=True)
+            rev_env = os.environ.copy()
+            rev_env["GEMINI_REVIEWER_KEY"] = GLOBAL_POOL.next_key()
+            rev_env["GH_REPO"] = REPO
+            subprocess.run([
+                sys.executable, ".github/scripts/ai_pr_reviewer.py",
+                "--pr-number", str(pr_num),
+                "--workspace", str(workspace)
+            ], cwd=workspace, env=rev_env, capture_output=True, text=True, encoding="utf-8", errors="replace")
+
+            status_file = workspace / "ai_review_status.json"
+            score = 0
+            verdict = "ACTION_REQUIRED"
+            if status_file.exists():
+                try:
+                    s_data = json.loads(status_file.read_text(encoding="utf-8"))
+                    score = s_data.get("score", 0)
+                    verdict = s_data.get("verdict", "ACTION_REQUIRED")
+                except Exception:
+                    pass
+
+            if verdict == "APPROVED" and score >= 90:
+                print(f"[🚀] PR #{pr_num} APPROVED ({score}/100)! Merging autonomously...", flush=True)
+                run_cmd(["gh", "pr", "merge", str(pr_num), "--repo", REPO, "--squash", "--admin"], cwd=workspace, check=False)
+                run_cmd(["git", "checkout", "main"], cwd=workspace)
+                run_cmd(["git", "pull", "origin", "main"], cwd=workspace)
+                run_cmd(f"git branch -D {head_ref}", cwd=workspace, check=False)
+                run_cmd(f"git push origin --delete {head_ref}", cwd=workspace, check=False)
+                return True
+
+    run_cmd(["git", "checkout", "main"], cwd=workspace, check=False)
+    return False
+
 def solve_issue(workspace: Path, issue_num: int, issue_title: str, issue_body: str):
     """Solves an issue, creates PR, reviews, and merges."""
     solver_key = GLOBAL_POOL.next_key()
@@ -292,6 +416,13 @@ def run_loop_iteration(workspace: Path):
     except Exception:
         pass
 
+    # Phase 1: Heal and merge existing open PRs
+    handled_pr = heal_and_merge_open_prs(workspace)
+    if handled_pr:
+        print("[OK] Successfully healed/merged an open PR in this cycle.", flush=True)
+        return
+
+    # Phase 2: Solve open advancement issues
     issues = get_open_advancement_issues(workspace)
     if not issues:
         print("[*] No open advancement issues found. Generating one...", flush=True)

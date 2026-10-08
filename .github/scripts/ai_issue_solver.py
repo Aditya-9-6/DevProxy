@@ -248,10 +248,18 @@ Instructions:
 
     print(f"[*] Applying {len(files)} file changes...")
     for f in files:
-        rel_path = f["path"]
+        rel_path = f["path"].replace("\\", "/")
         content = f["content"]
         target_path = workspace_root / rel_path
-        
+
+        # Code Integrity Guard: Reject destructive overwrites that truncate large files
+        if target_path.is_file():
+            orig_lines = len(target_path.read_text(encoding="utf-8", errors="replace").splitlines())
+            new_lines = len(content.splitlines())
+            if orig_lines > 80 and new_lines < int(orig_lines * 0.65):
+                print(f"[!] WARNING: Proposed change for {rel_path} shrunk lines from {orig_lines} to {new_lines}. Truncation detected! Skipping destructive overwrite.", flush=True)
+                continue
+
         target_path.parent.mkdir(parents=True, exist_ok=True)
         target_path.write_text(content, encoding="utf-8")
         print(f"    [+] Wrote: {rel_path}")
