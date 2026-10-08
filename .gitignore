@@ -27,3 +27,5 @@ ai_review_*.md
 ci_fix_*.md
 ci_fix_*.json
 .github/advancement_backlog.json
+.gemini_keys
+*.bat
