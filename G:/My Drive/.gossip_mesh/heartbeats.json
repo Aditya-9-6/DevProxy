@@ -2,5 +2,9 @@
   "devproxy_daemon": {
     "last_seen": 1791489068.2894669,
     "clock_seq": 0
+  },
+  "devproxy_reviewer": {
+    "last_seen": 1791489189.84973,
+    "clock_seq": 0
   }
 }
