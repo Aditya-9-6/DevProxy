@@ -190,6 +190,8 @@ func (p *ProxyServer) bumpTLSConnection(clientConn net.Conn, targetHostPort stri
 		}
 
 		reqID := fmt.Sprintf("req-%d-%s", p.reqCounter.Add(1), uuid.NewString()[:8])
+		traceCtx := ExtractTraceContext(req.Header)
+		InjectTraceContext(req.Header, traceCtx)
 		req.URL.Scheme = "https"
 		req.URL.Host = host
 
@@ -343,23 +345,26 @@ func (p *ProxyServer) bumpTLSConnection(clientConn net.Conn, targetHostPort stri
 		duration := time.Since(reqStart)
 
 		event := &ringbuffer.TrafficEvent{
-			ID:          reqID,
-			Timestamp:   reqStart,
-			Duration:    duration,
-			ClientIP:    clientConn.RemoteAddr().String(),
-			Scheme:      "https",
-			Host:        host,
-			Method:      req.Method,
-			Path:        req.URL.Path,
-			URL:         req.URL.String(),
-			Proto:       req.Proto,
-			ReqHeaders:  cloneHeaders(req.Header),
-			ReqBody:     reqCap.Bytes(),
-			StatusCode:  resp.StatusCode,
-			RespHeaders: cloneHeaders(resp.Header),
-			RespBody:    respCap.Bytes(),
-			TLS:         true,
-			TLSServer:   host,
+			ID:             reqID,
+			Timestamp:      reqStart,
+			Duration:       duration,
+			ClientIP:       clientConn.RemoteAddr().String(),
+			Scheme:         "https",
+			Host:           host,
+			Method:         req.Method,
+			Path:           req.URL.Path,
+			URL:            req.URL.String(),
+			Proto:          req.Proto,
+			ReqHeaders:     cloneHeaders(req.Header),
+			ReqBody:        reqCap.Bytes(),
+			StatusCode:     resp.StatusCode,
+			RespHeaders:    cloneHeaders(resp.Header),
+			RespBody:       respCap.Bytes(),
+			TLS:            true,
+			TLSServer:      host,
+			TraceID:        traceCtx.TraceID,
+			SpanID:         traceCtx.SpanID,
+			ClientBotClass: ClassifyClient("", req.UserAgent()),
 		}
 
 		p.ringBuffer.Push(event)
@@ -394,6 +399,8 @@ func (p *ProxyServer) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	outReq := new(http.Request)
 	*outReq = *r
 	outReq.Body = io.NopCloser(bytes.NewReader(reqBodyBytes))
+	traceCtx := ExtractTraceContext(r.Header)
+	InjectTraceContext(outReq.Header, traceCtx)
 
 	if !outReq.URL.IsAbs() {
 		outReq.URL.Scheme = "http"
@@ -512,22 +519,25 @@ func (p *ProxyServer) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	duration := time.Since(reqStart)
 
 	event := &ringbuffer.TrafficEvent{
-		ID:          reqID,
-		Timestamp:   reqStart,
-		Duration:    duration,
-		ClientIP:    r.RemoteAddr,
-		Scheme:      "http",
-		Host:        r.Host,
-		Method:      r.Method,
-		Path:        r.URL.Path,
-		URL:         outReq.URL.String(),
-		Proto:       r.Proto,
-		ReqHeaders:  cloneHeaders(r.Header),
-		ReqBody:     reqBodyBytes,
-		StatusCode:  resp.StatusCode,
-		RespHeaders: cloneHeaders(resp.Header),
-		RespBody:    capWriter.Bytes(),
-		TLS:         false,
+		ID:             reqID,
+		Timestamp:      reqStart,
+		Duration:       duration,
+		ClientIP:       r.RemoteAddr,
+		Scheme:         "http",
+		Host:           r.Host,
+		Method:         r.Method,
+		Path:           r.URL.Path,
+		URL:            outReq.URL.String(),
+		Proto:          r.Proto,
+		ReqHeaders:     cloneHeaders(r.Header),
+		ReqBody:        reqBodyBytes,
+		StatusCode:     resp.StatusCode,
+		RespHeaders:    cloneHeaders(resp.Header),
+		RespBody:       capWriter.Bytes(),
+		TLS:            false,
+		TraceID:        traceCtx.TraceID,
+		SpanID:         traceCtx.SpanID,
+		ClientBotClass: ClassifyClient("", r.UserAgent()),
 	}
 
 	p.ringBuffer.Push(event)
