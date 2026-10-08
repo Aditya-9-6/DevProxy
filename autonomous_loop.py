@@ -154,12 +154,16 @@ def solve_issue(workspace: Path, issue_num: int, issue_title: str, issue_body: s
     vet_res = subprocess.run(["go", "vet", "./..."], cwd=workspace, capture_output=True, text=True, encoding="utf-8", errors="replace")
     if vet_res.returncode != 0:
         print(f"[!] go vet failed: {vet_res.stderr}", file=sys.stderr, flush=True)
+        run_cmd("git reset --hard HEAD", cwd=workspace, check=False)
+        run_cmd("git clean -fd", cwd=workspace, check=False)
         return False
 
     print("[*] Verifying Go concurrency & race safety (go test -race)...", flush=True)
     check_res = subprocess.run(["go", "test", "-race", "./..."], cwd=workspace, capture_output=True, text=True, encoding="utf-8", errors="replace")
     if check_res.returncode != 0:
         print(f"[!] go test failed: {check_res.stderr}", file=sys.stderr, flush=True)
+        run_cmd("git reset --hard HEAD", cwd=workspace, check=False)
+        run_cmd("git clean -fd", cwd=workspace, check=False)
         return False
 
     branch_name = f"ai/solve-issue-{issue_num}"
@@ -256,6 +260,19 @@ def solve_issue(workspace: Path, issue_num: int, issue_title: str, issue_body: s
 def run_loop_iteration(workspace: Path):
     """Executes a single cycle of the autonomous loop."""
     print(f"\n--- [Autonomous DevProxy Loop Iteration: {time.strftime('%Y-%m-%d %H:%M:%S')} | Key Pool: {len(GLOBAL_POOL)} keys] ---", flush=True)
+
+    # Synchronize with GossipMesh
+    try:
+        from gossipmesh import GossipNode, MemeticKnowledgeBase
+        g_node = GossipNode("devproxy_daemon")
+        new_gossips = g_node.sync()
+        g_node.heartbeat()
+        kb = MemeticKnowledgeBase()
+        top_memes = kb.get_top_memes(repo="DevProxy")
+        print(f"[*] GossipMesh: Synced {len(top_memes)} living architectural memes ({len(new_gossips)} incoming peer digests).", flush=True)
+    except Exception:
+        pass
+
     issues = get_open_advancement_issues(workspace)
     if not issues:
         print("[*] No open advancement issues found. Generating one...", flush=True)

@@ -328,6 +328,27 @@ To complete the merge into `main`:
     }
     status_file.write_text(json.dumps(status_data, indent=2), encoding="utf-8")
 
+    # Broadcast findings to GossipMesh
+    try:
+        from gossipmesh import GossipNode, GossipTopic
+        node = GossipNode("devproxy_reviewer")
+        if is_approved:
+            node.publish(
+                GossipTopic.BEST_PRACTICES,
+                {"pr_number": pr_number, "score": score, "summary": summary},
+                repo="DevProxy"
+            )
+            print(f"[*] GossipMesh: Broadcasted APPROVED best-practice gossip across mesh for PR #{pr_number}.", flush=True)
+        else:
+            node.publish(
+                GossipTopic.ANTI_PATTERNS,
+                {"pr_number": pr_number, "score": score, "action_items": action_items, "summary": summary},
+                repo="DevProxy"
+            )
+            print(f"[*] GossipMesh: Broadcasted ANTI_PATTERNS feedback gossip across mesh for PR #{pr_number}.", flush=True)
+    except Exception as e:
+        pass
+
     print(f"[OK] Audit finished: Verdict={status_data['verdict']} Score={score} (Written to {review_file} & {status_file})")
 
 if __name__ == "__main__":

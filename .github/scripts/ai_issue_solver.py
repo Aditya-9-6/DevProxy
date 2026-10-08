@@ -14,6 +14,13 @@ import urllib.error
 import subprocess
 import time
 from pathlib import Path
+from typing import Optional
+
+try:
+    from gossipmesh import MemeticKnowledgeBase, RedTeamAuditor, GossipNode, GossipTopic
+    GOSSIP_AVAILABLE = True
+except ImportError:
+    GOSSIP_AVAILABLE = False
 
 DEFAULT_MODEL = "gemini-3.8-flash"
 FALLBACK_MODELS = [
@@ -101,8 +108,19 @@ def get_relevant_files(workspace_root: Path, all_files: list, keywords: list) ->
                 
     return "\n\n".join(context_files)
 
-def call_gemini(api_key: str, prompt: str, model: str = DEFAULT_MODEL) -> dict:
+def call_gemini(api_key: str, prompt: str, model: str = DEFAULT_MODEL, system_prompt: Optional[str] = None) -> dict:
     """Calls Gemini REST API with fallback and retries across supported models."""
+    active_sys_prompt = system_prompt or SYSTEM_PROMPT
+    if system_prompt is None and GOSSIP_AVAILABLE:
+        try:
+            kb = MemeticKnowledgeBase()
+            memes_ctx = kb.format_prompt_context(repo="DevProxy")
+            if memes_ctx:
+                active_sys_prompt = f"{SYSTEM_PROMPT}\n\n{memes_ctx}"
+                print(f"[*] GossipMesh: Injected {len(kb.get_top_memes(repo='DevProxy'))} top evolutionary memes into solver prompt.", flush=True)
+        except Exception:
+            pass
+
     ordered = [model] + [m for m in FALLBACK_MODELS if m != model]
     models_to_try = []
     for m in ordered:
@@ -117,7 +135,7 @@ def call_gemini(api_key: str, prompt: str, model: str = DEFAULT_MODEL) -> dict:
             "contents": [
                 {
                     "parts": [
-                        {"text": SYSTEM_PROMPT},
+                        {"text": active_sys_prompt},
                         {"text": prompt}
                     ]
                 }
