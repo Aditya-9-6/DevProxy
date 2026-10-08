@@ -212,11 +212,24 @@ def heal_and_merge_open_prs(workspace: Path) -> bool:
     if not prs:
         return False
 
-    ai_prs = [p for p in prs if p["headRefName"].startswith("ai/") or "feat(ai)" in p["title"]]
+    def is_candidate_pr(p):
+        ref = p.get("headRefName", "")
+        title = p.get("title", "")
+        comments = [c.get("body", "") for c in p.get("comments", [])]
+        has_fix = any("/fix" in c for c in comments)
+        return (
+            ref.startswith("ai/")
+            or "feat(ai)" in title
+            or ref.startswith("dependabot/")
+            or "deps" in title.lower()
+            or has_fix
+        )
+
+    ai_prs = [p for p in prs if is_candidate_pr(p)]
     if not ai_prs:
         return False
 
-    print(f"\n[PR Sweeper] Found {len(ai_prs)} open AI PR(s). Checking for self-healing and auto-merge...", flush=True)
+    print(f"\n[PR Sweeper] Found {len(ai_prs)} open candidate PR(s). Checking for self-healing and auto-merge...", flush=True)
     try:
         for pr in ai_prs:
             pr_num = pr["number"]
@@ -274,8 +287,8 @@ def heal_and_merge_open_prs(workspace: Path) -> bool:
                     sys.executable, ".github/scripts/ai_ci_fixer.py",
                     "--pr-number", str(pr_num),
                     "--workspace", str(workspace),
-                    "--max-iterations", "4"
-                ], cwd=workspace, env=fix_env, capture_output=True, text=True, encoding="utf-8", errors="replace")
+                    "--max-iterations", "3"
+                ], cwd=workspace, env=fix_env)
 
                 code, error_log = run_diagnostics(workspace)
                 if code == 0:
@@ -302,7 +315,7 @@ def heal_and_merge_open_prs(workspace: Path) -> bool:
                     sys.executable, ".github/scripts/ai_pr_reviewer.py",
                     "--pr-number", str(pr_num),
                     "--workspace", str(workspace)
-                ], cwd=workspace, env=rev_env, capture_output=True, text=True, encoding="utf-8", errors="replace")
+                ], cwd=workspace, env=rev_env)
 
                 status_file = workspace / "ai_review_status.json"
                 score = 0
@@ -326,7 +339,7 @@ def heal_and_merge_open_prs(workspace: Path) -> bool:
                         "--pr-number", str(pr_num),
                         "--workspace", str(workspace),
                         "--max-iterations", "3"
-                    ], cwd=workspace, env=fix_env, capture_output=True, text=True, encoding="utf-8", errors="replace")
+                    ], cwd=workspace, env=fix_env)
 
                     c2, _ = run_diagnostics(workspace)
                     if c2 == 0:
@@ -348,7 +361,7 @@ def heal_and_merge_open_prs(workspace: Path) -> bool:
                             sys.executable, ".github/scripts/ai_pr_reviewer.py",
                             "--pr-number", str(pr_num),
                             "--workspace", str(workspace)
-                        ], cwd=workspace, env=rev_env, capture_output=True, text=True, encoding="utf-8", errors="replace")
+                        ], cwd=workspace, env=rev_env)
 
                         if status_file.exists():
                             try:
