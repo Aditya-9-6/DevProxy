@@ -225,7 +225,11 @@ def heal_and_merge_open_prs(workspace: Path) -> bool:
             or has_fix
         )
 
-    ai_prs = [p for p in prs if is_candidate_pr(p)]
+    # Prioritize AI feature branches first, then dependabot/external
+    ai_prs = sorted(
+        [p for p in prs if is_candidate_pr(p)],
+        key=lambda p: 0 if p.get("headRefName", "").startswith("ai/") else 1
+    )
     if not ai_prs:
         return False
 
