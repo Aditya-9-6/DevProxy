@@ -18,11 +18,12 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
         with:
-          fetch-depth: 1
+          fetch-depth: 0
 
       - name: "Scan for TODO and ADVANCEMENT comments"
         uses: "alstr/todo-to-issue-action@v5"
         with:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CLOSE_ISSUES: true
           AUTO_ASSIGN: false
           IDENTIFIERS: '[{"name": "TODO", "labels": ["enhancement"]}, {"name": "ADVANCEMENT", "labels": ["enhancement", "hacktoberfest"]}, {"name": "FIXME", "labels": ["bug"]}, {"name": "OPTIMIZE", "labels": ["performance"]}]'
