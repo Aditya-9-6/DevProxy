@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
-	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -18,9 +17,10 @@ import (
 	"github.com/Aditya-9-6/DevProxy/pkg/certs"
 	"github.com/Aditya-9-6/DevProxy/pkg/mock"
 	"github.com/Aditya-9-6/DevProxy/pkg/ringbuffer"
-	"github.com/google/uuid"
 	"golang.org/x/net/proxy"
 )
+
+var bufferPool = sync.Pool{New: func() interface{} { return new(bytes.Buffer) }}
 
 type ProxyServer struct {
 	addr             string
@@ -65,6 +65,9 @@ func (p *ProxyServer) resolveForRequest(req *http.Request) (*url.URL, error) {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	if p.upstreamProxy != nil {
+		if strings.Contains(req.Host, p.addr) {
+			return nil, nil
+		}
 		return p.upstreamProxy, nil
 	}
 	return http.ProxyFromEnvironment(req)
@@ -137,13 +140,6 @@ func (p *ProxyServer) bumpTLSConnection(clientConn net.Conn, targetHostPort stri
 		}
 		req.URL.Scheme = "https"
 		req.URL.Host = host
-		if p.mockEngine != nil {
-			if injected, status, body := p.mockEngine.ApplyChaos("https://" + host + req.URL.RequestURI()); injected {
-				resp := &http.Response{StatusCode: status, Body: io.NopCloser(bytes.NewReader([]byte(body)))}
-				resp.Write(tlsClientConn)
-				continue
-			}
-		}
 		req.Write(upstreamConn)
 		resp, _ := http.ReadResponse(upstreamReader, req)
 		resp.Write(tlsClientConn)
@@ -152,24 +148,20 @@ func (p *ProxyServer) bumpTLSConnection(clientConn net.Conn, targetHostPort stri
 
 func (p *ProxyServer) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	if isWebSocketUpgrade(r) {
-		p.handleWebSocketUpgrade(w, r, "", time.Now())
+		p.handleWebSocketUpgrade(w, r)
 		return
 	}
-	outReq := new(http.Request)
-	*outReq = *r
-	if !outReq.URL.IsAbs() {
-		outReq.URL.Scheme = "http"
-		outReq.URL.Host = r.Host
+	removeHopByHopHeaders(r.Header)
+	r.RequestURI = ""
+	if !r.URL.IsAbs() {
+		r.URL.Scheme = "http"
+		r.URL.Host = r.Host
 	}
-	if p.mockEngine != nil {
-		if injected, status, body := p.mockEngine.ApplyChaos(outReq.URL.String()); injected {
-			w.WriteHeader(status)
-			w.Write([]byte(body))
-			return
-		}
+	resp, err := p.transport.RoundTrip(r)
+	if err != nil {
+		http.Error(w, err.Error(), 502)
+		return
 	}
-	removeHopByHopHeaders(outReq.Header)
-	resp, _ := p.transport.RoundTrip(outReq)
 	defer resp.Body.Close()
 	for k, vv := range resp.Header {
 		for _, v := range vv {
@@ -177,24 +169,23 @@ func (p *ProxyServer) handleHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	w.WriteHeader(resp.StatusCode)
+	buf := bufferPool.Get().(*bytes.Buffer)
+	buf.Reset()
+	defer bufferPool.Put(buf)
 	io.Copy(w, resp.Body)
 }
 
-func (p *ProxyServer) handleWebSocketUpgrade(w http.ResponseWriter, r *http.Request, reqID string, reqStart time.Time) {
+func (p *ProxyServer) handleWebSocketUpgrade(w http.ResponseWriter, r *http.Request) {
 	hijacker, _ := w.(http.Hijacker)
 	clientConn, _, _ := hijacker.Hijack()
 	defer clientConn.Close()
 	upstreamConn, _ := p.dialTunnel("tcp", r.Host)
 	defer upstreamConn.Close()
 	r.Write(upstreamConn)
-	p.splice(clientConn, upstreamConn)
-}
-
-func (p *ProxyServer) splice(c1, c2 net.Conn) {
 	var wg sync.WaitGroup
 	wg.Add(2)
-	go func() { defer wg.Done(); io.Copy(c1, c2) }()
-	go func() { defer wg.Done(); io.Copy(c2, c1) }()
+	go func() { defer wg.Done(); io.Copy(clientConn, upstreamConn) }()
+	go func() { defer wg.Done(); io.Copy(upstreamConn, clientConn) }()
 	wg.Wait()
 }
 
@@ -202,7 +193,7 @@ func isWebSocketUpgrade(r *http.Request) bool {
 	return strings.EqualFold(r.Header.Get("Upgrade"), "websocket")
 }
 func removeHopByHopHeaders(h http.Header) {
-	for _, k := range []string{"Connection", "Upgrade"} {
+	for _, k := range []string{"Connection", "Upgrade", "Proxy-Connection", "Keep-Alive"} {
 		h.Del(k)
 	}
 }

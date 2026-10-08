@@ -33,3 +33,17 @@ func TestUpstreamProxyConfiguration(t *testing.T) {
 		})
 	}
 }
+
+func TestLoopDetection(t *testing.T) {
+	ca, _ := certs.NewCertificateAuthority("", "")
+	cm := certs.NewCertificateManager(ca)
+	rb := ringbuffer.NewRingBuffer(1024)
+	p := NewProxyServer("localhost:8080", cm, rb)
+	p.SetUpstreamProxy("http://localhost:8080")
+
+	req, _ := http.NewRequest("GET", "http://localhost:8080", nil)
+	resolved, _ := p.resolveForRequest(req)
+	if resolved != nil {
+		t.Errorf("Expected loop detection to return nil proxy, got %v", resolved)
+	}
+}
