@@ -2,22 +2,17 @@ package proxy
 
 import (
 	"bufio"
-	"bytes"
 	"crypto/tls"
-	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/url"
-	"strings"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"github.com/Aditya-9-6/DevProxy/pkg/certs"
 	"github.com/Aditya-9-6/DevProxy/pkg/mock"
 	"github.com/Aditya-9-6/DevProxy/pkg/ringbuffer"
-	"github.com/google/uuid"
 )
 
 type ProxyServer struct {
@@ -31,27 +26,24 @@ type ProxyServer struct {
 	insecureUpstream bool
 	upstreamProxyMu  sync.RWMutex
 	upstreamProxy    *url.URL
-	loopWarnOnce     sync.Once
+}
+
+func NewProxyServer(addr string, cm *certs.CertificateManager, rb *ringbuffer.RingBuffer) *ProxyServer {
+	p := &ProxyServer{
+		addr:        addr,
+		certManager: cm,
+		ringBuffer:  rb,
+		mockEngine:  mock.NewEngine(),
+	}
+	p.transport = &http.Transport{Proxy: p.resolveForRequest}
+	p.httpServer = &http.Server{Addr: addr, Handler: http.HandlerFunc(p.ServeHTTP)}
+	return p
 }
 
 func (p *ProxyServer) resolveForRequest(r *http.Request) (*url.URL, error) {
 	p.upstreamProxyMu.RLock()
 	defer p.upstreamProxyMu.RUnlock()
 	return p.upstreamProxy, nil
-}
-
-func (p *ProxyServer) dialTunnel(scheme, targetAddr string) (net.Conn, error) {
-	p.upstreamProxyMu.RLock()
-	proxy := p.upstreamProxy
-	p.upstreamProxyMu.RUnlock()
-	return DialTunnel(proxy, targetAddr)
-}
-
-func NewProxyServer(addr string, cm *certs.CertificateManager, rb *ringbuffer.RingBuffer) *ProxyServer {
-	p := &ProxyServer{addr: addr, certManager: cm, ringBuffer: rb, mockEngine: mock.NewEngine()}
-	p.transport = &http.Transport{Proxy: p.resolveForRequest}
-	p.httpServer = &http.Server{Addr: addr, Handler: http.HandlerFunc(p.ServeHTTP)}
-	return p
 }
 
 func (p *ProxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -65,16 +57,32 @@ func (p *ProxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (p *ProxyServer) handleConnect(w http.ResponseWriter, r *http.Request) {
 	hijacker, ok := w.(http.Hijacker)
 	if !ok {
-		http.Error(w, "Hijack failed", 500)
+		http.Error(w, "Hijacking not supported", http.StatusInternalServerError)
 		return
 	}
-	conn, _, _ := hijacker.Hijack()
-	conn.Write([]byte("HTTP/1.1 200 OK\r\n\r\n"))
+	conn, _, err := hijacker.Hijack()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusServiceUnavailable)
+		return
+	}
+	conn.Write([]byte("HTTP/1.1 200 Connection Established\r\n\r\n"))
 	go p.bumpTLSConnection(conn, r.Host)
 }
 
 func (p *ProxyServer) handleHTTP(w http.ResponseWriter, r *http.Request) {
-	// Implementation omitted for brevity, logic remains as per original file
+	resp, err := p.transport.RoundTrip(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+	for k, vv := range resp.Header {
+		for _, v := range vv {
+			w.Header().Add(k, v)
+		}
+	}
+	w.WriteHeader(resp.StatusCode)
+	io.Copy(w, resp.Body)
 }
 
 func (p *ProxyServer) bumpTLSConnection(c net.Conn, host string) { defer c.Close() }

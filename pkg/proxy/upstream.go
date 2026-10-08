@@ -5,15 +5,12 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
-	"log"
 	"net"
 	"net/http"
 	"net/url"
-	"os"
 	"sync"
 	"time"
 
-	"golang.org/x/net/http/httpproxy"
 	"golang.org/x/net/proxy"
 )
 
