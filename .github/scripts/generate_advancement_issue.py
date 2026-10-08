@@ -155,14 +155,23 @@ def get_repository_intel(workspace: Path) -> dict:
     except Exception as e:
         print(f"[WARN] Failed to fetch PRs via gh CLI: {e}")
 
-    # 3. Local codebase manifest
+    # 3. Local codebase manifest (Go files)
     try:
-        for p in workspace.rglob("*.go"):
-            if ".git" not in p.parts:
-                rel = str(p.relative_to(workspace)).replace("\\", "/")
-                intel["code_files"].add(rel)
+        cmd = ["git", "ls-files", "*.go"]
+        res = subprocess.run(cmd, cwd=workspace, capture_output=True, text=True, check=True)
+        for line in res.stdout.splitlines():
+            if line.strip():
+                intel["code_files"].add(line.strip().replace("\\", "/"))
     except Exception:
-        pass
+        try:
+            for root, dirs, files in os.walk(workspace):
+                dirs[:] = [d for d in dirs if d not in (".git", "vendor", "node_modules")]
+                for f in files:
+                    if f.endswith(".go"):
+                        rel = os.path.relpath(os.path.join(root, f), workspace).replace("\\", "/")
+                        intel["code_files"].add(rel)
+        except Exception:
+            pass
 
     return intel
 
