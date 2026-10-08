@@ -2,7 +2,6 @@ package proxy
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"crypto/tls"
 	"io"
@@ -19,8 +18,6 @@ import (
 	"github.com/Aditya-9-6/DevProxy/pkg/ringbuffer"
 	"golang.org/x/net/proxy"
 )
-
-var bufferPool = sync.Pool{New: func() interface{} { return new(bytes.Buffer) }}
 
 type ProxyServer struct {
 	addr             string
@@ -73,7 +70,7 @@ func (p *ProxyServer) resolveForRequest(req *http.Request) (*url.URL, error) {
 	return http.ProxyFromEnvironment(req)
 }
 
-func (p *ProxyServer) dialTunnel(network, addr string) (net.Conn, error) {
+func (p *ProxyServer) dialTunnel(ctx context.Context, network, addr string) (net.Conn, error) {
 	p.mu.RLock()
 	up := p.upstreamProxy
 	p.mu.RUnlock()
@@ -84,7 +81,7 @@ func (p *ProxyServer) dialTunnel(network, addr string) (net.Conn, error) {
 		}
 		return dialer.Dial(network, addr)
 	}
-	return net.DialTimeout(network, addr, 10*time.Second)
+	return (&net.Dialer{Timeout: 10 * time.Second}).DialContext(ctx, network, addr)
 }
 
 func (p *ProxyServer) SetInsecureUpstreamTLS(insecure bool) {
@@ -129,7 +126,7 @@ func (p *ProxyServer) bumpTLSConnection(clientConn net.Conn, targetHostPort stri
 		return
 	}
 	defer tlsClientConn.Close()
-	rawConn, _ := p.dialTunnel("tcp", targetHostPort)
+	rawConn, _ := p.dialTunnel(context.Background(), "tcp", targetHostPort)
 	upstreamConn := tls.Client(rawConn, &tls.Config{ServerName: host, InsecureSkipVerify: p.insecureUpstream})
 	defer upstreamConn.Close()
 	clientReader, upstreamReader := bufio.NewReader(tlsClientConn), bufio.NewReader(upstreamConn)
@@ -169,9 +166,6 @@ func (p *ProxyServer) handleHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	w.WriteHeader(resp.StatusCode)
-	buf := bufferPool.Get().(*bytes.Buffer)
-	buf.Reset()
-	defer bufferPool.Put(buf)
 	io.Copy(w, resp.Body)
 }
 
@@ -179,7 +173,7 @@ func (p *ProxyServer) handleWebSocketUpgrade(w http.ResponseWriter, r *http.Requ
 	hijacker, _ := w.(http.Hijacker)
 	clientConn, _, _ := hijacker.Hijack()
 	defer clientConn.Close()
-	upstreamConn, _ := p.dialTunnel("tcp", r.Host)
+	upstreamConn, _ := p.dialTunnel(r.Context(), "tcp", r.Host)
 	defer upstreamConn.Close()
 	r.Write(upstreamConn)
 	var wg sync.WaitGroup
