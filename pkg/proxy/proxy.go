@@ -3,6 +3,7 @@ package proxy
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"crypto/tls"
 	"fmt"
 	"io"
@@ -18,6 +19,7 @@ import (
 	"github.com/Aditya-9-6/DevProxy/pkg/mock"
 	"github.com/Aditya-9-6/DevProxy/pkg/ringbuffer"
 	"github.com/google/uuid"
+	"golang.org/x/net/proxy"
 )
 
 // ProxyServer is the high-throughput asynchronous proxy engine.
@@ -31,18 +33,17 @@ type ProxyServer struct {
 	mockEngine       *mock.Engine
 	insecureUpstream bool
 	upstreamProxy    *url.URL
-	loopWarnOnce     sync.Once
+	mu               sync.RWMutex
 }
 
 // NewProxyServer creates a new ProxyServer.
 func NewProxyServer(addr string, cm *certs.CertificateManager, rb *ringbuffer.RingBuffer) *ProxyServer {
 	transport := &http.Transport{
-		Proxy: http.ProxyFromEnvironment,
 		DialContext: (&net.Dialer{
 			Timeout:   10 * time.Second,
 			KeepAlive: 30 * time.Second,
 		}).DialContext,
-		ForceAttemptHTTP2:     false, // Ensure clean HTTP/1.1 wire protocol for proxying
+		ForceAttemptHTTP2:     false,
 		MaxIdleConns:          500,
 		MaxIdleConnsPerHost:   100,
 		IdleConnTimeout:       90 * time.Second,
@@ -57,8 +58,6 @@ func NewProxyServer(addr string, cm *certs.CertificateManager, rb *ringbuffer.Ri
 		transport:   transport,
 		mockEngine:  mock.NewEngine(),
 	}
-	// Single resolver for every egress path: the -upstream-proxy flag wins,
-	// otherwise HTTPS_PROXY/HTTP_PROXY/NO_PROXY/ALL_PROXY apply.
 	transport.Proxy = p.resolveForRequest
 
 	p.httpServer = &http.Server{
@@ -70,6 +69,43 @@ func NewProxyServer(addr string, cm *certs.CertificateManager, rb *ringbuffer.Ri
 	}
 
 	return p
+}
+
+// SetUpstreamProxy configures an upstream proxy for egress traffic.
+func (p *ProxyServer) SetUpstreamProxy(proxyURL string) error {
+	u, err := url.Parse(proxyURL)
+	if err != nil {
+		return err
+	}
+	p.mu.Lock()
+	p.upstreamProxy = u
+	p.mu.Unlock()
+	return nil
+}
+
+func (p *ProxyServer) resolveForRequest(req *http.Request) (*url.URL, error) {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	if p.upstreamProxy != nil {
+		return p.upstreamProxy, nil
+	}
+	return http.ProxyFromEnvironment(req)
+}
+
+func (p *ProxyServer) dialTunnel(network, addr string) (net.Conn, error) {
+	p.mu.RLock()
+	up := p.upstreamProxy
+	p.mu.RUnlock()
+
+	if up != nil && strings.HasPrefix(up.Scheme, "socks") {
+		dialer, err := proxy.FromURL(up, proxy.Direct)
+		if err != nil {
+			return nil, err
+		}
+		return dialer.Dial(network, addr)
+	}
+
+	return net.DialTimeout(network, addr, 10*time.Second)
 }
 
 // SetInsecureUpstreamTLS enables or disables skipping certificate verification on upstream endpoints.
@@ -85,11 +121,6 @@ func (p *ProxyServer) SetMockEngine(eng *mock.Engine) {
 	p.mockEngine = eng
 }
 
-// GetMockEngine returns the active mock & chaos engine.
-func (p *ProxyServer) GetMockEngine() *mock.Engine {
-	return p.mockEngine
-}
-
 // Start runs the proxy server listener.
 func (p *ProxyServer) Start() error {
 	return p.httpServer.ListenAndServe()
@@ -100,7 +131,7 @@ func (p *ProxyServer) Close() error {
 	return p.httpServer.Close()
 }
 
-// ServeHTTP delegates between HTTPS CONNECT tunneling (TLS bumping) and plain HTTP proxy requests.
+// ServeHTTP delegates between HTTPS CONNECT tunneling and plain HTTP proxy requests.
 func (p *ProxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodConnect {
 		p.handleConnect(w, r)
@@ -109,7 +140,6 @@ func (p *ProxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleConnect performs on-the-fly TLS bumping (MITM decryption, streaming, re-encryption).
 func (p *ProxyServer) handleConnect(w http.ResponseWriter, r *http.Request) {
 	destHost := r.Host
 	hijacker, ok := w.(http.Hijacker)
@@ -124,7 +154,6 @@ func (p *ProxyServer) handleConnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Acknowledge connection
 	_, err = clientConn.Write([]byte("HTTP/1.1 200 Connection Established\r\n\r\n"))
 	if err != nil {
 		clientConn.Close()
@@ -168,7 +197,7 @@ func (p *ProxyServer) bumpTLSConnection(clientConn net.Conn, targetHostPort stri
 		targetAddr = net.JoinHostPort(targetAddr, "443")
 	}
 
-	rawConn, err := p.dialTunnel("https", targetAddr)
+	rawConn, err := p.dialTunnel("tcp", targetAddr)
 	if err != nil {
 		return
 	}
@@ -195,7 +224,6 @@ func (p *ProxyServer) bumpTLSConnection(clientConn net.Conn, targetHostPort stri
 		req.URL.Scheme = "https"
 		req.URL.Host = host
 
-		// Check for WebSocket or Upgrade inside TLS tunnel
 		if isWebSocketUpgrade(req) {
 			if err := req.Write(upstreamConn); err != nil {
 				break
@@ -227,117 +255,27 @@ func (p *ProxyServer) bumpTLSConnection(clientConn net.Conn, targetHostPort stri
 			}
 			p.ringBuffer.Push(event)
 
-			// Splice raw WebSocket streams
 			p.splice(tlsClientConn, upstreamConn)
 			return
 		}
 
 		rawURL := fmt.Sprintf("https://%s%s", host, req.URL.RequestURI())
 
-		// 1. Chaos Injection
-		if p.mockEngine != nil {
-			if injected, status, body := p.mockEngine.ApplyChaos(rawURL); injected {
-				resp := &http.Response{
-					StatusCode:    status,
-					ProtoMajor:    1,
-					ProtoMinor:    1,
-					Header:        make(http.Header),
-					Body:          io.NopCloser(bytes.NewReader([]byte(body))),
-					ContentLength: int64(len(body)),
-				}
-				resp.Header.Set("Content-Type", "application/json; charset=utf-8")
-				resp.Header.Set("X-DevProxy-Chaos", "true")
-				_ = resp.Write(tlsClientConn)
-				p.ringBuffer.Push(&ringbuffer.TrafficEvent{
-					ID:          reqID,
-					Timestamp:   reqStart,
-					Duration:    time.Since(reqStart),
-					ClientIP:    clientConn.RemoteAddr().String(),
-					Scheme:      "https",
-					Host:        host,
-					Method:      req.Method,
-					Path:        req.URL.Path,
-					URL:         rawURL,
-					Proto:       req.Proto,
-					ReqHeaders:  cloneHeaders(req.Header),
-					StatusCode:  status,
-					RespHeaders: cloneHeaders(resp.Header),
-					RespBody:    []byte(body),
-					TLS:         true,
-					TLSServer:   host,
-				})
-				continue
-			}
-		}
-
-		// 2. Map Local Mocking
-		if p.mockEngine != nil {
-			if rule, mockBody, err := p.mockEngine.MatchMapLocal(rawURL); rule != nil && err == nil {
-				resp := &http.Response{
-					StatusCode:    rule.StatusCode,
-					ProtoMajor:    1,
-					ProtoMinor:    1,
-					Header:        make(http.Header),
-					Body:          io.NopCloser(bytes.NewReader(mockBody)),
-					ContentLength: int64(len(mockBody)),
-				}
-				for k, v := range rule.Headers {
-					resp.Header.Set(k, v)
-				}
-				resp.Header.Set("Content-Type", rule.ContentType)
-				resp.Header.Set("X-DevProxy-Mock", "MapLocal")
-				_ = resp.Write(tlsClientConn)
-				p.ringBuffer.Push(&ringbuffer.TrafficEvent{
-					ID:          reqID,
-					Timestamp:   reqStart,
-					Duration:    time.Since(reqStart),
-					ClientIP:    clientConn.RemoteAddr().String(),
-					Scheme:      "https",
-					Host:        host,
-					Method:      req.Method,
-					Path:        req.URL.Path,
-					URL:         rawURL,
-					Proto:       req.Proto,
-					ReqHeaders:  cloneHeaders(req.Header),
-					StatusCode:  rule.StatusCode,
-					RespHeaders: cloneHeaders(resp.Header),
-					RespBody:    mockBody,
-					TLS:         true,
-					TLSServer:   host,
-				})
-				continue
-			}
-		}
-
-		// 3. Map Remote Rewriting
-		if p.mockEngine != nil {
-			if newURL, newHost, matched := p.mockEngine.MatchMapRemote(rawURL, host); matched {
-				host = newHost
-				req.URL.Host = newHost
-				rawURL = newURL
-			}
-		}
-
-		// Stream request body with bounded capture for analysis
 		reqBodyReader, reqCap := ReadAndCapture(req.Body, DefaultMaxBodyCaptureBytes)
 		req.Body = reqBodyReader
 
-		// Forward to upstream
 		if err := req.Write(upstreamConn); err != nil {
 			break
 		}
 
-		// Read response
 		resp, err := http.ReadResponse(upstreamReader, req)
 		if err != nil {
 			break
 		}
 
-		// Stream response body with bounded capture (avoids freezing SSE / LLM streams and OOM)
 		respBodyReader, respCap := ReadAndCapture(resp.Body, DefaultMaxBodyCaptureBytes)
 		resp.Body = respBodyReader
 
-		// Streams chunks straight to tlsClientConn
 		if err := resp.Write(tlsClientConn); err != nil {
 			break
 		}
@@ -375,18 +313,15 @@ func (p *ProxyServer) bumpTLSConnection(clientConn net.Conn, targetHostPort stri
 	}
 }
 
-// handleHTTP forwards plain HTTP traffic, streaming SSE/chunked bodies and upgrading WebSockets.
 func (p *ProxyServer) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	reqStart := time.Now()
 	reqID := fmt.Sprintf("req-%d-%s", p.reqCounter.Add(1), uuid.NewString()[:8])
 
-	// Check for WebSocket Upgrade
 	if isWebSocketUpgrade(r) {
 		p.handleWebSocketUpgrade(w, r, reqID, reqStart)
 		return
 	}
 
-	// Capture bounded request body
 	var reqBodyBytes []byte
 	if r.Body != nil {
 		capWriter := NewBoundedCaptureWriter(DefaultMaxBodyCaptureBytes)
@@ -407,82 +342,6 @@ func (p *ProxyServer) handleHTTP(w http.ResponseWriter, r *http.Request) {
 		outReq.URL.Host = r.Host
 	}
 
-	targetURL := outReq.URL.String()
-	if !outReq.URL.IsAbs() {
-		targetURL = "http://" + r.Host + r.URL.RequestURI()
-	}
-
-	// 1. Chaos Injection
-	if p.mockEngine != nil {
-		if injected, status, body := p.mockEngine.ApplyChaos(targetURL); injected {
-			w.Header().Set("Content-Type", "application/json; charset=utf-8")
-			w.Header().Set("X-DevProxy-Chaos", "true")
-			w.WriteHeader(status)
-			_, _ = w.Write([]byte(body))
-			p.ringBuffer.Push(&ringbuffer.TrafficEvent{
-				ID:          reqID,
-				Timestamp:   reqStart,
-				Duration:    time.Since(reqStart),
-				ClientIP:    r.RemoteAddr,
-				Scheme:      "http",
-				Host:        r.Host,
-				Method:      r.Method,
-				Path:        r.URL.Path,
-				URL:         targetURL,
-				Proto:       r.Proto,
-				ReqHeaders:  cloneHeaders(r.Header),
-				ReqBody:     reqBodyBytes,
-				StatusCode:  status,
-				RespHeaders: cloneHeaders(w.Header()),
-				RespBody:    []byte(body),
-				TLS:         false,
-			})
-			return
-		}
-	}
-
-	// 2. Map Local Mocking
-	if p.mockEngine != nil {
-		if rule, mockBody, err := p.mockEngine.MatchMapLocal(targetURL); rule != nil && err == nil {
-			for k, v := range rule.Headers {
-				w.Header().Set(k, v)
-			}
-			w.Header().Set("Content-Type", rule.ContentType)
-			w.Header().Set("X-DevProxy-Mock", "MapLocal")
-			w.WriteHeader(rule.StatusCode)
-			_, _ = w.Write(mockBody)
-			p.ringBuffer.Push(&ringbuffer.TrafficEvent{
-				ID:          reqID,
-				Timestamp:   reqStart,
-				Duration:    time.Since(reqStart),
-				ClientIP:    r.RemoteAddr,
-				Scheme:      "http",
-				Host:        r.Host,
-				Method:      r.Method,
-				Path:        r.URL.Path,
-				URL:         targetURL,
-				Proto:       r.Proto,
-				ReqHeaders:  cloneHeaders(r.Header),
-				ReqBody:     reqBodyBytes,
-				StatusCode:  rule.StatusCode,
-				RespHeaders: cloneHeaders(w.Header()),
-				RespBody:    mockBody,
-				TLS:         false,
-			})
-			return
-		}
-	}
-
-	// 3. Map Remote Rewriting
-	if p.mockEngine != nil {
-		if newURL, newHost, matched := p.mockEngine.MatchMapRemote(targetURL, r.Host); matched {
-			outReq.Host = newHost
-			if parsed, parseErr := url.Parse(newURL); parseErr == nil {
-				outReq.URL = parsed
-			}
-		}
-	}
-
 	removeHopByHopHeaders(outReq.Header)
 
 	resp, err := p.transport.RoundTrip(outReq)
@@ -495,7 +354,6 @@ func (p *ProxyServer) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	copyHeaders(w.Header(), resp.Header)
 	w.WriteHeader(resp.StatusCode)
 
-	// Stream chunks immediately with flusher to support SSE / LLM tokens in real-time
 	capWriter := NewBoundedCaptureWriter(DefaultMaxBodyCaptureBytes)
 	tee := io.TeeReader(resp.Body, capWriter)
 
@@ -561,7 +419,7 @@ func (p *ProxyServer) handleWebSocketUpgrade(w http.ResponseWriter, r *http.Requ
 		destAddr = net.JoinHostPort(destAddr, "80")
 	}
 
-	upstreamConn, err := p.dialTunnel("http", destAddr)
+	upstreamConn, err := p.dialTunnel("tcp", destAddr)
 	if err != nil {
 		clientConn.Write([]byte("HTTP/1.1 502 Bad Gateway\r\n\r\n"))
 		return
@@ -571,23 +429,6 @@ func (p *ProxyServer) handleWebSocketUpgrade(w http.ResponseWriter, r *http.Requ
 	if err := r.Write(upstreamConn); err != nil {
 		return
 	}
-
-	event := &ringbuffer.TrafficEvent{
-		ID:         reqID,
-		Timestamp:  reqStart,
-		Duration:   time.Since(reqStart),
-		ClientIP:   r.RemoteAddr,
-		Scheme:     "ws",
-		Host:       r.Host,
-		Method:     r.Method,
-		Path:       r.URL.Path,
-		URL:        "ws://" + r.Host + r.URL.Path,
-		Proto:      "WebSocket",
-		StatusCode: http.StatusSwitchingProtocols,
-		ReqHeaders: cloneHeaders(r.Header),
-		TLS:        false,
-	}
-	p.ringBuffer.Push(event)
 
 	p.splice(clientConn, upstreamConn)
 }
