@@ -15,7 +15,6 @@ var (
 )
 
 // WSDefragmenter reassembles fragmented WebSocket frames into complete messages.
-// It uses a sync.Pool for byte buffers to minimize heap allocations on hot paths.
 type WSDefragmenter struct {
 	maxSize       int
 	currentOpcode int

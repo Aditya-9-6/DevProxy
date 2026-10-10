@@ -1,18 +1,14 @@
 package proxy
 
 import (
-	"bytes"
 	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
-<<<<<<< HEAD
+	"math"
 	"net/http"
 	"strings"
-=======
-	"math"
->>>>>>> origin/main
 	"sync"
 
 	"github.com/Aditya-9-6/DevProxy/pkg/mock"
@@ -54,11 +50,6 @@ func HandleGRPCInterception(w http.ResponseWriter, r *http.Request, mockEngine *
 		return false
 	}
 	serviceName, methodName := parts[0], parts[1]
-
-	// Read request body using zero-allocation buffer from pool
-	buf := mock.GRPCPayloadPool.Get().(*bytes.Buffer)
-	defer mock.GRPCPayloadPool.Put(buf)
-	buf.Reset()
 
 	// We need to read the framed message to get the actual payload for the mock engine
 	msg, err := ReadGRPCMessage(r.Body)
@@ -121,10 +112,6 @@ func GRPCStreamInterceptor(ctx context.Context, serviceName, methodName string) 
 }
 
 // WriteGRPCMessage writes a framed gRPC message to w.
-// Framing specification:
-// - 1 byte compression flag (0 = uncompressed, 1 = compressed)
-// - 4 bytes big-endian unsigned integer indicating payload length
-// - N bytes payload data
 func WriteGRPCMessage(w io.Writer, msg *GRPCMessage) error {
 	if msg == nil {
 		return errors.New("grpc: nil message")
