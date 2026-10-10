@@ -1,12 +1,16 @@
 package proxy
 
 import (
+<<<<<<< HEAD
 	"bytes"
 	"context"
+=======
+>>>>>>> origin/main
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
+<<<<<<< HEAD
 	"net/http"
 	"strings"
 	"sync"
@@ -14,6 +18,9 @@ import (
 	"github.com/Aditya-9-6/DevProxy/pkg/mock"
 	"github.com/Aditya-9-6/DevProxy/pkg/ringbuffer"
 	"github.com/google/uuid"
+=======
+	"sync"
+>>>>>>> origin/main
 )
 
 // ErrGRPCMessageTooLarge indicates that a message frame exceeds maximum size.
@@ -35,22 +42,58 @@ var grpcHeaderPool = sync.Pool{
 	},
 }
 
+<<<<<<< HEAD
 // HandleGRPCInterception intercepts HTTP/2 gRPC requests (Content-Type: application/grpc),
 // checks for local mock definitions, and streams or records traffic events.
 func HandleGRPCInterception(w http.ResponseWriter, r *http.Request, mockEngine *mock.GRPCDescriptorEngine, ringBuf *ringbuffer.RingBuffer) bool {
 	ct := r.Header.Get("Content-Type")
 	if !strings.HasPrefix(ct, "application/grpc") {
 		return false
+=======
+// WriteGRPCMessage writes a framed gRPC message to w.
+// Framing specification:
+// - 1 byte compression flag (0 = uncompressed, 1 = compressed)
+// - 4 bytes big-endian unsigned integer indicating payload length
+// - N bytes payload data
+func WriteGRPCMessage(w io.Writer, msg *GRPCMessage) error {
+	if msg == nil {
+		return errors.New("grpc: nil message")
+>>>>>>> origin/main
 	}
 
-	path := r.URL.Path
-	parts := strings.Split(strings.TrimPrefix(path, "/"), "/")
-	var serviceName, methodName string
-	if len(parts) >= 2 {
-		serviceName = parts[0]
-		methodName = parts[1]
+	hPtr := grpcHeaderPool.Get().(*[]byte)
+	header := *hPtr
+	defer grpcHeaderPool.Put(hPtr)
+
+	if msg.Compressed {
+		header[0] = 1
+	} else {
+		header[0] = 0
+	}
+	binary.BigEndian.PutUint32(header[1:5], uint32(len(msg.Data)))
+
+	if _, err := w.Write(header); err != nil {
+		return fmt.Errorf("failed to write grpc header: %w", err)
+	}
+	if len(msg.Data) > 0 {
+		if _, err := w.Write(msg.Data); err != nil {
+			return fmt.Errorf("failed to write grpc payload: %w", err)
+		}
+	}
+	return nil
+}
+
+// ReadGRPCMessage parses and decodes a single framed gRPC message from r.
+func ReadGRPCMessage(r io.Reader) (*GRPCMessage, error) {
+	hPtr := grpcHeaderPool.Get().(*[]byte)
+	header := *hPtr
+	defer grpcHeaderPool.Put(hPtr)
+
+	if _, err := io.ReadFull(r, header); err != nil {
+		return nil, err
 	}
 
+<<<<<<< HEAD
 	// Read request body using zero-allocation buffer from pool
 	buf := mock.GRPCPayloadPool.Get().(*bytes.Buffer)
 	defer mock.GRPCPayloadPool.Put(buf)
@@ -109,6 +152,26 @@ func GRPCStreamInterceptor(ctx context.Context, serviceName, methodName string) 
 	default:
 		return nil
 	}
+=======
+	compressed := header[0] == 1
+	length := binary.BigEndian.Uint32(header[1:5])
+
+	if length > MaxGRPCMessageSize {
+		return nil, ErrGRPCMessageTooLarge
+	}
+
+	data := make([]byte, length)
+	if length > 0 {
+		if _, err := io.ReadFull(r, data); err != nil {
+			return nil, fmt.Errorf("failed to read grpc payload: %w", err)
+		}
+	}
+
+	return &GRPCMessage{
+		Compressed: compressed,
+		Data:       data,
+	}, nil
+>>>>>>> origin/main
 }
 
 // WriteGRPCMessage writes a framed gRPC message to w.

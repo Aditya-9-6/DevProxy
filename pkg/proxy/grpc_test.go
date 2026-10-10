@@ -2,40 +2,35 @@ package proxy
 
 import (
 	"bytes"
-	"net/http"
-	"net/http/httptest"
 	"testing"
-
-	"github.com/Aditya-9-6/DevProxy/pkg/mock"
-	"github.com/Aditya-9-6/DevProxy/pkg/ringbuffer"
 )
 
-func TestHandleGRPCInterceptionMock(t *testing.T) {
-	engine := mock.NewGRPCDescriptorEngine()
-	fullMethod := "/my.service.Greeter/SayHello"
-	engine.RegisterMock(fullMethod, []byte("Hello gRPC mock"))
-
-	ringBuf := ringbuffer.NewRingBuffer(100)
-
-	req := httptest.NewRequest("POST", "/my.service.Greeter/SayHello", bytes.NewBuffer([]byte("req-payload")))
-	req.Header.Set("Content-Type", "application/grpc")
-	rec := httptest.NewRecorder()
-
-	handled := HandleGRPCInterception(rec, req, engine, ringBuf)
-	if !handled {
-		t.Errorf("Expected gRPC request to be handled")
+func TestGRPCFramingRoundTrip(t *testing.T) {
+	originalMsg := &GRPCMessage{
+		Compressed: false,
+		Data:       []byte("hello grpc stream"),
 	}
 
-	if rec.Code != http.StatusOK {
-		t.Errorf("Expected status 200, got %d", rec.Code)
+	var buf bytes.Buffer
+	if err := WriteGRPCMessage(&buf, originalMsg); err != nil {
+		t.Fatalf("Failed to write gRPC message: %v", err)
 	}
 
-	ct := rec.Header().Get("Content-Type")
-	if ct != "application/grpc" {
-		t.Errorf("Expected Content-Type application/grpc, got %s", ct)
+	readMsg, err := ReadGRPCMessage(&buf)
+	if err != nil {
+		t.Fatalf("Failed to read gRPC message: %v", err)
+	}
+
+	if readMsg.Compressed != originalMsg.Compressed {
+		t.Errorf("Compressed flag mismatch: expected %v, got %v", originalMsg.Compressed, readMsg.Compressed)
+	}
+
+	if string(readMsg.Data) != string(originalMsg.Data) {
+		t.Errorf("Payload mismatch: expected %s, got %s", string(originalMsg.Data), string(readMsg.Data))
 	}
 }
 
+<<<<<<< HEAD
 func TestGRPCFramingRoundTrip(t *testing.T) {
 	originalMsg := &GRPCMessage{
 		Compressed: false,
@@ -68,6 +63,15 @@ func TestGRPCFramingCompressedAndEmpty(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
+=======
+func TestGRPCFramingCompressedAndEmpty(t *testing.T) {
+	msg := &GRPCMessage{
+		Compressed: true,
+		Data:       []byte{},
+	}
+
+	var buf bytes.Buffer
+>>>>>>> origin/main
 	if err := WriteGRPCMessage(&buf, msg); err != nil {
 		t.Fatalf("Failed to write compressed empty message: %v", err)
 	}
