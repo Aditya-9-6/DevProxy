@@ -2,46 +2,72 @@ package proxy
 
 import (
 	"bytes"
-	"net/http"
-	"net/http/httptest"
 	"testing"
-
-	"github.com/Aditya-9-6/DevProxy/pkg/mock"
-	"github.com/Aditya-9-6/DevProxy/pkg/ringbuffer"
 )
 
-func TestHandleGRPCInterceptionMock(t *testing.T) {
-	engine := mock.NewGRPCDescriptorEngine()
-	fullMethod := "/my.service.Greeter/SayHello"
-	engine.RegisterMock(fullMethod, []byte("Hello gRPC mock"))
-
-	ringBuf := ringbuffer.NewRingBuffer(100)
-
-	req := httptest.NewRequest("POST", "/my.service.Greeter/SayHello", bytes.NewBuffer([]byte("req-payload")))
-	req.Header.Set("Content-Type", "application/grpc")
-	rec := httptest.NewRecorder()
-
-	handled := HandleGRPCInterception(rec, req, engine, ringBuf)
-	if !handled {
-		t.Errorf("Expected gRPC request to be handled")
+func TestGRPCFramingRoundTrip(t *testing.T) {
+	originalMsg := &GRPCMessage{
+		Compressed: false,
+		Data:       []byte("hello grpc stream"),
 	}
 
-	if rec.Code != http.StatusOK {
-		t.Errorf("Expected status 200, got %d", rec.Code)
+	var buf bytes.Buffer
+	if err := WriteGRPCMessage(&buf, originalMsg); err != nil {
+		t.Fatalf("Failed to write gRPC message: %v", err)
 	}
 
-	ct := rec.Header().Get("Content-Type")
-	if ct != "application/grpc" {
-		t.Errorf("Expected Content-Type application/grpc, got %s", ct)
+	readMsg, err := ReadGRPCMessage(&buf)
+	if err != nil {
+		t.Fatalf("Failed to read gRPC message: %v", err)
+	}
+
+	if readMsg.Compressed != originalMsg.Compressed {
+		t.Errorf("Compressed flag mismatch: expected %v, got %v", originalMsg.Compressed, readMsg.Compressed)
+	}
+
+	if string(readMsg.Data) != string(originalMsg.Data) {
+		t.Errorf("Payload mismatch: expected %s, got %s", string(originalMsg.Data), string(readMsg.Data))
 	}
 }
 
-func TestHandleGRPCInterceptionNonGRPC(t *testing.T) {
-	req := httptest.NewRequest("GET", "/api/v1/health", nil)
-	rec := httptest.NewRecorder()
+func TestGRPCFramingCompressedAndEmpty(t *testing.T) {
+	msg := &GRPCMessage{
+		Compressed: true,
+		Data:       []byte{},
+	}
 
-	handled := HandleGRPCInterception(rec, req, nil, nil)
-	if handled {
-		t.Errorf("Expected non-gRPC request not to be handled")
+	var buf bytes.Buffer
+	if err := WriteGRPCMessage(&buf, msg); err != nil {
+		t.Fatalf("Failed to write compressed empty message: %v", err)
+	}
+
+	readMsg, err := ReadGRPCMessage(&buf)
+	if err != nil {
+		t.Fatalf("Failed to read message: %v", err)
+	}
+
+	if !readMsg.Compressed {
+		t.Errorf("Expected compressed=true, got %v", readMsg.Compressed)
+	}
+	if len(readMsg.Data) != 0 {
+		t.Errorf("Expected empty data, got %v", readMsg.Data)
+	}
+}
+
+func TestGRPCFramingErrors(t *testing.T) {
+	if err := WriteGRPCMessage(&bytes.Buffer{}, nil); err == nil {
+		t.Error("Expected error writing nil message, got nil")
+	}
+
+	// Truncated header
+	shortBuf := bytes.NewReader([]byte{0, 0, 0})
+	if _, err := ReadGRPCMessage(shortBuf); err == nil {
+		t.Errorf("Expected error reading truncated header, got nil")
+	}
+
+	// Truncated payload: claims length 10, but only 2 bytes present
+	corruptBuf := bytes.NewReader([]byte{0, 0, 0, 0, 10, 1, 2})
+	if _, err := ReadGRPCMessage(corruptBuf); err == nil {
+		t.Error("Expected error reading truncated payload, got nil")
 	}
 }
