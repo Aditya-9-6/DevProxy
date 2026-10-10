@@ -372,7 +372,7 @@ Respond ONLY with JSON matching this schema:
                     "generationConfig": {"temperature": 0.1, "responseMimeType": "application/json"}
                 }).encode("utf-8")
                 req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
-                with urllib.request.urlopen(req, timeout=15) as resp:
+                with urllib.request.urlopen(req, timeout=30) as resp:
                     res_data = json.loads(resp.read().decode("utf-8"))
                     res_text = res_data["candidates"][0]["content"]["parts"][0]["text"]
                     dedup_res = json.loads(res_text)
@@ -522,7 +522,7 @@ Output ONLY valid JSON matching this schema:
                     headers={"Content-Type": "application/json"},
                     method="POST"
                 )
-                with urllib.request.urlopen(req, timeout=25) as resp:
+                with urllib.request.urlopen(req, timeout=45) as resp:
                     data = json.loads(resp.read().decode("utf-8"))
                     text = data["candidates"][0]["content"]["parts"][0]["text"]
                     candidate = json.loads(text)
