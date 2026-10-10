@@ -29,3 +29,6 @@ ci_fix_*.json
 .github/advancement_backlog.json
 .gemini_keys
 *.bat
+
+vscode-extension/node_modules/
+vscode-extension/out/

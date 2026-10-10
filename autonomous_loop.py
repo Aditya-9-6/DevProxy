@@ -221,8 +221,6 @@ def heal_and_merge_open_prs(workspace: Path) -> bool:
         return (
             ref.startswith("ai/")
             or "feat(ai)" in title
-            or ref.startswith("dependabot/")
-            or "deps" in title.lower()
             or has_fix
         )
 

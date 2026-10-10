@@ -22,11 +22,11 @@ try:
 except ImportError:
     GOSSIP_AVAILABLE = False
 
-DEFAULT_MODEL = "gemini-flash-lite-latest"
+DEFAULT_MODEL = "gemini-3-flash-preview"
 FALLBACK_MODELS = [
-    "gemini-flash-lite-latest",
+    "gemini-3-flash-preview",
+    "gemma-4-26b-a4b-it",
     "gemini-flash-latest",
-    "gemini-pro-latest",
 ]
 
 SYSTEM_PROMPT = """You are an expert autonomous systems software engineer specializing in Go, high-throughput network proxies, HTTP/HTTPS MITM interception, WebSocket streaming, and developer debugging tools.
@@ -147,7 +147,7 @@ def call_gemini(api_key: str, prompt: str, model: str = DEFAULT_MODEL, system_pr
         }
         
         print(f"[*] Attempting generation with model: {current_model}...", flush=True)
-        max_attempts = 3
+        max_attempts = 5
         for attempt in range(1, max_attempts + 1):
             req = urllib.request.Request(
                 url,
@@ -156,7 +156,7 @@ def call_gemini(api_key: str, prompt: str, model: str = DEFAULT_MODEL, system_pr
                 method="POST"
             )
             try:
-                with urllib.request.urlopen(req, timeout=90) as resp:
+                with urllib.request.urlopen(req, timeout=180) as resp:
                     data = json.loads(resp.read().decode("utf-8"))
                     text_response = data["candidates"][0]["content"]["parts"][0]["text"].strip()
                     
