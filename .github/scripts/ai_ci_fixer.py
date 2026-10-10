@@ -17,11 +17,11 @@ import subprocess
 import time
 from pathlib import Path
 
-DEFAULT_MODEL = "gemini-flash-lite-latest"
+DEFAULT_MODEL = "gemini-3-flash-preview"
 FALLBACK_MODELS = [
-    "gemini-flash-lite-latest",
+    "gemini-3-flash-preview",
+    "gemma-4-26b-a4b-it",
     "gemini-flash-latest",
-    "gemini-pro-latest",
 ]
 
 SYSTEM_PROMPT = """You are an expert autonomous Go systems engineer and compiler repair agent for DevProxy.
