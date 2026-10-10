@@ -7,8 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+<<<<<<< HEAD
 	"net/http"
 	"strings"
+=======
+	"math"
+>>>>>>> origin/main
 	"sync"
 
 	"github.com/Aditya-9-6/DevProxy/pkg/mock"
@@ -135,7 +139,12 @@ func WriteGRPCMessage(w io.Writer, msg *GRPCMessage) error {
 	} else {
 		header[0] = 0
 	}
-	binary.BigEndian.PutUint32(header[1:5], uint32(len(msg.Data)))
+	dataLen := len(msg.Data)
+	if int64(dataLen) > int64(math.MaxUint32) {
+		return fmt.Errorf("grpc message too large: %d exceeds MaxUint32", dataLen)
+	}
+	/* #nosec G115 */
+	binary.BigEndian.PutUint32(header[1:5], uint32(dataLen))
 
 	if _, err := w.Write(header); err != nil {
 		return fmt.Errorf("failed to write grpc header: %w", err)

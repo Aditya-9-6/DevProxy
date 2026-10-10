@@ -1056,6 +1056,18 @@ curl -x http://localhost:8080 --cacert devproxy-ca.crt https://httpbin.org/get
       document.getElementById('stat-findings').innerText = totalFindings;
     }
 
+    function getHeaderValue(headers, key) {
+      if (!headers) return null;
+      const lowerKey = key.toLowerCase();
+      for (const k in headers) {
+        if (k.toLowerCase() === lowerKey) {
+          const val = headers[k];
+          return Array.isArray(val) ? val.join(', ') : val;
+        }
+      }
+      return null;
+    }
+
     function renderTraffic() {
       const listEl = document.getElementById('traffic-rows');
       const search = document.getElementById('search-box').value.toLowerCase();
@@ -1068,6 +1080,10 @@ curl -x http://localhost:8080 --cacert devproxy-ca.crt https://httpbin.org/get
 
         const isAI = (r.findings && r.findings.some(f => f.category === 'AI_OBSERVABILITY' || f.category === 'AI_DATA_LEAKAGE' || (f.category === 'RESOURCE_CONSUMPTION' && f.rule_name && f.rule_name.includes('LLM')))) ||
                      (r.url && (r.url.includes('openai.com') || r.url.includes('anthropic.com') || r.url.includes('googleapis.com/v1beta/models') || r.url.includes('groq.com') || r.url.includes('mistral.ai') || r.url.includes(':11434') || r.url.includes('/api/generate') || r.url.includes('/api/chat')));
+
+        const reqCT = getHeaderValue(r.req_headers, 'content-type') || '';
+        const resCT = getHeaderValue(r.resp_headers, 'content-type') || '';
+        const isGRPC = reqCT.includes('application/grpc') || resCT.includes('application/grpc');
 
         if (vulnFilter === 'ONLY_VULN' && (!r.finding_count && (!r.findings || r.findings.length === 0))) continue;
         if (vulnFilter === 'ONLY_AI' && !isAI) continue;
@@ -1086,6 +1102,7 @@ curl -x http://localhost:8080 --cacert devproxy-ca.crt https://httpbin.org/get
             <div style="display: flex; align-items: center; gap: 4px;">
               <span class="badge-method m-${r.method}">${r.method}</span>
               ${isAI ? `<span style="background: rgba(168,85,247,0.2); color: #c084fc; border: 1px solid rgba(168,85,247,0.4); padding: 1px 4px; border-radius: 4px; font-size: 9px; font-weight: 700;">AI</span>` : ''}
+              ${isGRPC ? `<span style="background: rgba(59,130,246,0.2); color: #60a5fa; border: 1px solid rgba(59,130,246,0.4); padding: 1px 4px; border-radius: 4px; font-size: 9px; font-weight: 700;">gRPC</span>` : ''}
             </div>
             <div class="status-tag ${statusClass}">${r.status_code || '-'}</div>
             <div class="url-cell" title="${r.url}">
@@ -1181,10 +1198,47 @@ curl -x http://localhost:8080 --cacert devproxy-ca.crt https://httpbin.org/get
         `;
       }
 
+      let otelBannerHtml = '';
+      if (selectedRequest.trace_id || selectedRequest.span_id) {
+        otelBannerHtml = `
+          <div style="background: rgba(56, 189, 248, 0.1); border: 1px solid rgba(56, 189, 248, 0.3); border-radius: 8px; padding: 12px 14px; margin-bottom: 14px;">
+            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+              <span style="font-size: 16px;">📡</span>
+              <span style="font-size: 13px; font-weight: 700; color: #38bdf8;">OpenTelemetry Trace</span>
+            </div>
+            <div style="display: grid; grid-template-columns: 100px 1fr; gap: 4px; font-size: 12px; font-family: 'JetBrains Mono', monospace;">
+              <span style="color: var(--text-muted);">Trace ID:</span> <span style="color: #f1f5f9; word-break: break-all;">${escapeHtml(selectedRequest.trace_id || '-')}</span>
+              <span style="color: var(--text-muted);">Span ID:</span> <span style="color: #f1f5f9; word-break: break-all;">${escapeHtml(selectedRequest.span_id || '-')}</span>
+            </div>
+          </div>
+        `;
+      }
+
+      let tlsBannerHtml = '';
+      if (selectedRequest.ja3_fingerprint || selectedRequest.ja4_fingerprint) {
+        tlsBannerHtml = `
+          <div style="background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.3); border-radius: 8px; padding: 12px 14px; margin-bottom: 14px;">
+            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <span style="font-size: 16px;">🔐</span>
+                <span style="font-size: 13px; font-weight: 700; color: #f59e0b;">TLS Fingerprint</span>
+              </div>
+              ${selectedRequest.client_bot_class ? `<span style="font-size: 10px; font-weight: 700; background: rgba(245, 158, 11, 0.2); color: #fde68a; padding: 2px 8px; border-radius: 9999px; border: 1px solid rgba(245, 158, 11, 0.4);">${escapeHtml(selectedRequest.client_bot_class)}</span>` : ''}
+            </div>
+            <div style="display: grid; grid-template-columns: 100px 1fr; gap: 4px; font-size: 12px; font-family: 'JetBrains Mono', monospace;">
+              ${selectedRequest.ja3_fingerprint ? `<span style="color: var(--text-muted);">JA3:</span> <span style="color: #f1f5f9; word-break: break-all;">${escapeHtml(selectedRequest.ja3_fingerprint)}</span>` : ''}
+              ${selectedRequest.ja4_fingerprint ? `<span style="color: var(--text-muted);">JA4:</span> <span style="color: #f1f5f9; word-break: break-all;">${escapeHtml(selectedRequest.ja4_fingerprint)}</span>` : ''}
+            </div>
+          </div>
+        `;
+      }
+
       // Request tab
       const reqEl = document.getElementById('request-details');
       reqEl.innerHTML = `
         ${aiBannerHtml}
+        ${otelBannerHtml}
+        ${tlsBannerHtml}
         <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; gap: 8px;">
           <div style="font-size:14px; font-weight:600; color:var(--td-key); word-break: break-all;">
             ${selectedRequest.method} ${selectedRequest.url} (${selectedRequest.proto})
@@ -1210,6 +1264,8 @@ curl -x http://localhost:8080 --cacert devproxy-ca.crt https://httpbin.org/get
       const respEl = document.getElementById('response-details');
       respEl.innerHTML = `
         ${aiBannerHtml}
+        ${otelBannerHtml}
+        ${tlsBannerHtml}
         <div style="font-size:14px; font-weight:600; margin-bottom:12px; color:var(--td-key);">
           HTTP Status: ${selectedRequest.status_code} • Duration: ${(selectedRequest.duration_ms || 0).toFixed(2)}ms
         </div>
