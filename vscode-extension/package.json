@@ -4,6 +4,10 @@
   "description": "Zero-Latency Development Security Proxy extension for VS Code",
   "version": "0.1.0",
   "publisher": "aditya-9-6",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Aditya-9-6/DevProxy.git"
+  },
   "engines": {
     "vscode": "^1.80.0"
   },
