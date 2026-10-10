@@ -83,6 +83,7 @@ class KeyPool:
         return len(self.keys)
 
 GLOBAL_POOL = KeyPool(DEFAULT_KEYS)
+FAILED_SOLVE_ATTEMPTS: dict[int, int] = {}
 
 def run_cmd(cmd, cwd=None, check=True):
     """Runs a shell command and returns stdout."""
@@ -586,20 +587,52 @@ def run_loop_iteration(workspace: Path):
     if handled_pr:
         print("[OK] Processed open PRs in this cycle.", flush=True)
 
-    # Phase 2: Solve open advancement issues
+    # Phase 2: Replenish and solve open advancement issues
     issues = get_open_advancement_issues(workspace)
-    if not issues:
-        print("[*] No unaddressed open advancement issues found. Generating one...", flush=True)
-        generate_new_issue(workspace)
-        time.sleep(5)
+
+    # Maintain continuous backlog of at least 3 active advancement issues
+    TARGET_BACKLOG = 3
+    if len(issues) < TARGET_BACKLOG:
+        needed = TARGET_BACKLOG - len(issues)
+        print(f"[*] Advancement issue backlog low ({len(issues)}/{TARGET_BACKLOG}). Generating {needed} new issue(s)...", flush=True)
+        for _ in range(needed):
+            generate_new_issue(workspace)
+            time.sleep(3)
         issues = get_open_advancement_issues(workspace)
 
     if not issues:
         print("[!] No issues available to solve.", flush=True)
         return
 
-    target = issues[0]
-    solve_issue(workspace, target["number"], target["title"], target.get("body", ""))
+    # Select candidate issue that has not repeatedly failed
+    target = None
+    for iss in issues:
+        num = iss.get("number")
+        if FAILED_SOLVE_ATTEMPTS.get(num, 0) < 2:
+            target = iss
+            break
+
+    if not target:
+        print("[*] All currently open issues have exceeded failure threshold. Generating fresh issue...", flush=True)
+        generate_new_issue(workspace)
+        time.sleep(3)
+        issues = get_open_advancement_issues(workspace)
+        for iss in issues:
+            if FAILED_SOLVE_ATTEMPTS.get(iss.get("number"), 0) < 2:
+                target = iss
+                break
+
+    if not target:
+        target = issues[0]
+
+    num = target["number"]
+    print(f"[*] Selected Issue #{num} for autonomous resolution: '{target['title']}'", flush=True)
+    success = solve_issue(workspace, target["number"], target["title"], target.get("body", ""))
+    if success:
+        FAILED_SOLVE_ATTEMPTS.pop(num, None)
+    else:
+        FAILED_SOLVE_ATTEMPTS[num] = FAILED_SOLVE_ATTEMPTS.get(num, 0) + 1
+        print(f"[!] Issue #{num} failed solve attempt ({FAILED_SOLVE_ATTEMPTS[num]}/2).", flush=True)
 
 def main():
     parser = argparse.ArgumentParser(description="DevProxy Autonomous Multi-Agent Daemon")
