@@ -1,0 +1,64 @@
+{
+  "name": "devproxy",
+  "displayName": "DevProxy",
+  "description": "Zero-Latency Development Security Proxy extension for VS Code",
+  "version": "0.1.0",
+  "publisher": "aditya-9-6",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Other",
+    "Security"
+  ],
+  "activationEvents": [
+    "*"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "devproxy.start",
+        "title": "DevProxy: Start Proxy"
+      },
+      {
+        "command": "devproxy.stop",
+        "title": "DevProxy: Stop Proxy"
+      },
+      {
+        "command": "devproxy.openDashboard",
+        "title": "DevProxy: Open Web Dashboard"
+      }
+    ],
+    "configuration": {
+      "title": "DevProxy",
+      "properties": {
+        "devproxy.binaryPath": {
+          "type": "string",
+          "default": "devproxy",
+          "description": "Path to the DevProxy executable (or 'devproxy' if in PATH)"
+        },
+        "devproxy.port": {
+          "type": "number",
+          "default": 8080,
+          "description": "Port for the HTTP/HTTPS proxy engine"
+        },
+        "devproxy.webPort": {
+          "type": "number",
+          "default": 8081,
+          "description": "Port for the web dashboard and REST/WebSocket API"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.80.0",
+    "@types/node": "18.x",
+    "typescript": "^5.1.3"
+  }
+}
