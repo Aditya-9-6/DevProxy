@@ -1,0 +1,21 @@
+
+   ___             ___
+  / _ \___ _  __  / _ \_______ __ ____ __
+ / // / -_) |/ / / ___/ __/ _ \\ \ / // /
+/____/\__/|___/ /_/  /_/  \___/_\_\\_, /
+                                   /___/
+ ZERO-LATENCY PASSIVE SECURITY PROXY FOR DEVELOPERS
+ Proxy Port:      127.0.0.1:8080
+ Dashboard URL:   http://127.0.0.1:8081
+ Architecture:   Decoupled Data-Path (Asynchronous Ring Buffer)
+ Rules Engine:   Single-Pass Zero-Allocation Pattern Matcher
+ Storage:        Ephemeral SQLite (In-Memory)
+--------------------------------------------------------------------------------
+2026/10/10 10:27:38 [1/5] Initializing Root CA and Dynamic TLS Bumping engine...
+2026/10/10 10:27:38 [2/5] Initializing Ephemeral In-Memory SQLite Datastore...
+2026/10/10 10:27:38 [3/5] Allocating Lock-Free Ring Buffer (Capacity: 16384 events)...
+2026/10/10 10:27:38 [4/5] Initializing High-Speed Rules Engine with 4 background workers...
+2026/10/10 10:27:38  DevProxy is ACTIVE and listening on :8080
+2026/10/10 10:27:38  Dashboard UI is live at http://localhost:8081
+2026/10/10 10:27:38  Download Root CA certificate at http://localhost:8081/api/ca.crt
+2026/10/10 10:27:38 --------------------------------------------------------------------------------
