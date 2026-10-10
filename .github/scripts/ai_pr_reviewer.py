@@ -98,7 +98,7 @@ def call_gemini(api_key: str, prompt: str, fallback_key: str = "", model: str = 
             }
 
             print(f"[*] Requesting architectural PR review from model: {current_model}...", flush=True)
-            max_attempts = 3
+            max_attempts = 5
             for attempt in range(1, max_attempts + 1):
                 req = urllib.request.Request(
                     url,
@@ -107,7 +107,7 @@ def call_gemini(api_key: str, prompt: str, fallback_key: str = "", model: str = 
                     method="POST"
                 )
                 try:
-                    with urllib.request.urlopen(req, timeout=90) as resp:
+                    with urllib.request.urlopen(req, timeout=180) as resp:
                         data = json.loads(resp.read().decode("utf-8"))
                         text_response = data["candidates"][0]["content"]["parts"][0]["text"].strip()
                         try:
@@ -189,7 +189,7 @@ def set_commit_status(head_sha: str, state: str, description: str, context: str 
         method="POST"
     )
     try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
+        with urllib.request.urlopen(req, timeout=30) as resp:
             print(f"[OK] Commit status set to {state} ({context})")
     except Exception as e:
         print(f"[Warning] Failed to set commit status: {e}", file=sys.stderr)

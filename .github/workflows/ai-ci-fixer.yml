@@ -91,7 +91,7 @@ jobs:
           python3 .github/scripts/ai_ci_fixer.py \
             --pr-number "$PR_NUM" \
             --workspace . \
-            --max-iterations 6
+            --max-iterations 10
 
       - name: Verify Go Compilation & Format
         run: |

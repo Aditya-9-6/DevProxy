@@ -78,7 +78,7 @@ def call_gemini(api_key: str, prompt: str, fallback_key: str = "", model: str = 
             }
 
             print(f"[*] Querying model {current_model} for CI fix / refactoring...", flush=True)
-            max_attempts = 3
+            max_attempts = 5
             for attempt in range(1, max_attempts + 1):
                 req = urllib.request.Request(
                     url,
@@ -87,7 +87,7 @@ def call_gemini(api_key: str, prompt: str, fallback_key: str = "", model: str = 
                     method="POST"
                 )
                 try:
-                    with urllib.request.urlopen(req, timeout=90) as resp:
+                    with urllib.request.urlopen(req, timeout=180) as resp:
                         data = json.loads(resp.read().decode("utf-8"))
                         text_response = data["candidates"][0]["content"]["parts"][0]["text"].strip()
                         try:
