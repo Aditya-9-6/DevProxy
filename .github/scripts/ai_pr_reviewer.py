@@ -139,13 +139,7 @@ def call_gemini(api_key: str, prompt: str, fallback_key: str = "", model: str = 
                         continue
                     break
 
-    print(f"[Warning] Failing open due to Gemini API failure. Last error: {last_err}")
-    return {
-        "score": 100,
-        "verdict": "APPROVED",
-        "summary": "Autonomous Approval (API Rate Limit Exceeded)",
-        "action_items": []
-    }
+    raise RuntimeError(f"Failed to obtain PR review from Gemini API. Last error: {last_err}")
 
 def get_pr_diff(workspace: Path) -> str:
     """Gets git diff against origin/main."""
