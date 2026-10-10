@@ -22,11 +22,11 @@ try:
 except ImportError:
     GOSSIP_AVAILABLE = False
 
-DEFAULT_MODEL = "gemini-flash-lite-latest"
+DEFAULT_MODEL = "gemini-3-flash-preview"
 FALLBACK_MODELS = [
-    "gemini-flash-lite-latest",
+    "gemini-3-flash-preview",
+    "gemma-4-26b-a4b-it",
     "gemini-flash-latest",
-    "gemini-pro-latest",
 ]
 
 SYSTEM_PROMPT = """You are an expert autonomous systems software engineer specializing in Go, high-throughput network proxies, HTTP/HTTPS MITM interception, WebSocket streaming, and developer debugging tools.

@@ -24,8 +24,8 @@ try:
 except ImportError:
     GOSSIP_AVAILABLE = False
 
-DEFAULT_MODEL = "gemini-flash-lite-latest"
-FALLBACK_MODELS = ["gemini-flash-lite-latest", "gemini-flash-latest", "gemini-pro-latest"]
+DEFAULT_MODEL = "gemini-3-flash-preview"
+FALLBACK_MODELS = ["gemini-3-flash-preview", "gemma-4-26b-a4b-it", "gemini-flash-latest"]
 
 def load_gemini_keys() -> list[str]:
     """Dynamically loads Gemini API keys from environment variables and local .gemini_keys files."""
