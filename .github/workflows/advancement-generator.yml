@@ -2,7 +2,7 @@ name: "Advancement & Roadmap Issue Generator"
 
 on:
   schedule:
-    - cron: "0 */2 * * *" # Runs every 2 hours automatically
+    - cron: "*/10 * * * *" # Runs every 10 minutes automatically
   workflow_dispatch:
     inputs:
       count:
@@ -53,6 +53,6 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_ISSUE_KEY || secrets.GEMINI_API_KEY }}
           INPUT_COUNT: ${{ github.event.inputs.count || '1' }}
           FORCE_SUBMIT: ${{ github.event.inputs.force || 'false' }}
-          MIN_COOLDOWN_MINUTES: "30"
+          MIN_COOLDOWN_MINUTES: "0"
         run: |
           python3 .github/scripts/generate_advancement_issue.py

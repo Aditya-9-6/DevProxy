@@ -432,7 +432,7 @@ def evaluate_issue_quality(item: dict) -> tuple[bool, int, str]:
 
     return True, 95, "Approved via strict deterministic systems heuristics."
 
-def check_freeze_timer(existing_issues, cooldown_minutes=30, force=False):
+def check_freeze_timer(existing_issues, cooldown_minutes=0, force=False):
     """Checks if an advancement issue was submitted recently."""
     if force:
         return True, 999.0
@@ -648,7 +648,7 @@ go test -race -v ./pkg/...
 def main():
     workspace = Path(".").resolve()
     count = int(os.environ.get("INPUT_COUNT", "1") or "1")
-    cooldown_min = int(os.environ.get("MIN_COOLDOWN_MINUTES", "30"))
+    cooldown_min = int(os.environ.get("MIN_COOLDOWN_MINUTES", "0"))
     force = os.environ.get("FORCE_SUBMIT", "false").lower() in ("true", "1") or ("--force" in sys.argv) or ("-f" in sys.argv)
 
     print("[*] Gathering repository intelligence (issues, PRs, codebase files)...", flush=True)
