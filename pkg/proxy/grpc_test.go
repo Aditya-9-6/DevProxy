@@ -30,32 +30,6 @@ func TestGRPCFramingRoundTrip(t *testing.T) {
 	}
 }
 
-<<<<<<< HEAD
-func TestGRPCFramingRoundTrip(t *testing.T) {
-	originalMsg := &GRPCMessage{
-		Compressed: false,
-		Data:       []byte("hello grpc stream"),
-	}
-
-	var buf bytes.Buffer
-	if err := WriteGRPCMessage(&buf, originalMsg); err != nil {
-		t.Fatalf("Failed to write gRPC message: %v", err)
-	}
-
-	readMsg, err := ReadGRPCMessage(&buf)
-	if err != nil {
-		t.Fatalf("Failed to read gRPC message: %v", err)
-	}
-
-	if readMsg.Compressed != originalMsg.Compressed {
-		t.Errorf("Compressed flag mismatch: expected %v, got %v", originalMsg.Compressed, readMsg.Compressed)
-	}
-
-	if string(readMsg.Data) != string(originalMsg.Data) {
-		t.Errorf("Payload mismatch: expected %s, got %s", string(originalMsg.Data), string(readMsg.Data))
-	}
-}
-
 func TestGRPCFramingCompressedAndEmpty(t *testing.T) {
 	msg := &GRPCMessage{
 		Compressed: true,
@@ -63,15 +37,6 @@ func TestGRPCFramingCompressedAndEmpty(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-=======
-func TestGRPCFramingCompressedAndEmpty(t *testing.T) {
-	msg := &GRPCMessage{
-		Compressed: true,
-		Data:       []byte{},
-	}
-
-	var buf bytes.Buffer
->>>>>>> origin/main
 	if err := WriteGRPCMessage(&buf, msg); err != nil {
 		t.Fatalf("Failed to write compressed empty message: %v", err)
 	}
