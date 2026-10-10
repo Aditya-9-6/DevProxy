@@ -199,7 +199,9 @@ func encodeString(w io.Writer, s string) error {
 	// Simple uncompressed string encoding for zero-allocation performance
 	length := len(s)
 	if length < 128 {
-		w.Write([]byte{byte(length)})
+		if _, err := w.Write([]byte{byte(length)}); err != nil {
+			return err
+		}
 	} else {
 		return errors.New("string too long for simple HPACK encoding")
 	}
