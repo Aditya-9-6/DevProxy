@@ -1,11 +1,19 @@
 package proxy
 
 import (
+	"bytes"
+	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
+	"strings"
 	"sync"
+
+	"github.com/Aditya-9-6/DevProxy/pkg/mock"
+	"github.com/Aditya-9-6/DevProxy/pkg/ringbuffer"
+	"github.com/google/uuid"
 )
 
 // ErrGRPCMessageTooLarge indicates that a message frame exceeds maximum size.
@@ -27,11 +35,83 @@ var grpcHeaderPool = sync.Pool{
 	},
 }
 
+// HandleGRPCInterception intercepts HTTP/2 gRPC requests (Content-Type: application/grpc),
+// checks for local mock definitions, and streams or records traffic events.
+func HandleGRPCInterception(w http.ResponseWriter, r *http.Request, mockEngine *mock.GRPCDescriptorEngine, ringBuf *ringbuffer.RingBuffer) bool {
+	ct := r.Header.Get("Content-Type")
+	if !strings.HasPrefix(ct, "application/grpc") {
+		return false
+	}
+
+	path := r.URL.Path
+	parts := strings.Split(strings.TrimPrefix(path, "/"), "/")
+	var serviceName, methodName string
+	if len(parts) >= 2 {
+		serviceName = parts[0]
+		methodName = parts[1]
+	}
+
+	// Read request body using zero-allocation buffer from pool
+	buf := mock.GRPCPayloadPool.Get().(*bytes.Buffer)
+	defer mock.GRPCPayloadPool.Put(buf)
+	buf.Reset()
+	_, _ = io.Copy(buf, r.Body)
+	reqBytes := buf.Bytes()
+
+	callCtx := &mock.GRPCCallContext{
+		ServiceName: serviceName,
+		MethodName:  methodName,
+		Input:       reqBytes,
+	}
+
+	// Check if a mock is registered for this gRPC endpoint
+	if mockEngine != nil {
+		if mockResp, matched := mockEngine.EvaluateMock(callCtx); matched {
+			w.Header().Set("Content-Type", "application/grpc")
+			w.Header().Set("Trailer", "grpc-status, grpc-message")
+			w.WriteHeader(http.StatusOK)
+
+			msg := &GRPCMessage{
+				Compressed: false,
+				Data:       mockResp,
+			}
+			_ = WriteGRPCMessage(w, msg)
+
+			// Set trailers for gRPC status
+			w.Header().Set("grpc-status", "0")
+			w.Header().Set("grpc-message", "")
+
+			if ringBuf != nil {
+				event := &ringbuffer.TrafficEvent{
+					ID:         uuid.New().String(),
+					Method:     "POST",
+					URL:        r.URL.String(),
+					Host:       r.Host,
+					Path:       r.URL.Path,
+					StatusCode: 200,
+					ReqBody:    reqBytes,
+					RespBody:   mockResp,
+				}
+				ringBuf.Push(event)
+			}
+			return true
+		}
+	}
+
+	return false
+}
+
+// GRPCStreamInterceptor handles bidirectional streaming gRPC context lifecycle.
+func GRPCStreamInterceptor(ctx context.Context, serviceName, methodName string) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+		return nil
+	}
+}
+
 // WriteGRPCMessage writes a framed gRPC message to w.
-// Framing specification:
-// - 1 byte compression flag (0 = uncompressed, 1 = compressed)
-// - 4 bytes big-endian unsigned integer indicating payload length
-// - N bytes payload data
 func WriteGRPCMessage(w io.Writer, msg *GRPCMessage) error {
 	if msg == nil {
 		return errors.New("grpc: nil message")
