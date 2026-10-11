@@ -1,6 +1,9 @@
 package security
 
-import "net"
+import (
+	"net"
+	"strings"
+)
 
 // ReputationEngine manages IP blocklists using a Bloom filter.
 type ReputationEngine struct {
@@ -18,9 +21,15 @@ func (e *ReputationEngine) BlockIP(ip string) {
 }
 
 func (e *ReputationEngine) IsBlocked(ip string) bool {
-	host, _, err := net.SplitHostPort(ip)
-	if err == nil {
-		ip = host
+	if ip == "" {
+		return false
+	}
+	// Only split if it contains a port separator
+	if strings.Contains(ip, ":") && !strings.Contains(ip, "[") {
+		host, _, err := net.SplitHostPort(ip)
+		if err == nil {
+			ip = host
+		}
 	}
 	return e.filter.Contains([]byte(ip))
 }

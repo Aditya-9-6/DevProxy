@@ -22,11 +22,16 @@ func NewBloomFilter(m uint64, k uint64) *BloomFilter {
 	}
 }
 
+// hash computes the i-th hash using double hashing with FNV-1a.
 func (b *BloomFilter) hash(data []byte, i uint64) uint64 {
 	h := fnv.New64a()
 	h.Write(data)
-	// Simple double hashing technique
-	return (uint64(h.Sum64()) + i*uint64(h.Sum64())) % b.size
+	sum := h.Sum64()
+	// Double hashing: (h1 + i * h2) % size
+	// We use the upper and lower 32 bits of the 64-bit hash as h1 and h2
+	h1 := sum & 0xffffffff
+	h2 := sum >> 32
+	return (h1 + i*h2) % b.size
 }
 
 // Add inserts an item into the filter.
