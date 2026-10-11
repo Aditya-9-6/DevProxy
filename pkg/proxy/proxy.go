@@ -11,7 +11,6 @@ import (
 	"net/url"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/Aditya-9-6/DevProxy/pkg/certs"
@@ -19,21 +18,6 @@ import (
 	"github.com/Aditya-9-6/DevProxy/pkg/ringbuffer"
 	"github.com/google/uuid"
 )
-
-// ProxyServer is the high-throughput asynchronous proxy engine.
-type ProxyServer struct {
-	addr             string
-	certManager      *certs.CertificateManager
-	ringBuffer       *ringbuffer.RingBuffer
-	transport        *http.Transport
-	httpServer       *http.Server
-	reqCounter       atomic.Uint64
-	mockEngine       *mock.Engine
-	insecureUpstream bool
-	upstreamProxyMu  sync.RWMutex
-	upstreamProxy    *url.URL
-	loopWarnOnce     sync.Once
-}
 
 // NewProxyServer creates a new ProxyServer.
 func NewProxyServer(addr string, cm *certs.CertificateManager, rb *ringbuffer.RingBuffer) *ProxyServer {
@@ -391,8 +375,8 @@ func (p *ProxyServer) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	var reqBodyBytes []byte
 	if r.Body != nil {
 		capWriter := NewBoundedCaptureWriter(DefaultMaxBodyCaptureBytes)
-		tee := io.TeeReader(r.Body, capWriter)
-		allBody, _ := io.ReadAll(tee)
+		teee := io.TeeReader(r.Body, capWriter)
+		allBody, _ := io.ReadAll(teee)
 		reqBodyBytes = capWriter.Bytes()
 		r.Body = io.NopCloser(bytes.NewReader(allBody))
 	}
@@ -498,14 +482,14 @@ func (p *ProxyServer) handleHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Stream chunks immediately with flusher to support SSE / LLM tokens in real-time
 	capWriter := NewBoundedCaptureWriter(DefaultMaxBodyCaptureBytes)
-	tee := io.TeeReader(resp.Body, capWriter)
+	teee := io.TeeReader(resp.Body, capWriter)
 
 	flusher, canFlush := w.(http.Flusher)
 	bufPtr := GetBuffer()
 	defer PutBuffer(bufPtr)
 	buf := *bufPtr
 	for {
-		n, err := tee.Read(buf)
+		n, err := teee.Read(buf)
 		if n > 0 {
 			_, _ = w.Write(buf[:n])
 			if canFlush {
