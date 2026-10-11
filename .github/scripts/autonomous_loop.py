@@ -65,6 +65,10 @@ class KeyPool:
                 self.keys.append(k)
         self.idx = 0
 
+    def set_offset(self, offset: int):
+        if self.keys:
+            self.idx = offset % len(self.keys)
+
     def add_keys(self, new_keys: list[str]):
         for k in new_keys:
             clean = k.strip()
@@ -196,8 +200,8 @@ def run_diagnostics(workspace: Path) -> tuple[int, str]:
     combined = "\n".join(out_lines).strip()
     return (0 if not combined else 1), combined
 
-def heal_and_merge_open_prs(workspace: Path) -> bool:
-    """Finds all open AI PRs, self-heals failing checks or /fix comments, reviews, and merges them."""
+def heal_and_merge_open_prs(workspace: Path, worker_id: int = 1, num_workers: int = 1) -> bool:
+    """Finds open AI PRs assigned to this worker shard, self-heals failing checks or /fix comments, reviews, and marks ready."""
     try:
         out = run_cmd([
             "gh", "pr", "list",
@@ -229,6 +233,9 @@ def heal_and_merge_open_prs(workspace: Path) -> bool:
         [p for p in prs if is_candidate_pr(p)],
         key=lambda p: 0 if p.get("headRefName", "").startswith("ai/") else 1
     )
+    if num_workers > 1:
+        ai_prs = [p for p in ai_prs if (p.get("number", 0) % num_workers) == (worker_id - 1)]
+
     if not ai_prs:
         return False
 
@@ -540,14 +547,14 @@ def solve_issue(workspace: Path, issue_num: int, issue_title: str, issue_body: s
         print(f"[!] PR #{pr_num} verdict: {verdict} (Score: {score}). Awaiting review fixes.", flush=True)
         return False
 
-def run_loop_iteration(workspace: Path):
-    """Executes a single cycle of the autonomous loop."""
-    print(f"\n--- [Autonomous DevProxy Loop Iteration: {time.strftime('%Y-%m-%d %H:%M:%S')} | Key Pool: {len(GLOBAL_POOL)} keys] ---", flush=True)
+def run_loop_iteration(workspace: Path, worker_id: int = 1, num_workers: int = 1):
+    """Executes a single cycle of the autonomous loop for the assigned worker shard."""
+    print(f"\n--- [Autonomous DevProxy Loop | Worker {worker_id}/{num_workers} | {time.strftime('%Y-%m-%d %H:%M:%S')} | Key Pool: {len(GLOBAL_POOL)} keys] ---", flush=True)
 
     # Synchronize with GossipMesh
     try:
         from gossipmesh import GossipNode, MemeticKnowledgeBase
-        g_node = GossipNode("devproxy_daemon")
+        g_node = GossipNode(f"devproxy_daemon_{worker_id}")
         new_gossips = g_node.sync()
         g_node.heartbeat()
         kb = MemeticKnowledgeBase()
@@ -556,51 +563,60 @@ def run_loop_iteration(workspace: Path):
     except Exception:
         pass
 
-    # Phase 1: Heal and merge existing open PRs
-    handled_pr = heal_and_merge_open_prs(workspace)
+    # Phase 1: Heal open PRs assigned to this worker shard
+    handled_pr = heal_and_merge_open_prs(workspace, worker_id=worker_id, num_workers=num_workers)
     if handled_pr:
-        print("[OK] Processed open PRs in this cycle.", flush=True)
+        print(f"[OK] Worker {worker_id}/{num_workers} processed candidate PRs.", flush=True)
 
     # Phase 2: Replenish and solve open advancement issues
     issues = get_open_advancement_issues(workspace)
 
-    # Maintain continuous backlog of at least 3 active advancement issues
-    TARGET_BACKLOG = 3
-    if len(issues) < TARGET_BACKLOG:
+    # Maintain continuous backlog of active advancement issues (Worker 1 handles replenishment)
+    TARGET_BACKLOG = max(5, num_workers * 2)
+    if worker_id == 1 and len(issues) < TARGET_BACKLOG:
         needed = TARGET_BACKLOG - len(issues)
-        print(f"[*] Advancement issue backlog low ({len(issues)}/{TARGET_BACKLOG}). Generating {needed} new issue(s)...", flush=True)
+        print(f"[*] Advancement issue backlog low ({len(issues)}/{TARGET_BACKLOG}). Worker 1 generating {needed} new issue(s)...", flush=True)
         for _ in range(needed):
             generate_new_issue(workspace)
-            time.sleep(3)
+            time.sleep(2)
         issues = get_open_advancement_issues(workspace)
 
     if not issues:
-        print("[!] No issues available to solve.", flush=True)
+        print(f"[*] Worker {worker_id}/{num_workers}: No open issues available to solve.", flush=True)
         return
+
+    # Shard issues across workers
+    worker_issues = [iss for iss in issues if (iss.get("number", 0) % num_workers) == (worker_id - 1)]
+    if not worker_issues:
+        print(f"[*] Worker {worker_id}/{num_workers}: No issues matching direct shard. Checking unassigned fallback issues...", flush=True)
+        worker_issues = issues
 
     # Select candidate issue that has not repeatedly failed
     target = None
-    for iss in issues:
+    for iss in worker_issues:
         num = iss.get("number")
         if FAILED_SOLVE_ATTEMPTS.get(num, 0) < 2:
             target = iss
             break
 
     if not target:
-        print("[*] All currently open issues have exceeded failure threshold. Generating fresh issue...", flush=True)
-        generate_new_issue(workspace)
-        time.sleep(3)
-        issues = get_open_advancement_issues(workspace)
-        for iss in issues:
-            if FAILED_SOLVE_ATTEMPTS.get(iss.get("number"), 0) < 2:
-                target = iss
-                break
+        if worker_id == 1:
+            print("[*] Worker 1: All current issues exceeded threshold. Generating fresh issue...", flush=True)
+            generate_new_issue(workspace)
+            time.sleep(2)
+            issues = get_open_advancement_issues(workspace)
+            for iss in issues:
+                if FAILED_SOLVE_ATTEMPTS.get(iss.get("number"), 0) < 2:
+                    target = iss
+                    break
+        else:
+            target = worker_issues[0] if worker_issues else (issues[0] if issues else None)
 
     if not target:
-        target = issues[0]
+        return
 
     num = target["number"]
-    print(f"[*] Selected Issue #{num} for autonomous resolution: '{target['title']}'", flush=True)
+    print(f"[*] Worker {worker_id}/{num_workers} selected Issue #{num} for autonomous resolution: '{target['title']}'", flush=True)
     success = solve_issue(workspace, target["number"], target["title"], target.get("body", ""))
     if success:
         FAILED_SOLVE_ATTEMPTS.pop(num, None)
@@ -615,6 +631,8 @@ def main():
     parser.add_argument("--interval", type=int, default=10, help="Interval in seconds between cycles (default: 10s)")
     parser.add_argument("--max-cycles", type=int, default=0, help="Maximum number of cycles to execute (0 = unlimited)")
     parser.add_argument("--timeout-mins", type=int, default=0, help="Maximum minutes to run before exiting (0 = unlimited)")
+    parser.add_argument("--worker-id", type=int, default=1, help="Worker ID for multi-runner matrix (1-based, default: 1)")
+    parser.add_argument("--num-workers", type=int, default=1, help="Total number of parallel runners (default: 1)")
     parser.add_argument("--add-keys", nargs="*", default=[], help="Additional Gemini API keys to add to the round-robin pool")
     args = parser.parse_args()
 
@@ -623,17 +641,20 @@ def main():
     if args.add_keys:
         GLOBAL_POOL.add_keys(args.add_keys)
 
-    print(f"[*] DevProxy Multi-Agent Engine initialized with {len(GLOBAL_POOL)} API keys in active rotation.", flush=True)
+    # Offset initial key index by worker_id so parallel workers use distinct API keys simultaneously
+    GLOBAL_POOL.set_offset(args.worker_id - 1)
+
+    print(f"[*] DevProxy Multi-Agent Engine initialized (Worker {args.worker_id}/{args.num_workers}) with {len(GLOBAL_POOL)} API keys in active rotation.", flush=True)
 
     if args.once:
-        run_loop_iteration(workspace)
+        run_loop_iteration(workspace, worker_id=args.worker_id, num_workers=args.num_workers)
     else:
-        print(f"[*] Starting DevProxy Continuous Autonomous Daemon (interval: {args.interval}s, max_cycles: {args.max_cycles or 'unlimited'}, timeout: {args.timeout_mins or 'unlimited'}m)...", flush=True)
+        print(f"[*] Starting DevProxy Continuous Daemon (Worker {args.worker_id}/{args.num_workers}, interval: {args.interval}s, max_cycles: {args.max_cycles or 'unlimited'}, timeout: {args.timeout_mins or 'unlimited'}m)...", flush=True)
         start_time = time.time()
         cycles = 0
         while True:
             try:
-                run_loop_iteration(workspace)
+                run_loop_iteration(workspace, worker_id=args.worker_id, num_workers=args.num_workers)
                 cycles += 1
                 if args.max_cycles and cycles >= args.max_cycles:
                     print(f"[OK] Completed target max cycles ({cycles}). Exiting batch gracefully.", flush=True)
@@ -643,7 +664,7 @@ def main():
                     break
             except Exception as e:
                 print(f"[Error in loop]: {e}", file=sys.stderr, flush=True)
-            print(f"[*] Sleeping for {args.interval} seconds until next iteration...", flush=True)
+            print(f"[*] Worker {args.worker_id} sleeping for {args.interval}s until next iteration...", flush=True)
             time.sleep(args.interval)
 
 if __name__ == "__main__":

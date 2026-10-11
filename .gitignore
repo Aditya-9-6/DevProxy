@@ -37,4 +37,5 @@ vscode-extension/out/
 __pycache__/
 *.pyc
 .gossip_mesh/
+.worktrees/
 G:/**

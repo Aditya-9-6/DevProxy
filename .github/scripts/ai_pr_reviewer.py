@@ -161,8 +161,11 @@ def call_gemini(api_key: str, prompt: str, fallback_key: str = "", model: str = 
                     last_err = err_msg
                     if e.code == 404:
                         break
-                    if e.code in (429, 500, 502, 503, 504) and attempt < max_attempts:
-                        time.sleep(3 * attempt)
+                    if e.code == 429:
+                        print(f"[*] Key rate-limited (429). Fast failover to next key in pool...", flush=True)
+                        break
+                    if e.code in (500, 502, 503, 504) and attempt < max_attempts:
+                        time.sleep(2)
                         continue
                     break
                 except Exception as e:

@@ -18,14 +18,17 @@ permissions:
   issues: write
   actions: write
 
-concurrency:
-  group: continuous-advancement-loop
-  cancel-in-progress: false
-
 jobs:
   advance:
-    name: Autonomous Engine
+    name: Autonomous Engine (Worker ${{ matrix.worker }})
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        worker: [1, 2, 3]
+      fail-fast: false
+    concurrency:
+      group: continuous-advancement-worker-${{ matrix.worker }}
+      cancel-in-progress: false
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -70,4 +73,4 @@ jobs:
           GEMINI_REVIEWER_KEY: ${{ secrets.GEMINI_REVIEWER_KEY || '' }}
           GEMINI_SOLVER_KEY: ${{ secrets.GEMINI_SOLVER_KEY || '' }}
         run: |
-          python3 .github/scripts/autonomous_loop.py --workspace . --interval 5 --max-cycles 5 --timeout-mins 20
+          python3 .github/scripts/autonomous_loop.py --workspace . --interval 5 --max-cycles ${{ inputs.iterations || '5' }} --timeout-mins 20 --worker-id ${{ matrix.worker }} --num-workers 3
