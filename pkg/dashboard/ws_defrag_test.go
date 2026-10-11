@@ -8,9 +8,9 @@ import (
 
 func TestWSDefragmenter_TableDriven(t *testing.T) {
 	tests := []struct {
-		name     string
-		maxSize  int
-		frames   []struct {
+		name    string
+		maxSize int
+		frames  []struct {
 			fin    bool
 			opcode int
 			data   []byte
