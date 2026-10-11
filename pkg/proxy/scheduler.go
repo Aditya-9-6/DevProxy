@@ -16,7 +16,7 @@ func NewConnectionScheduler(shard *ConnectionShard) *ConnectionScheduler {
 
 // ScheduleConnection pins the connection handling to a specific worker core.
 func (s *ConnectionScheduler) ScheduleConnection(ctx context.Context, conn net.Conn, handler func(net.Conn)) {
-	s.shard.Dispatch(func() {
+	dispatched := s.shard.Dispatch(func() {
 		select {
 		case <-ctx.Done():
 			conn.Close()
@@ -24,4 +24,7 @@ func (s *ConnectionScheduler) ScheduleConnection(ctx context.Context, conn net.C
 			handler(conn)
 		}
 	})
+	if !dispatched {
+		conn.Close()
+	}
 }

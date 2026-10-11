@@ -1,6 +1,8 @@
 package proxy
 
 import (
+	"context"
+	"log"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -11,6 +13,8 @@ type ConnectionShard struct {
 	numWorkers int
 	nextShard  atomic.Uint64
 	queues     []chan func()
+	ctx        context.Context
+	cancel     context.CancelFunc
 	wg         sync.WaitGroup
 }
 
@@ -19,9 +23,12 @@ func NewConnectionShard(workers int) *ConnectionShard {
 	if workers <= 0 {
 		workers = runtime.NumCPU()
 	}
+	ctx, cancel := context.WithCancel(context.Background())
 	shard := &ConnectionShard{
 		numWorkers: workers,
 		queues:     make([]chan func(), workers),
+		ctx:        ctx,
+		cancel:     cancel,
 	}
 	for i := 0; i < workers; i++ {
 		shard.queues[i] = make(chan func(), 1024)
@@ -34,19 +41,55 @@ func NewConnectionShard(workers int) *ConnectionShard {
 func (s *ConnectionShard) worker(id int) {
 	defer s.wg.Done()
 	runtime.LockOSThread()
-	for task := range s.queues[id] {
-		task()
+
+	q := s.queues[id]
+	for {
+		select {
+		case <-s.ctx.Done():
+			// Drain remaining tasks on shutdown
+			for {
+				select {
+				case task, ok := <-q:
+					if !ok {
+						return
+					}
+					s.safeExecute(task)
+				default:
+					return
+				}
+			}
+		case task, ok := <-q:
+			if !ok {
+				return
+			}
+			s.safeExecute(task)
+		}
 	}
 }
 
-// Dispatch routes a task to a specific core-pinned worker.
-func (s *ConnectionShard) Dispatch(task func()) {
-	idx := s.nextShard.Add(1) % uint64(s.numWorkers)
-	s.queues[idx] <- task
+func (s *ConnectionShard) safeExecute(task func()) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("Recovered from panic in ConnectionShard worker: %v", r)
+		}
+	}()
+	task()
 }
 
-// Close shuts down all worker queues.
+// Dispatch routes a task to a specific core-pinned worker.
+func (s *ConnectionShard) Dispatch(task func()) bool {
+	idx := s.nextShard.Add(1) % uint64(s.numWorkers)
+	select {
+	case <-s.ctx.Done():
+		return false
+	case s.queues[idx] <- task:
+		return true
+	}
+}
+
+// Close shuts down all worker queues gracefully.
 func (s *ConnectionShard) Close() {
+	s.cancel()
 	for _, q := range s.queues {
 		close(q)
 	}
