@@ -3,6 +3,7 @@ package proxy
 import (
 	"bytes"
 	"io"
+	"strings"
 	"testing"
 )
 
@@ -25,5 +26,26 @@ func TestChunkingPipeline(t *testing.T) {
 
 	if string(output) != input {
 		t.Errorf("Expected %s, got %s", input, string(output))
+	}
+}
+
+func TestMultiChunk(t *testing.T) {
+	raw := "5\r\nHello\r\n5\r\nWorld\r\n0\r\n\r\n"
+	decoder := NewChunkDecoder(strings.NewReader(raw))
+	output, err := io.ReadAll(decoder)
+	if err != nil {
+		t.Fatalf("Failed to read: %v", err)
+	}
+	if string(output) != "HelloWorld" {
+		t.Errorf("Expected HelloWorld, got %s", string(output))
+	}
+}
+
+func TestMalformedHeader(t *testing.T) {
+	raw := "ZZZ\r\n"
+	decoder := NewChunkDecoder(strings.NewReader(raw))
+	_, err := io.ReadAll(decoder)
+	if err == nil {
+		t.Error("Expected error for malformed header, got nil")
 	}
 }

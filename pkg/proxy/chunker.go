@@ -6,8 +6,11 @@ import (
 	"fmt"
 	"io"
 	"strconv"
+	"strings"
 	"sync"
 )
+
+const MaxChunkSize = 1024 * 1024 // 1MB limit to prevent OOM
 
 var chunkBufferPool = sync.Pool{
 	New: func() interface{} {
@@ -36,18 +39,27 @@ func (d *ChunkDecoder) Read(p []byte) (int, error) {
 		if err != nil {
 			return 0, err
 		}
-		size, err := strconv.ParseInt(line[:len(line)-2], 16, 64)
-		if err != nil || size == 0 {
+		size, err := strconv.ParseInt(strings.TrimSpace(line), 16, 64)
+		if err != nil || size < 0 || size > MaxChunkSize {
+			d.err = io.ErrUnexpectedEOF
+			return 0, d.err
+		}
+		if size == 0 {
 			d.err = io.EOF
 			return 0, io.EOF
 		}
-		d.curr = make([]byte, size)
-		_, err = io.ReadFull(d.r, d.curr)
+		buf := chunkBufferPool.Get().(*bytes.Buffer)
+		buf.Reset()
+		buf.Grow(int(size))
+		_, err = io.CopyN(buf, d.r, size)
 		d.r.Discard(2) // Discard \r\n
+		d.curr = buf.Bytes()
 		d.pos = 0
 		if err != nil {
+			chunkBufferPool.Put(buf)
 			return 0, err
 		}
+		chunkBufferPool.Put(buf)
 	}
 	n := copy(p, d.curr[d.pos:])
 	d.pos += n
