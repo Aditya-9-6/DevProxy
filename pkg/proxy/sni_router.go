@@ -30,43 +30,86 @@ func (r *SNIRouter) ExtractSNI(reader io.Reader) (string, error) {
 	if err != nil && err != io.EOF {
 		return "", err
 	}
+
+	// Handle ClientHellos larger than the default 4096 buffer
+	if n >= 5 {
+		recordLen := int(binary.BigEndian.Uint16(buf[3:5])) + 5
+		if recordLen > len(buf) {
+			largeBuf := make([]byte, recordLen)
+			copy(largeBuf, buf[:n])
+			_, err = io.ReadFull(reader, largeBuf[n:])
+			if err != nil && err != io.EOF && !errors.Is(err, io.ErrUnexpectedEOF) {
+				return "", err
+			}
+			buf = largeBuf
+			n = recordLen
+		}
+	}
+
+	return parseClientHello(buf[:n])
+}
+
+func parseClientHello(buf []byte) (string, error) {
+	n := len(buf)
 	if n < 5 {
 		return "", errors.New("insufficient data for TLS header")
 	}
 
-	// TLS Record Header: Type (1), Version (2), Length (2)
-	if buf[0] != 0x16 { // Handshake
+	if buf[0] != 0x16 {
 		return "", errors.New("not a TLS handshake")
 	}
 
-	// Handshake Type (1), Length (3)
-	if n < 9 || buf[5] != 0x01 { // ClientHello
+	if n < 9 || buf[5] != 0x01 {
 		return "", errors.New("not a ClientHello")
 	}
 
-	// Skip fixed fields: Version (2), Random (32), SessionID Length (1)
+	pos, err := skipClientHelloFixedFields(buf, n)
+	if err != nil {
+		return "", err
+	}
+
+	pos, err = skipCipherSuites(buf, pos, n)
+	if err != nil {
+		return "", err
+	}
+
+	pos, err = skipCompressionMethods(buf, pos, n)
+	if err != nil {
+		return "", err
+	}
+
+	return parseExtensions(buf, pos, n)
+}
+
+func skipClientHelloFixedFields(buf []byte, n int) (int, error) {
 	pos := 43
 	if pos+1 > n {
-		return "", errors.New("truncated ClientHello")
+		return 0, errors.New("truncated ClientHello")
 	}
 	sessionIDLen := int(buf[pos])
 	pos += 1 + sessionIDLen
+	return pos, nil
+}
 
-	// Cipher Suites
+func skipCipherSuites(buf []byte, pos, n int) (int, error) {
 	if pos+2 > n {
-		return "", errors.New("truncated cipher suites")
+		return 0, errors.New("truncated cipher suites")
 	}
 	cipherLen := int(binary.BigEndian.Uint16(buf[pos : pos+2]))
 	pos += 2 + cipherLen
+	return pos, nil
+}
 
-	// Compression Methods
+func skipCompressionMethods(buf []byte, pos, n int) (int, error) {
 	if pos+1 > n {
-		return "", errors.New("truncated compression methods")
+		return 0, errors.New("truncated compression methods")
 	}
 	compLen := int(buf[pos])
 	pos += 1 + compLen
+	return pos, nil
+}
 
-	// Extensions
+func parseExtensions(buf []byte, pos, n int) (string, error) {
 	if pos+2 > n {
 		return "", nil // No extensions
 	}
@@ -74,18 +117,19 @@ func (r *SNIRouter) ExtractSNI(reader io.Reader) (string, error) {
 	pos += 2
 
 	limit := pos + extLen
+	if limit > n {
+		limit = n
+	}
+
 	for pos+4 <= limit && pos+4 <= n {
 		extType := binary.BigEndian.Uint16(buf[pos : pos+2])
 		extDataLen := int(binary.BigEndian.Uint16(buf[pos+2 : pos+4]))
 		pos += 4
 
-		if extType == 0x0000 { // SNI
+		if extType == 0x0000 {
 			if pos+5 <= n && pos+5 <= limit {
-				// listLen := int(binary.BigEndian.Uint16(buf[pos : pos+2]))
-				sniType := buf[pos+2]
 				nameLen := int(binary.BigEndian.Uint16(buf[pos+3 : pos+5]))
-				if pos+5+nameLen <= n {
-					_ = sniType
+				if pos+5+nameLen <= n && pos+5+nameLen <= limit {
 					return string(buf[pos+5 : pos+5+nameLen]), nil
 				}
 			}
