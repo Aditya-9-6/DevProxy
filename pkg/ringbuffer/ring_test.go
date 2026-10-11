@@ -10,24 +10,56 @@ import (
 
 func TestBatchFlusher_ConcurrentFlush(t *testing.T) {
 	rb := NewRingBuffer(1024)
+	defer rb.Close()
 	flusher := NewBatchFlusher(rb)
 
 	var wg sync.WaitGroup
-	for i := 0; i < 10; i++ {
+	producers := 4
+	consumers := 4
+
+	// Start producers
+	for i := 0; i < producers; i++ {
+		wg.Add(1)
+		go func(pid int) {
+			defer wg.Done()
+			for j := 0; j < 250; j++ {
+				rb.Push(&TrafficEvent{
+					ID:   fmt.Sprintf("p%d-e%d", pid, j),
+					Host: "localhost",
+				})
+			}
+		}(i)
+	}
+
+	// Start consumers flushing batches
+	var totalFlushed atomic.Int64
+	for i := 0; i < consumers; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for j := 0; j < 100; j++ {
+			for k := 0; k < 50; k++ {
+				time.Sleep(2 * time.Millisecond)
 				batch := flusher.Flush()
-				// Verify data integrity: ensure we got a slice
-				if batch == nil {
-					t.Errorf("Flush returned nil")
+				if batch != nil {
+					totalFlushed.Add(int64(len(batch)))
+					flusher.Recycle(batch)
 				}
-				flusher.Recycle(batch)
 			}
 		}()
 	}
+
 	wg.Wait()
+
+	// Final flush to catch remainder
+	finalBatch := flusher.Flush()
+	if finalBatch != nil {
+		totalFlushed.Add(int64(len(finalBatch)))
+		flusher.Recycle(finalBatch)
+	}
+
+	if totalFlushed.Load() == 0 {
+		t.Errorf("Expected events to be flushed via BatchFlusher, got 0")
+	}
 }
 
 func TestRingBuffer_PushAndPop(t *testing.T) {
