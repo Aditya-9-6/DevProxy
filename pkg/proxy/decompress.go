@@ -4,35 +4,66 @@ import (
 	"compress/flate"
 	"compress/gzip"
 	"io"
+	"sync"
 
 	"github.com/andybalholm/brotli"
 	"github.com/klauspost/compress/zstd"
 )
 
-const maxDecompressedSize = 10 * 1024 * 1024 // 10MB limit to prevent decompression bombs
+const maxDecompressedSize = 10 * 1024 * 1024
 
-// GetDecompressor returns an io.ReadCloser that decompresses the given reader based on the encoding.
-// It enforces a size limit on the decompressed stream.
+var (
+	zstdPool = sync.Pool{
+		New: func() interface{} {
+			dec, _ := zstd.NewReader(nil)
+			return dec
+		},
+	}
+	brPool = sync.Pool{
+		New: func() interface{} {
+			return brotli.NewReader(nil)
+		},
+	}
+)
+
+type zstdReadCloser struct {
+	*zstd.Decoder
+}
+
+func (z *zstdReadCloser) Close() error {
+	z.Decoder.Close()
+	zstdPool.Put(z.Decoder)
+	return nil
+}
+
+type brotliReadCloser struct {
+	*brotli.Reader
+}
+
+func (b *brotliReadCloser) Close() error {
+	brPool.Put(b.Reader)
+	return nil
+}
+
 func GetDecompressor(r io.Reader, encoding string) (io.ReadCloser, error) {
 	limitedReader := io.LimitReader(r, maxDecompressedSize)
 
 	switch encoding {
 	case "gzip":
-		zr, err := gzip.NewReader(limitedReader)
-		if err != nil {
-			return nil, err
-		}
-		return zr, nil
+		return gzip.NewReader(limitedReader)
 	case "deflate":
 		return io.NopCloser(flate.NewReader(limitedReader)), nil
 	case "br":
-		return io.NopCloser(brotli.NewReader(limitedReader)), nil
+		br := brPool.Get().(*brotli.Reader)
+		br.Reset(limitedReader)
+		return &brotliReadCloser{Reader: br}, nil
 	case "zstd":
-		zr, err := zstd.NewReader(limitedReader)
-		if err != nil {
+		dec := zstdPool.Get().(*zstd.Decoder)
+		if err := dec.Reset(limitedReader); err != nil {
+			zstdPool.Put(dec)
 			return nil, err
 		}
-		return zr.IOReadCloser(), nil
+		return &zstdReadCloser{Decoder: dec}, nil
 	default:
 		return io.NopCloser(limitedReader), nil
 	}

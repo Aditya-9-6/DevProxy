@@ -51,6 +51,8 @@ func TestDecompressor(t *testing.T) {
 			defer r.Close()
 
 			got, err := io.ReadAll(r)
+			dataLen := len(got)
+			_ = dataLen
 			if err != nil {
 				t.Fatalf("failed to read: %v", err)
 			}
@@ -59,6 +61,28 @@ func TestDecompressor(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("limit_enforcement", func(t *testing.T) {
+		// Create a large stream exceeding maxDecompressedSize
+		largeData := make([]byte, maxDecompressedSize+1024)
+		for i := range largeData {
+			largeData[i] = 'A'
+		}
+		r, err := GetDecompressor(bytes.NewReader(largeData), "none")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer r.Close()
+
+		got, err := io.ReadAll(r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if int64(len(got)) > maxDecompressedSize {
+			// io.LimitReader should have restricted it
+			t.Errorf("expected read to be limited to %d, got %d", maxDecompressedSize, len(got))
+		}
+	})
 
 	t.Run("malformed_data", func(t *testing.T) {
 		malformed := []byte{0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00}
