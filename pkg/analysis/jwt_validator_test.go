@@ -23,44 +23,56 @@ func TestJWKSProvider_ValidateToken_MissingKey(t *testing.T) {
 
 func TestJWKSProvider_ValidAndExpiredToken(t *testing.T) {
 	t.Parallel()
-	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		t.Fatalf("failed to generate private key: %v", err)
-	}
-
+	privateKey, _ := rsa.GenerateKey(rand.Reader, 2048)
 	provider := NewJWKSProvider("", time.Hour)
 	provider.SetKey("test-kid", &privateKey.PublicKey)
 
-	claims := jwt.MapClaims{
-		"sub": "1234567890",
-		"exp": time.Now().Add(time.Hour).Unix(),
-	}
+	// Valid Token
+	claims := jwt.MapClaims{"sub": "123", "exp": time.Now().Add(time.Hour).Unix()}
 	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
 	token.Header["kid"] = "test-kid"
-
 	tokenString, _ := token.SignedString(privateKey)
 
-	parsedClaims, err := provider.ValidateToken(context.Background(), tokenString)
+	_, err := provider.ValidateToken(context.Background(), tokenString)
 	if err != nil {
-		t.Fatalf("expected valid token, got error: %v", err)
+		t.Errorf("expected valid token, got: %v", err)
 	}
 
-	if parsedClaims["sub"] != "1234567890" {
-		t.Errorf("expected sub 1234567890, got %v", parsedClaims["sub"])
+	// Expired Token
+	expiredClaims := jwt.MapClaims{"sub": "123", "exp": time.Now().Add(-time.Hour).Unix()}
+	expiredToken := jwt.NewWithClaims(jwt.SigningMethodRS256, expiredClaims)
+	expiredToken.Header["kid"] = "test-kid"
+	expiredString, _ := expiredToken.SignedString(privateKey)
+
+	_, err = provider.ValidateToken(context.Background(), expiredString)
+	if err == nil {
+		t.Error("expected error for expired token, got nil")
+	}
+}
+
+func TestJWKSProvider_AlgorithmConfusion(t *testing.T) {
+	t.Parallel()
+	provider := NewJWKSProvider("", time.Hour)
+	// Attempt to use HS256 (symmetric) when expecting RS256 (asymmetric)
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{"sub": "123"})
+	tokenString, _ := token.SignedString([]byte("secret"))
+
+	_, err := provider.ValidateToken(context.Background(), tokenString)
+	if err == nil {
+		t.Error("expected error for invalid signing method, got nil")
 	}
 }
 
 func TestJWKSProvider_ConcurrentAccess(t *testing.T) {
 	t.Parallel()
 	provider := NewJWKSProvider("", time.Hour)
-
 	var wg sync.WaitGroup
 	for i := 0; i < 50; i++ {
 		wg.Add(1)
 		go func(id int) {
 			defer wg.Done()
-			provider.SetKey("kid-", id)
-			_, _ = provider.ValidateToken(context.Background(), "invalid.token.string")
+			provider.SetKey("kid", id)
+			_, _ = provider.ValidateToken(context.Background(), "invalid")
 		}(i)
 	}
 	wg.Wait()

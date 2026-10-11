@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"sync"
 	"time"
@@ -18,12 +19,6 @@ const (
 	UserClaimsKey contextKey = iota
 )
 
-var bufferPool = sync.Pool{
-	New: func() interface{} {
-		return make([]byte, 4096)
-	},
-}
-
 type JWKSProvider struct {
 	mu         sync.RWMutex
 	keys       map[string]interface{}
@@ -31,44 +26,42 @@ type JWKSProvider struct {
 	jwksURL    string
 	ttl        time.Duration
 	httpClient *http.Client
-	ctx        context.Context
-	cancel     context.CancelFunc
 }
 
 func NewJWKSProvider(jwksURL string, ttl time.Duration) *JWKSProvider {
-	ctx, cancel := context.WithCancel(context.Background())
 	p := &JWKSProvider{
 		keys:       make(map[string]interface{}),
 		jwksURL:    jwksURL,
 		ttl:        ttl,
 		httpClient: &http.Client{Timeout: 5 * time.Second},
-		ctx:        ctx,
-		cancel:     cancel,
-	}
-	if jwksURL != "" {
-		go p.backgroundRefresh()
 	}
 	return p
 }
 
-func (p *JWKSProvider) backgroundRefresh() {
+func (p *JWKSProvider) StartBackgroundRefresh(ctx context.Context) {
+	if p.jwksURL == "" {
+		return
+	}
 	ticker := time.NewTicker(p.ttl / 2)
 	defer ticker.Stop()
-	_ = p.FetchKeys(p.ctx)
+
+	if err := p.FetchKeys(ctx); err != nil {
+		log.Printf("initial JWKS fetch failed: %v", err)
+	}
+
 	for {
 		select {
-		case <-p.ctx.Done():
+		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			_ = p.FetchKeys(p.ctx)
+			if err := p.FetchKeys(ctx); err != nil {
+				log.Printf("background JWKS refresh failed: %v", err)
+			}
 		}
 	}
 }
 
 func (p *JWKSProvider) FetchKeys(ctx context.Context) error {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.jwksURL, nil)
 	if err != nil {
 		return err
@@ -97,8 +90,10 @@ func (p *JWKSProvider) FetchKeys(ctx context.Context) error {
 		newKeys[k.Kid] = k
 	}
 
+	p.mu.Lock()
 	p.keys = newKeys
 	p.cache = time.Now()
+	p.mu.Unlock()
 	return nil
 }
 
@@ -110,6 +105,9 @@ func (p *JWKSProvider) SetKey(kid string, key interface{}) {
 
 func (p *JWKSProvider) ValidateToken(ctx context.Context, tokenString string) (jwt.MapClaims, error) {
 	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+		if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
+			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+		}
 		p.mu.RLock()
 		defer p.mu.RUnlock()
 		keyID, _ := token.Header["kid"].(string)
@@ -117,7 +115,7 @@ func (p *JWKSProvider) ValidateToken(ctx context.Context, tokenString string) (j
 			return key, nil
 		}
 		return nil, fmt.Errorf("key not found")
-	})
+	}, jwt.WithValidMethods([]string{"RS256", "ES256"}))
 
 	if err != nil {
 		return nil, err
