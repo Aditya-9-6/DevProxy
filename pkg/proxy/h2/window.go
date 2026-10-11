@@ -35,6 +35,5 @@ func (w *Window) Replenish(amount int64) {
 
 // Get returns current available credits.
 func (w *Window) Get() int64 {
-	w.credits.Load()
 	return w.credits.Load()
 }

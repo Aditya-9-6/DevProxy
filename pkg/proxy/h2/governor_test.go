@@ -24,8 +24,20 @@ func TestGovernor_FlowControl(t *testing.T) {
 		}
 	})
 
+	t.Run("Partial Failure Restoration", func(t *testing.T) {
+		// Stream has 30 left, Conn has 80 left. Request 40.
+		// Stream should fail, Conn should not be deducted.
+		initialConn := g.connWindow.Get()
+		err := g.RequestCredit(ctx, streamID, 40)
+		if err == nil {
+			t.Error("Expected stream exhaustion error")
+		}
+		if g.connWindow.Get() != initialConn {
+			t.Errorf("Connection window was incorrectly deducted: got %d, want %d", g.connWindow.Get(), initialConn)
+		}
+	})
+
 	t.Run("Concurrent Access", func(t *testing.T) {
-		t.Parallel()
 		var wg sync.WaitGroup
 		for i := 0; i < 10; i++ {
 			wg.Add(1)

@@ -2,7 +2,7 @@ package h2
 
 import (
 	"context"
-	"errors"
+	"fmt"
 	"sync"
 )
 
@@ -38,18 +38,21 @@ func (g *Governor) UnregisterStream(streamID uint32) {
 
 // RequestCredit checks if both connection and stream windows have sufficient capacity.
 func (g *Governor) RequestCredit(ctx context.Context, streamID uint32, amount int64) error {
-	if !g.connWindow.Consume(amount) {
-		return errors.New("connection window exhausted")
-	}
-
 	g.mu.RLock()
 	stream, ok := g.streams[streamID]
 	g.mu.RUnlock()
 
 	if ok && !stream.Consume(amount) {
-		g.connWindow.Replenish(amount)
-		return errors.New("stream window exhausted")
+		return fmt.Errorf("stream window exhausted: %w", ErrFlowControlExhausted)
 	}
+
+	if !g.connWindow.Consume(amount) {
+		if ok {
+			stream.Replenish(amount)
+		}
+		return fmt.Errorf("connection window exhausted: %w", ErrFlowControlExhausted)
+	}
+
 	return nil
 }
 
@@ -57,3 +60,5 @@ func (g *Governor) RequestCredit(ctx context.Context, streamID uint32, amount in
 func (g *Governor) ReleaseCredit(amount int64) {
 	g.connWindow.Replenish(amount)
 }
+
+var ErrFlowControlExhausted = fmt.Errorf("flow control credit exhausted")
