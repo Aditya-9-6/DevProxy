@@ -137,11 +137,11 @@ func parseClientHelloBody(body []byte) (*ClientHelloData, error) {
 		return data, nil
 	}
 
-	parseExtensions(body[offset:offset+extTotalLen], data)
+	parseTLSFingerprintExtensions(body[offset:offset+extTotalLen], data)
 	return data, nil
 }
 
-func parseExtensions(extBytes []byte, data *ClientHelloData) {
+func parseTLSFingerprintExtensions(extBytes []byte, data *ClientHelloData) {
 	idx := 0
 	for idx+4 <= len(extBytes) {
 		extType := binary.BigEndian.Uint16(extBytes[idx : idx+2])
