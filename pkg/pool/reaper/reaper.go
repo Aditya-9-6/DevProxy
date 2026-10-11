@@ -48,12 +48,17 @@ func (r *Reaper) Start(ctx context.Context, idleTimeout time.Duration) {
 }
 
 func (r *Reaper) reap(timeout time.Duration) {
+	var toClose []net.Conn
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	for id, ic := range r.conns {
 		if time.Since(ic.LastUsed) > timeout && !ic.Hazard.IsActive() {
-			ic.Conn.Close()
+			toClose = append(toClose, ic.Conn)
 			delete(r.conns, id)
 		}
+	}
+	r.mu.Unlock()
+
+	for _, conn := range toClose {
+		conn.Close()
 	}
 }

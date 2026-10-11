@@ -2,23 +2,22 @@ package reaper
 
 import (
 	"sync/atomic"
-	"unsafe"
 )
 
 // HazardPointer tracks an active reference to a connection.
-// It uses atomic pointers to ensure thread safety without locks.
+// It uses atomic integers to store pointer values safely.
 type HazardPointer struct {
-	ptr unsafe.Pointer
+	ptr atomic.Uintptr
 }
 
-func (h *HazardPointer) Set(conn interface{}) {
-	atomic.StorePointer(&h.ptr, unsafe.Pointer(&conn))
+func (h *HazardPointer) Set(addr uintptr) {
+	h.ptr.Store(addr)
 }
 
 func (h *HazardPointer) Clear() {
-	atomic.StorePointer(&h.ptr, nil)
+	h.ptr.Store(0)
 }
 
 func (h *HazardPointer) IsActive() bool {
-	return atomic.LoadPointer(&h.ptr) != nil
+	return h.ptr.Load() != 0
 }
