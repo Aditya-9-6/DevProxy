@@ -1,6 +1,7 @@
 package dns
 
 import (
+	"context"
 	"sync"
 	"time"
 )
@@ -11,24 +12,40 @@ type cacheEntry struct {
 }
 
 type DNSCache struct {
-	data sync.Map
+	data   sync.Map
+	cancel context.CancelFunc
 }
 
 func NewDNSCache() *DNSCache {
-	c := &DNSCache{}
-	go c.cleanupLoop()
+	ctx, cancel := context.WithCancel(context.Background())
+	c := &DNSCache{
+		cancel: cancel,
+	}
+	go c.cleanupLoop(ctx)
 	return c
 }
 
-func (c *DNSCache) cleanupLoop() {
+func (c *DNSCache) Close() {
+	if c.cancel != nil {
+		c.cancel()
+	}
+}
+
+func (c *DNSCache) cleanupLoop(ctx context.Context) {
 	ticker := time.NewTicker(10 * time.Minute)
-	for range ticker.C {
-		c.data.Range(func(key, value interface{}) bool {
-			if entry, ok := value.(*cacheEntry); ok && time.Now().After(entry.expiry) {
-				c.data.Delete(key)
-			}
-			return true
-		})
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			c.data.Range(func(key, value interface{}) bool {
+				if entry, ok := value.(*cacheEntry); ok && time.Now().After(entry.expiry) {
+					c.data.Delete(key)
+				}
+				return true
+			})
+		}
 	}
 }
 

@@ -40,13 +40,25 @@ func (d *HappyEyeballsDialer) DialContext(ctx context.Context, network, address 
 	var wg sync.WaitGroup
 	connChan := make(chan net.Conn, len(addrs))
 
+	// Concurrency limiter to prevent FD exhaustion
+	sem := make(chan struct{}, 8)
+
 	for _, addr := range addrs {
+		select {
+		case <-ctx.Done():
+			break
+		case sem <- struct{}{}:
+		}
+
 		wg.Add(1)
 		go func(ip string) {
 			defer wg.Done()
+			defer func() { <-sem }()
+
 			dialer := d.pool.Get().(*net.Dialer)
 			conn, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort(ip, port))
 			d.pool.Put(dialer)
+
 			if err == nil {
 				select {
 				case connChan <- conn:
@@ -62,10 +74,26 @@ func (d *HappyEyeballsDialer) DialContext(ctx context.Context, network, address 
 		close(connChan)
 	}()
 
-	select {
-	case conn := <-connChan:
-		return conn, nil
-	case <-ctx.Done():
-		return nil, ctx.Err()
+	var establishedConns []net.Conn
+	defer func() {
+		for _, c := range establishedConns {
+			c.Close()
+		}
+	}()
+
+	for {
+		select {
+		case conn, ok := <-connChan:
+			if !ok {
+				return nil, &net.OpError{Op: "dial", Net: network, Source: nil, Addr: nil, Err: context.DeadlineExceeded}
+			}
+			// Return the first successful connection and buffer/close others
+			for extra := range connChan {
+				extra.Close()
+			}
+			return conn, nil
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
 	}
 }
