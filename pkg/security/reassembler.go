@@ -26,27 +26,44 @@ func (h *SegmentHeap) Pop() interface{} {
 	return x
 }
 
-// StreamReassembler manages out-of-order TCP segments.
+// StreamReassembler manages out-of-order TCP segments using a mutex.
 type StreamReassembler struct {
 	mu         sync.Mutex
 	nextSeq    uint64
 	segments   SegmentHeap
 	bufferPool *sync.Pool
+	maxSegs    int
 }
 
 func NewStreamReassembler(initialSeq uint64) *StreamReassembler {
 	return &StreamReassembler{
 		nextSeq:  initialSeq,
 		segments: make(SegmentHeap, 0),
+		maxSegs:  1000, // Prevent OOM
 		bufferPool: &sync.Pool{
 			New: func() interface{} { return make([]byte, 4096) },
 		},
 	}
 }
 
+// Push adds a segment. The caller is responsible for the returned byte slices and must call Release.
 func (r *StreamReassembler) Push(seq uint64, data []byte) [][]byte {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+
+	if r.segments.Len() >= r.maxSegs {
+		return nil
+	}
+
+	// Handle overlap: trim data already processed
+	if seq < r.nextSeq {
+		offset := r.nextSeq - seq
+		if offset >= uint64(len(data)) {
+			return nil
+		}
+		data = data[offset:]
+		seq = r.nextSeq
+	}
 
 	buf := r.bufferPool.Get().([]byte)
 	copy(buf, data)
@@ -58,8 +75,14 @@ func (r *StreamReassembler) Push(seq uint64, data []byte) [][]byte {
 		if seg.Seq+uint64(len(seg.Data)) > r.nextSeq {
 			ready = append(ready, seg.Data)
 			r.nextSeq = seg.Seq + uint64(len(seg.Data))
+		} else {
+			r.bufferPool.Put(seg.Data[:cap(seg.Data)])
 		}
-		r.bufferPool.Put(seg.Data[:cap(seg.Data)])
 	}
 	return ready
+}
+
+// Release returns a buffer to the pool.
+func (r *StreamReassembler) Release(buf []byte) {
+	r.bufferPool.Put(buf[:cap(buf)])
 }
