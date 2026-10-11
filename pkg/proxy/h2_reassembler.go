@@ -14,14 +14,12 @@ func NewH2Reassembler(pool *FramePool) *H2Reassembler {
 }
 
 // Reassemble reads from an io.Reader and returns a reassembled byte slice.
-// The caller is responsible for returning the buffer to the pool via the reassembler.
 func (r *H2Reassembler) Reassemble(reader io.Reader, totalSize int) ([]byte, error) {
-	bufPtr := r.pool.Get(totalSize)
-	buf := *bufPtr
+	buf := r.pool.Get(totalSize)
 
 	_, err := io.ReadFull(reader, buf[:totalSize])
 	if err != nil {
-		r.pool.Put(bufPtr)
+		r.pool.Put(buf)
 		return nil, err
 	}
 
@@ -30,6 +28,5 @@ func (r *H2Reassembler) Reassemble(reader io.Reader, totalSize int) ([]byte, err
 
 // Release returns the buffer to the pool.
 func (r *H2Reassembler) Release(buf []byte) {
-	// Reconstruct pointer to slice for pool return
-	r.pool.Put(&buf)
+	r.pool.Put(buf)
 }
