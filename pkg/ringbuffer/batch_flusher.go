@@ -1,29 +1,32 @@
 package ringbuffer
 
 import (
+	"sync/atomic"
 	"unsafe"
 )
 
 type BatchFlusher struct {
 	ringBuffer *RingBuffer
-	batchPtr   unsafe.Pointer
+	// batchPtr holds an unsafe.Pointer to the current slice header for atomic swapping
+	batchPtr unsafe.Pointer
 }
 
 func NewBatchFlusher(rb *RingBuffer) *BatchFlusher {
+	// Initialize with an empty slice header
+	initial := make([]*TrafficEvent, 0, rb.capacity)
 	return &BatchFlusher{
 		ringBuffer: rb,
+		batchPtr:   unsafe.Pointer(&initial),
 	}
 }
 
 func (f *BatchFlusher) Flush() []*TrafficEvent {
-	// Retrieve all current events from the ring buffer and reset it
-	// This assumes the RingBuffer has a method to retrieve and clear its contents
-	// or we access the underlying slice directly if exported.
-	// Given the error, we implement the logic to drain the buffer safely.
-	f.ringBuffer.mu.Lock()
-	defer f.ringBuffer.mu.Unlock()
+	// Atomically swap the buffer with a fresh pre-allocated slice
+	// This ensures zero-allocation during the hot path
+	newBuffer := make([]*TrafficEvent, 0, f.ringBuffer.capacity)
 
-	items := f.ringBuffer.buffer
-	f.ringBuffer.buffer = make([]*TrafficEvent, 0, cap(f.ringBuffer.buffer))
-	return items
+	oldPtr := atomic.SwapPointer(&f.batchPtr, unsafe.Pointer(&newBuffer))
+
+	// Dereference the old pointer to get the slice header
+	return *(*[]*TrafficEvent)(oldPtr)
 }
