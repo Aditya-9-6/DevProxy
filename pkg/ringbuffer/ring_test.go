@@ -8,6 +8,60 @@ import (
 	"time"
 )
 
+func TestBatchFlusher_ConcurrentFlush(t *testing.T) {
+	rb := NewRingBuffer(1024)
+	defer rb.Close()
+	flusher := NewBatchFlusher(rb)
+
+	var wg sync.WaitGroup
+	producers := 4
+	consumers := 4
+
+	// Start producers
+	for i := 0; i < producers; i++ {
+		wg.Add(1)
+		go func(pid int) {
+			defer wg.Done()
+			for j := 0; j < 250; j++ {
+				rb.Push(&TrafficEvent{
+					ID:   fmt.Sprintf("p%d-e%d", pid, j),
+					Host: "localhost",
+				})
+			}
+		}(i)
+	}
+
+	// Start consumers flushing batches
+	var totalFlushed atomic.Int64
+	for i := 0; i < consumers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for k := 0; k < 50; k++ {
+				time.Sleep(2 * time.Millisecond)
+				batch := flusher.Flush()
+				if batch != nil {
+					totalFlushed.Add(int64(len(batch)))
+					flusher.Recycle(batch)
+				}
+			}
+		}()
+	}
+
+	wg.Wait()
+
+	// Final flush to catch remainder
+	finalBatch := flusher.Flush()
+	if finalBatch != nil {
+		totalFlushed.Add(int64(len(finalBatch)))
+		flusher.Recycle(finalBatch)
+	}
+
+	if totalFlushed.Load() == 0 {
+		t.Errorf("Expected events to be flushed via BatchFlusher, got 0")
+	}
+}
+
 func TestRingBuffer_PushAndPop(t *testing.T) {
 	rb := NewRingBuffer(64)
 	defer rb.Close()
@@ -31,11 +85,9 @@ func TestRingBuffer_PushAndPop(t *testing.T) {
 }
 
 func TestRingBuffer_SaturationNonBlocking(t *testing.T) {
-	// Ring buffer with small size 16
 	rb := NewRingBuffer(16)
 	defer rb.Close()
 
-	// Fill buffer completely
 	for i := 0; i < 16; i++ {
 		pushed := rb.Push(&TrafficEvent{ID: fmt.Sprintf("req-%d", i)})
 		if !pushed {
@@ -43,7 +95,6 @@ func TestRingBuffer_SaturationNonBlocking(t *testing.T) {
 		}
 	}
 
-	// Next push should NOT block, but return false and increment dropped counter
 	pushed := rb.Push(&TrafficEvent{ID: "overflow-1"})
 	if pushed {
 		t.Fatalf("Expected overflow push to be dropped")
@@ -69,7 +120,6 @@ func TestRingBuffer_ConcurrentLoad(t *testing.T) {
 	producers := 8
 	itemsPerProducer := 500
 
-	// Multiple concurrent producers
 	for p := 0; p < producers; p++ {
 		wg.Add(1)
 		go func(pid int) {
@@ -83,7 +133,6 @@ func TestRingBuffer_ConcurrentLoad(t *testing.T) {
 		}(p)
 	}
 
-	// Concurrent consumer
 	var consumedCount atomic.Int64
 	done := make(chan bool)
 	var consumerWg sync.WaitGroup
@@ -99,7 +148,6 @@ func TestRingBuffer_ConcurrentLoad(t *testing.T) {
 			}
 			select {
 			case <-done:
-				// Drain remainder
 				for rb.TryPop() != nil {
 					consumedCount.Add(1)
 				}
