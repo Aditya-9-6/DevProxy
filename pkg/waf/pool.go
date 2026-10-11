@@ -4,7 +4,7 @@ import "sync"
 
 var bufferPool = sync.Pool{
 	New: func() interface{} {
-		return make([]byte, 0, 4096)
+		return make([]byte, 4096)
 	},
 }
 
@@ -13,5 +13,5 @@ func GetBuffer() []byte {
 }
 
 func PutBuffer(b []byte) {
-	bufferPool.Put(b[:0])
+	bufferPool.Put(b)
 }

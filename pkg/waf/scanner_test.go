@@ -6,14 +6,19 @@ import (
 )
 
 func TestScanner(t *testing.T) {
+	t.Parallel()
 	patterns := []string{"SELECT", "UNION", "<script>"}
 	scanner, _ := NewScanner(patterns)
 	data := []byte("SELECT * FROM users UNION <script>")
 
 	found := make(map[string]bool)
-	scanner.ScanPayload(bytes.NewReader(data), func(match string) {
+	err := scanner.ScanPayload(bytes.NewReader(data), func(match string) {
 		found[match] = true
 	})
+
+	if err != nil {
+		t.Fatalf("unexpected scan error: %v", err)
+	}
 
 	for _, p := range patterns {
 		if !found[p] {
@@ -23,13 +28,14 @@ func TestScanner(t *testing.T) {
 }
 
 func TestAutomatonOverlapping(t *testing.T) {
-	patterns := []string{"abc", "bc"}
-	auto, _ := NewAutomaton(patterns)
+	t.Parallel()
+	patterns := [][]byte{[]byte("abc"), []byte("bc")}
+	auto := NewAutomaton(patterns)
 	data := []byte("abc")
 
 	matches := []string{}
-	auto.Scan(data, func(match string) {
-		matches = append(matches, match)
+	auto.Scan(data, func(idx int, pos int) {
+		matches = append(matches, string(auto.patterns[idx]))
 	})
 
 	if len(matches) != 2 {
@@ -42,6 +48,6 @@ func BenchmarkScan(b *testing.B) {
 	data := []byte("this is a test payload for malicious content")
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		scanner.ScanPayload(bytes.NewReader(data), func(m string) {})
+		_ = scanner.ScanPayload(bytes.NewReader(data), func(m string) {})
 	}
 }
