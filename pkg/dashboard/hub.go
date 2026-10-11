@@ -1,51 +1,77 @@
 package dashboard
 
 import (
+	"crypto/sha1"
+	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
-	"log"
+	"io"
+	"net"
 	"net/http"
+	"strings"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/Aditya-9-6/DevProxy/pkg/analysis"
 	"github.com/Aditya-9-6/DevProxy/pkg/ringbuffer"
-	"github.com/gorilla/websocket"
 )
 
-var upgrader = websocket.Upgrader{
-	ReadBufferSize:  1024,
-	WriteBufferSize: 1024,
-	CheckOrigin: func(r *http.Request) bool {
-		return true // Allow local dashboard connections
-	},
+// RFC 6455 WebSocket opcodes.
+const (
+	OpContinuation = 0x0
+	OpText         = 0x1
+	OpBinary       = 0x2
+	OpClose        = 0x8
+	OpPing         = 0x9
+	OpPong         = 0xA
+)
+
+// BroadcastPayload represents the data sent to WebSocket clients.
+type BroadcastPayload struct {
+	Type      string                   `json:"type"` // "EVENT" or "WEBSOCKET"
+	Event     *ringbuffer.TrafficEvent `json:"event,omitempty"`
+	Findings  []*analysis.Finding      `json:"findings,omitempty"`
+	WSMessage *WSMessage               `json:"ws_message,omitempty"`
 }
 
-// Client represents a single WebSocket connection.
+// WSMessage represents a raw WebSocket frame captured for the dashboard.
+type WSMessage struct {
+	Opcode int    `json:"opcode"` // 1=Text, 2=Binary
+	Data   []byte `json:"data"`
+	Length int    `json:"length"`
+}
+
+// Client represents a connected WebSocket user.
 type Client struct {
-	hub  *Hub
-	conn *websocket.Conn
-	send chan []byte
+	Hub  *Hub
+	Send chan *BroadcastPayload
+	conn net.Conn
 }
 
-// Hub maintains the set of active WebSocket clients and broadcasts messages.
+// Hub maintains the set of active clients and broadcasts messages.
 type Hub struct {
 	clients    map[*Client]bool
-	broadcast  chan []byte
+	broadcast  chan *BroadcastPayload
 	register   chan *Client
 	unregister chan *Client
-	mu         sync.Mutex
+	mu         sync.RWMutex
+
+	// latencyBuckets tracks request latency in 1ms increments (0-999ms)
+	latencyBuckets [1000]atomic.Uint64
 }
 
-// NewHub creates a new WebSocket Hub instance.
+// NewHub initializes and returns a new Hub.
 func NewHub() *Hub {
 	return &Hub{
+		broadcast:  make(chan *BroadcastPayload, 256),
+		register:   make(chan *Client, 64),
+		unregister: make(chan *Client, 64),
 		clients:    make(map[*Client]bool),
-		broadcast:  make(chan []byte, 256),
-		register:   make(chan *Client),
-		unregister: make(chan *Client),
 	}
 }
 
-// Run starts the hub loop.
+// Run starts the main event loop for client registration, unregistration, and broadcasting.
 func (h *Hub) Run() {
 	for {
 		select {
@@ -53,89 +79,189 @@ func (h *Hub) Run() {
 			h.mu.Lock()
 			h.clients[client] = true
 			h.mu.Unlock()
-
 		case client := <-h.unregister:
 			h.mu.Lock()
 			if _, ok := h.clients[client]; ok {
 				delete(h.clients, client)
-				close(client.send)
+				close(client.Send)
 			}
 			h.mu.Unlock()
-
-		case message := <-h.broadcast:
-			h.mu.Lock()
+		case payload := <-h.broadcast:
+			h.mu.RLock()
 			for client := range h.clients {
 				select {
-				case client.send <- message:
+				case client.Send <- payload:
 				default:
-					// Client send buffer is full, drop to prevent blocking
-					close(client.send)
-					delete(h.clients, client)
+					// Client buffer full, skip
 				}
 			}
-			h.mu.Unlock()
+			h.mu.RUnlock()
 		}
 	}
 }
 
-// BroadcastEvent marshals traffic events and findings into JSON and broadcasts to all connected clients.
-func (h *Hub) BroadcastEvent(event *ringbuffer.TrafficEvent, findings []*analysis.Finding) {
-	payload := map[string]interface{}{
-		"event":    event,
-		"findings": findings,
-	}
-
-	data, err := json.Marshal(payload)
-	if err != nil {
-		log.Printf("[Hub Error] Failed to marshal broadcast event: %v", err)
+// ServeWS handles WebSocket upgrade requests and registers client connections.
+func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request) {
+	if !strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
+		http.Error(w, "expected websocket upgrade", http.StatusBadRequest)
 		return
 	}
 
-	select {
-	case h.broadcast <- data:
-	default:
-		// Non-blocking send if hub broadcast channel is saturated
+	key := r.Header.Get("Sec-WebSocket-Key")
+	if key == "" {
+		http.Error(w, "missing Sec-WebSocket-Key", http.StatusBadRequest)
+		return
 	}
-}
 
-// ServeWS handles WebSocket requests from the dashboard.
-func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request) {
-	conn, err := upgrader.Upgrade(w, r, nil)
+	hj, ok := w.(http.Hijacker)
+	if !ok {
+		http.Error(w, "websocket hijack unsupported", http.StatusInternalServerError)
+		return
+	}
+
+	conn, brw, err := hj.Hijack()
 	if err != nil {
-		log.Printf("[WebSocket Upgrade Error] %v", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	hasher := sha1.New()
+	hasher.Write([]byte(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"))
+	acceptKey := base64.StdEncoding.EncodeToString(hasher.Sum(nil))
+
+	resp := "HTTP/1.1 101 Switching Protocols\r\n" +
+		"Upgrade: websocket\r\n" +
+		"Connection: Upgrade\r\n" +
+		"Sec-WebSocket-Accept: " + acceptKey + "\r\n\r\n"
+
+	if _, err := io.WriteString(conn, resp); err != nil {
+		_ = conn.Close()
 		return
 	}
 
 	client := &Client{
-		hub:  h,
+		Hub:  h,
+		Send: make(chan *BroadcastPayload, 64),
 		conn: conn,
-		send: make(chan []byte, 256),
 	}
+
 	h.register <- client
 
 	go client.writePump()
-	go client.readPump()
+	go client.readPump(brw.Reader)
 }
 
 func (c *Client) writePump() {
-	defer c.conn.Close()
-	for message := range c.send {
-		err := c.conn.WriteMessage(websocket.TextMessage, message)
+	defer func() {
+		_ = c.conn.Close()
+	}()
+
+	for payload := range c.Send {
+		data, err := json.Marshal(payload)
 		if err != nil {
-			break
+			continue
+		}
+		if err := writeWSFrame(c.conn, OpText, data); err != nil {
+			return
+		}
+	}
+	_ = writeWSFrame(c.conn, OpClose, nil)
+}
+
+func (c *Client) readPump(r io.Reader) {
+	defer func() {
+		select {
+		case c.Hub.unregister <- c:
+		default:
+		}
+		_ = c.conn.Close()
+	}()
+
+	buf := make([]byte, 1024)
+	for {
+		_, err := r.Read(buf)
+		if err != nil {
+			return
 		}
 	}
 }
 
-func (c *Client) readPump() {
-	defer func() {
-		c.hub.unregister <- c
-		_ = c.conn.Close()
-	}()
-	for {
-		_, _, err := c.conn.ReadMessage()
-		if err != nil {
-			break
+func writeWSFrame(w io.Writer, opcode int, payload []byte) error {
+	length := len(payload)
+	var header []byte
+	if length <= 125 {
+		header = []byte{byte(0x80 | opcode), byte(length)}
+	} else if length <= 65535 {
+		header = make([]byte, 4)
+		header[0] = byte(0x80 | opcode)
+		header[1] = 126
+		binary.BigEndian.PutUint16(header[2:], uint16(length))
+	} else {
+		header = make([]byte, 10)
+		header[0] = byte(0x80 | opcode)
+		header[1] = 127
+		binary.BigEndian.PutUint64(header[2:], uint64(length))
+	}
+	if _, err := w.Write(header); err != nil {
+		return err
+	}
+	if length > 0 {
+		_, err := w.Write(payload)
+		return err
+	}
+	return nil
+}
+
+// RecordLatency increments the bucket corresponding to the duration.
+func (h *Hub) RecordLatency(d time.Duration) {
+	ms := d.Milliseconds()
+	if ms < 0 {
+		ms = 0
+	}
+	if ms > 999 {
+		ms = 999
+	}
+	h.latencyBuckets[ms].Add(1)
+}
+
+// GetPercentiles calculates p50, p90, and p99 from the latency buckets.
+func (h *Hub) GetPercentiles() (p50, p90, p99 int64) {
+	var total uint64
+	for i := 0; i < 1000; i++ {
+		total += h.latencyBuckets[i].Load()
+	}
+	if total == 0 {
+		return 0, 0, 0
+	}
+
+	find := func(targetPercent float64) int64 {
+		target := uint64(float64(total) * targetPercent)
+		var count uint64
+		for i := 0; i < 1000; i++ {
+			count += h.latencyBuckets[i].Load()
+			if count >= target {
+				return int64(i)
+			}
 		}
+		return 999
+	}
+
+	return find(0.50), find(0.90), find(0.99)
+}
+
+// BroadcastEvent sends a traffic event and its findings to all dashboard clients.
+func (h *Hub) BroadcastEvent(event *ringbuffer.TrafficEvent, findings []*analysis.Finding) {
+	h.broadcast <- &BroadcastPayload{
+		Type:     "EVENT",
+		Event:    event,
+		Findings: findings,
+	}
+}
+
+// BroadcastWSMessage sends a captured WebSocket message to all dashboard clients.
+func (h *Hub) BroadcastWSMessage(msg *WSMessage) {
+	h.broadcast <- &BroadcastPayload{
+		Type:      "WEBSOCKET",
+		WSMessage: msg,
 	}
 }
