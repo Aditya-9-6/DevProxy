@@ -18,6 +18,8 @@ func NewTLSBuffer() *TLSBuffer {
 }
 
 func (b *TLSBuffer) Release() {
-	bufferPool.Put(b.Data)
-	b.Data = nil
+	if b.Data != nil {
+		bufferPool.Put(b.Data)
+		b.Data = nil
+	}
 }

@@ -2,9 +2,16 @@ package reassembler
 
 import (
 	"errors"
+	"sync"
+)
+
+var (
+	ErrBufferOverflow = errors.New("tls reassembler: buffer overflow")
+	ErrInvalidHeader  = errors.New("tls reassembler: invalid header")
 )
 
 type Reassembler struct {
+	mu     sync.Mutex
 	buffer *TLSBuffer
 }
 
@@ -13,9 +20,13 @@ func NewReassembler() *Reassembler {
 }
 
 func (r *Reassembler) Reassemble(chunk []byte) ([]byte, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
 	if r.buffer.Len+len(chunk) > len(r.buffer.Data) {
-		return nil, errors.New("buffer overflow")
+		return nil, ErrBufferOverflow
 	}
+
 	copy(r.buffer.Data[r.buffer.Len:], chunk)
 	r.buffer.Len += len(chunk)
 
@@ -27,10 +38,12 @@ func (r *Reassembler) Reassemble(chunk []byte) ([]byte, error) {
 	totalLen := 5 + recordLen
 
 	if r.buffer.Len >= totalLen {
-		result := make([]byte, totalLen)
-		copy(result, r.buffer.Data[:totalLen])
-		copy(r.buffer.Data, r.buffer.Data[totalLen:r.buffer.Len])
-		r.buffer.Len -= totalLen
+		result := r.buffer.Data[:totalLen]
+		remaining := r.buffer.Len - totalLen
+		if remaining > 0 {
+			copy(r.buffer.Data, r.buffer.Data[totalLen:r.buffer.Len])
+		}
+		r.buffer.Len = remaining
 		return result, nil
 	}
 

@@ -5,20 +5,32 @@ import (
 )
 
 func TestReassembler(t *testing.T) {
-	r := NewReassembler()
-	defer r.buffer.Release()
-
-	// TLS Record: Type 22 (Handshake), Version 3.3, Length 2
-	fragment1 := []byte{22, 3, 3, 0, 2}
-	fragment2 := []byte{0x01, 0x02}
-
-	res, _ := r.Reassemble(fragment1)
-	if res != nil {
-		t.Error("Expected nil, got data")
+	tests := []struct {
+		name     string
+		chunks   [][]byte
+		expected int
+		err      bool
+	}{
+		{"HappyPath", [][]byte{{22, 3, 3, 0, 2}, {0x01, 0x02}}, 7, false},
+		{"Fragmented", [][]byte{{22, 3, 3}, {0, 2, 0x01, 0x02}}, 7, false},
+		{"Overflow", [][]byte{make([]byte, 70000)}, 0, true},
 	}
 
-	res, _ = r.Reassemble(fragment2)
-	if len(res) != 7 {
-		t.Errorf("Expected length 7, got %d", len(res))
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := NewReassembler()
+			defer r.buffer.Release()
+			var res []byte
+			var err error
+			for _, chunk := range tt.chunks {
+				res, err = r.Reassemble(chunk)
+				if err != nil && !tt.err {
+					t.Fatalf("unexpected error: %v", err)
+				}
+			}
+			if !tt.err && len(res) != tt.expected {
+				t.Errorf("expected %d, got %d", tt.expected, len(res))
+			}
+		})
 	}
 }
