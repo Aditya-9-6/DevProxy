@@ -59,4 +59,15 @@ func TestDecompressor(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("malformed_data", func(t *testing.T) {
+		malformed := []byte{0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00}
+		r, err := GetDecompressor(bytes.NewReader(malformed), "gzip")
+		if err == nil {
+			_, err = io.ReadAll(r)
+			if err == nil {
+				t.Error("expected error for malformed gzip data, got nil")
+			}
+		}
+	})
 }
