@@ -1,7 +1,11 @@
 package waf
 
+import "errors"
+
+const MaxPatterns = 1000
+
 type ACNode struct {
-	children map[byte]*ACNode
+	children [256]*ACNode
 	fail     *ACNode
 	outputs  []string
 }
@@ -10,44 +14,49 @@ type Automaton struct {
 	root *ACNode
 }
 
-func NewAutomaton(patterns []string) *Automaton {
-	root := &ACNode{children: make(map[byte]*ACNode)}
+func NewAutomaton(patterns []string) (*Automaton, error) {
+	if len(patterns) > MaxPatterns {
+		return nil, errors.New("too many patterns")
+	}
+	root := &ACNode{}
 	for _, p := range patterns {
 		curr := root
 		for i := 0; i < len(p); i++ {
 			b := p[i]
 			if curr.children[b] == nil {
-				curr.children[b] = &ACNode{children: make(map[byte]*ACNode)}
+				curr.children[b] = &ACNode{}
 			}
 			curr = curr.children[b]
 		}
 		curr.outputs = append(curr.outputs, p)
 	}
 	queue := make([]*ACNode, 0)
-	for _, child := range root.children {
-		child.fail = root
-		queue = append(queue, child)
+	for i := 0; i < 256; i++ {
+		if root.children[i] != nil {
+			root.children[i].fail = root
+			queue = append(queue, root.children[i])
+		}
 	}
 	for len(queue) > 0 {
 		curr := queue[0]
 		queue = queue[1:]
-		for b, child := range curr.children {
-			f := curr.fail
-			for f != nil && f.children[b] == nil {
-				f = f.fail
-			}
-			if f != nil {
-				child.fail = f.children[b]
-			} else {
-				child.fail = root
-			}
-			if child.fail != nil {
+		for i := 0; i < 256; i++ {
+			if child := curr.children[i]; child != nil {
+				f := curr.fail
+				for f != nil && f.children[i] == nil {
+					f = f.fail
+				}
+				if f != nil {
+					child.fail = f.children[i]
+				} else {
+					child.fail = root
+				}
 				child.outputs = append(child.outputs, child.fail.outputs...)
+				queue = append(queue, child)
 			}
-			queue = append(queue, child)
 		}
 	}
-	return &Automaton{root: root}
+	return &Automaton{root: root}, nil
 }
 
 func (a *Automaton) Scan(data []byte, callback func(match string)) {

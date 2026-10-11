@@ -1,16 +1,17 @@
 package waf
 
 import (
+	"bytes"
 	"testing"
 )
 
 func TestScanner(t *testing.T) {
 	patterns := []string{"SELECT", "UNION", "<script>"}
-	scanner := NewScanner(patterns)
+	scanner, _ := NewScanner(patterns)
 	data := []byte("SELECT * FROM users UNION <script>")
 
 	found := make(map[string]bool)
-	scanner.ScanPayload(data, func(match string) {
+	scanner.ScanPayload(bytes.NewReader(data), func(match string) {
 		found[match] = true
 	})
 
@@ -23,7 +24,7 @@ func TestScanner(t *testing.T) {
 
 func TestAutomatonOverlapping(t *testing.T) {
 	patterns := []string{"abc", "bc"}
-	auto := NewAutomaton(patterns)
+	auto, _ := NewAutomaton(patterns)
 	data := []byte("abc")
 
 	matches := []string{}
@@ -33,5 +34,14 @@ func TestAutomatonOverlapping(t *testing.T) {
 
 	if len(matches) != 2 {
 		t.Errorf("expected 2 matches, got %d", len(matches))
+	}
+}
+
+func BenchmarkScan(b *testing.B) {
+	scanner, _ := NewScanner([]string{"malicious", "payload", "test"})
+	data := []byte("this is a test payload for malicious content")
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		scanner.ScanPayload(bytes.NewReader(data), func(m string) {})
 	}
 }
