@@ -14,9 +14,9 @@ type IdleConn struct {
 	Hazard   *HazardPointer
 }
 
-// Reaper manages idle connection cleanup.
+// Reaper manages idle connection cleanup using RWMutex for high-throughput access.
 type Reaper struct {
-	mu       sync.Mutex
+	mu       sync.RWMutex
 	conns    map[string]*IdleConn
 	interval time.Duration
 }
