@@ -11,15 +11,11 @@ import (
 
 type HappyEyeballsDialer struct {
 	resolver *dns.Resolver
-	pool     sync.Pool
 }
 
 func NewHappyEyeballsDialer() *HappyEyeballsDialer {
 	return &HappyEyeballsDialer{
 		resolver: dns.NewResolver(),
-		pool: sync.Pool{
-			New: func() interface{} { return new(net.Dialer) },
-		},
 	}
 }
 
@@ -34,13 +30,15 @@ func (d *HappyEyeballsDialer) DialContext(ctx context.Context, network, address 
 		return (&net.Dialer{}).DialContext(ctx, network, address)
 	}
 
+	return d.raceDials(ctx, network, addrs, port)
+}
+
+func (d *HappyEyeballsDialer) raceDials(ctx context.Context, network string, addrs []string, port string) (net.Conn, error) {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 
-	var wg sync.WaitGroup
 	connChan := make(chan net.Conn, len(addrs))
-
-	// Concurrency limiter to prevent FD exhaustion
+	var wg sync.WaitGroup
 	sem := make(chan struct{}, 8)
 
 	for _, addr := range addrs {
@@ -55,10 +53,8 @@ func (d *HappyEyeballsDialer) DialContext(ctx context.Context, network, address 
 			defer wg.Done()
 			defer func() { <-sem }()
 
-			dialer := d.pool.Get().(*net.Dialer)
+			dialer := &net.Dialer{}
 			conn, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort(ip, port))
-			d.pool.Put(dialer)
-
 			if err == nil {
 				select {
 				case connChan <- conn:
@@ -74,26 +70,18 @@ func (d *HappyEyeballsDialer) DialContext(ctx context.Context, network, address 
 		close(connChan)
 	}()
 
-	var establishedConns []net.Conn
-	defer func() {
-		for _, c := range establishedConns {
-			c.Close()
+	select {
+	case conn, ok := <-connChan:
+		if !ok {
+			return nil, &net.OpError{Op: "dial", Net: network, Err: context.DeadlineExceeded}
 		}
-	}()
-
-	for {
-		select {
-		case conn, ok := <-connChan:
-			if !ok {
-				return nil, &net.OpError{Op: "dial", Net: network, Source: nil, Addr: nil, Err: context.DeadlineExceeded}
-			}
-			// Return the first successful connection and buffer/close others
+		go func() {
 			for extra := range connChan {
 				extra.Close()
 			}
-			return conn, nil
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		}
+		}()
+		return conn, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
 	}
 }

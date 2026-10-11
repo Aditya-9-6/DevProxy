@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"testing"
 	"time"
@@ -27,7 +28,6 @@ func TestDNSCache_Eviction(t *testing.T) {
 	host := "example.internal"
 	ips := []string{"127.0.0.1"}
 
-	// Set with very short TTL
 	c.Set(host, ips, 1*time.Millisecond)
 	time.Sleep(5 * time.Millisecond)
 
@@ -37,27 +37,23 @@ func TestDNSCache_Eviction(t *testing.T) {
 	}
 }
 
-func TestHappyEyeballsDialer_SuccessfulConnection(t *testing.T) {
+func TestHappyEyeballsDialer_RaceCondition(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		t.Fatalf("failed to start listener: %v", err)
+		t.Fatal(err)
 	}
 	defer listener.Close()
 
-	go func() {
-		conn, err := listener.Accept()
-		if err == nil {
-			conn.Close()
-		}
-	}()
-
 	d := NewHappyEyeballsDialer()
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	conn, err := d.DialContext(ctx, "tcp", listener.Addr().String())
+	portStr := fmt.Sprintf("%d", listener.Addr().(*net.TCPAddr).Port)
+
+	// Simulate multiple IPs where one works
+	conn, err := d.raceDials(ctx, "tcp", []string{"127.0.0.1", "127.0.0.1"}, portStr)
 	if err != nil {
-		t.Fatalf("expected successful dial, got %v", err)
+		t.Fatalf("expected success, got %v", err)
 	}
-	defer conn.Close()
+	conn.Close()
 }
