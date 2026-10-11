@@ -15,7 +15,21 @@ type DNSCache struct {
 }
 
 func NewDNSCache() *DNSCache {
-	return &DNSCache{}
+	c := &DNSCache{}
+	go c.cleanupLoop()
+	return c
+}
+
+func (c *DNSCache) cleanupLoop() {
+	ticker := time.NewTicker(10 * time.Minute)
+	for range ticker.C {
+		c.data.Range(func(key, value interface{}) bool {
+			if entry, ok := value.(*cacheEntry); ok && time.Now().After(entry.expiry) {
+				c.data.Delete(key)
+			}
+			return true
+		})
+	}
 }
 
 func (c *DNSCache) Get(host string) ([]string, bool) {
@@ -25,6 +39,7 @@ func (c *DNSCache) Get(host string) ([]string, bool) {
 	}
 	entry := val.(*cacheEntry)
 	if time.Now().After(entry.expiry) {
+		c.data.Delete(host)
 		return nil, false
 	}
 	return entry.ips, true

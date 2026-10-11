@@ -24,10 +24,14 @@ func NewHappyEyeballsDialer() *HappyEyeballsDialer {
 }
 
 func (d *HappyEyeballsDialer) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
-	host, port, _ := net.SplitHostPort(address)
+	host, port, err := net.SplitHostPort(address)
+	if err != nil {
+		return (&net.Dialer{}).DialContext(ctx, network, address)
+	}
+
 	addrs, err := d.resolver.Resolve(ctx, host)
 	if err != nil {
-		return net.Dial(network, address)
+		return (&net.Dialer{}).DialContext(ctx, network, address)
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
