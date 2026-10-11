@@ -31,7 +31,7 @@ type zstdReadCloser struct {
 }
 
 func (z *zstdReadCloser) Close() error {
-	z.Decoder.Close()
+	// Close the underlying decoder or let it be returned to pool safely
 	zstdPool.Put(z.Decoder)
 	return nil
 }
@@ -45,6 +45,18 @@ func (b *brotliReadCloser) Close() error {
 	return nil
 }
 
+type deflateReadCloser struct {
+	io.ReadCloser
+	fr io.ReadCloser
+}
+
+func (d *deflateReadCloser) Close() error {
+	if d.fr != nil {
+		return d.fr.Close()
+	}
+	return nil
+}
+
 func GetDecompressor(r io.Reader, encoding string) (io.ReadCloser, error) {
 	limitedReader := io.LimitReader(r, maxDecompressedSize)
 
@@ -52,7 +64,11 @@ func GetDecompressor(r io.Reader, encoding string) (io.ReadCloser, error) {
 	case "gzip":
 		return gzip.NewReader(limitedReader)
 	case "deflate":
-		return io.NopCloser(flate.NewReader(limitedReader)), nil
+		fr := flate.NewReader(limitedReader)
+		return &deflateReadCloser{
+			ReadCloser: io.NopCloser(fr),
+			fr:         fr,
+		}, nil
 	case "br":
 		br := brPool.Get().(*brotli.Reader)
 		br.Reset(limitedReader)
@@ -60,6 +76,8 @@ func GetDecompressor(r io.Reader, encoding string) (io.ReadCloser, error) {
 	case "zstd":
 		dec := zstdPool.Get().(*zstd.Decoder)
 		if err := dec.Reset(limitedReader); err != nil {
+			zn := dec
+			_ = zn
 			zstdPool.Put(dec)
 			return nil, err
 		}

@@ -2,8 +2,10 @@ package proxy
 
 import (
 	"bytes"
+	"compress/flate"
 	"compress/gzip"
 	"io"
+	"sync"
 	"testing"
 
 	"github.com/andybalholm/brotli"
@@ -21,6 +23,13 @@ func TestDecompressor(t *testing.T) {
 		{"gzip", "gzip", func(b []byte) []byte {
 			var buf bytes.Buffer
 			w := gzip.NewWriter(&buf)
+			w.Write(b)
+			w.Close()
+			return buf.Bytes()
+		}},
+		{"deflate", "deflate", func(b []byte) []byte {
+			var buf bytes.Buffer
+			w, _ := flate.NewWriter(&buf, flate.DefaultCompression)
 			w.Write(b)
 			w.Close()
 			return buf.Bytes()
@@ -63,7 +72,6 @@ func TestDecompressor(t *testing.T) {
 	}
 
 	t.Run("limit_enforcement", func(t *testing.T) {
-		// Create a large stream exceeding maxDecompressedSize
 		largeData := make([]byte, maxDecompressedSize+1024)
 		for i := range largeData {
 			largeData[i] = 'A'
@@ -79,7 +87,6 @@ func TestDecompressor(t *testing.T) {
 			t.Fatal(err)
 		}
 		if int64(len(got)) > maxDecompressedSize {
-			// io.LimitReader should have restricted it
 			t.Errorf("expected read to be limited to %d, got %d", maxDecompressedSize, len(got))
 		}
 	})
@@ -93,5 +100,61 @@ func TestDecompressor(t *testing.T) {
 				t.Error("expected error for malformed gzip data, got nil")
 			}
 		}
+	})
+
+	t.Run("concurrent_pools", func(t *testing.T) {
+		dataBrotli := []byte("concurrent brotli test data")
+		var bufBr bytes.Buffer
+		wwBr := brotli.NewWriter(&bufBr)
+		wwBr.Write(dataBrotli)
+		wwBr.Close()
+		compressedBr := bufBr.Bytes()
+
+		dataZstd := []byte("concurrent zstd test data")
+		var bufZstd bytes.Buffer
+		wwZstd, _ := zstd.NewWriter(&bufZstd)
+		wwZstd.Write(dataZstd)
+		wwZstd.Close()
+		compressedZstd := bufZstd.Bytes()
+
+		var wg sync.WaitGroup
+		workers := 50
+		loops := 20
+
+		for i := 0; i < workers; i++ {
+			wg.Add(2)
+			go func() {
+				defer wg.Done()
+				for j := 0; j < loops; j++ {
+					r, err := GetDecompressor(bytes.NewReader(compressedBr), "br")
+					if err != nil {
+						t.Errorf("concurrent br get error: %v", err)
+						return
+					}
+					got, err := io.ReadAll(r)
+					r.Close()
+					if err != nil || !bytes.Equal(got, dataBrotli) {
+						t.Errorf("concurrent br read error or mismatch: %v, got %s", err, got)
+					}
+				}
+			}()
+
+			go func() {
+				defer wg.Done()
+				for j := 0; j < loops; j++ {
+					r, err := GetDecompressor(bytes.NewReader(compressedZstd), "zstd")
+					if err != nil {
+						t.Errorf("concurrent zstd get error: %v", err)
+						return
+					}
+					got, err := io.ReadAll(r)
+					r.Close()
+					if err != nil || !bytes.Equal(got, dataZstd) {
+						t.Errorf("concurrent zstd read error or mismatch: %v, got %s", err, got)
+					}
+				}
+			}()
+		}
+		wg.Wait()
 	})
 }
