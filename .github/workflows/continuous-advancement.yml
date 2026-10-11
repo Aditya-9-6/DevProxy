@@ -35,13 +35,21 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          go-version: '1.25'
           cache: true
 
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+
+      - name: Generate GitHub App Token (Higher Rate Limits)
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        continue-on-error: true
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
 
       - name: Install GossipMesh
         run: |
@@ -54,7 +62,7 @@ jobs:
 
       - name: Execute Continuous Multi-Cycle Development Batch
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
           GEMINI_KEY_POOL: ${{ secrets.GEMINI_KEY_POOL || '' }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY || '' }}

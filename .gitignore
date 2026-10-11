@@ -32,3 +32,9 @@ ci_fix_*.json
 
 vscode-extension/node_modules/
 vscode-extension/out/
+
+# Python & Mesh cache
+__pycache__/
+*.pyc
+.gossip_mesh/
+G:/**

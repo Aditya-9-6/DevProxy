@@ -24,8 +24,17 @@ try:
 except ImportError:
     GOSSIP_AVAILABLE = False
 
-DEFAULT_MODEL = "gemini-3-flash-preview"
-FALLBACK_MODELS = ["gemini-3-flash-preview", "gemma-4-26b-a4b-it", "gemini-flash-latest"]
+DEFAULT_MODEL = "gemini-3.1-flash-lite"
+FALLBACK_MODELS = [
+    "gemini-3.1-flash-lite",
+    "gemini-3.5-flash-lite",
+    "gemini-3.5-flash",
+    "gemini-3.7-flash",
+    "gemini-3-flash-preview",
+    "gemini-3.1-pro-preview",
+]
+
+DEFAULT_KEYS = []
 
 def load_gemini_keys() -> list[str]:
     """Dynamically loads Gemini API keys from environment variables and local .gemini_keys files."""
@@ -38,7 +47,7 @@ def load_gemini_keys() -> list[str]:
         val = os.environ.get(var, "").strip()
         if val and val not in keys:
             keys.append(val)
-    for check_dir in (Path("."), Path(__file__).resolve().parent, Path(__file__).resolve().parent.parent, Path(__file__).resolve().parent.parent.parent):
+    for check_dir in (Path("."), Path(__file__).resolve().parent, Path(__file__).resolve().parent.parent, Path(__file__).resolve().parent.parent.parent, Path.home()):
         key_file = check_dir / ".gemini_keys"
         if key_file.exists():
             try:
@@ -48,6 +57,9 @@ def load_gemini_keys() -> list[str]:
                         keys.append(k)
             except Exception:
                 pass
+    for k in DEFAULT_KEYS:
+        if k not in keys:
+            keys.append(k)
     return keys
 
 # Ensure active key in environment
@@ -177,6 +189,70 @@ CATALOG = [
         "difficulty": "enhancement",
         "spec": "Implement a lock-free batch event draining mechanism for DevProxy's circular buffer using atomic pointer swapping, eliminating mutex contention during high-throughput multi-worker packet streaming.",
         "target_files": ["pkg/ringbuffer/batch_flusher.go", "pkg/ringbuffer/ring.go"],
+        "from_catalog": True
+    },
+    {
+        "title": "feat(ja4): Implement JA4/JA4S TLS client & server fingerprinting with zero heap allocations",
+        "area": "area/security",
+        "difficulty": "enhancement",
+        "spec": "Implement a high-throughput, zero-allocation JA4 TLS ClientHello and JA4S ServerHello fingerprint generator matching the FoxIO JA4 specification, parsing protocol versions, ALPN, extensions, and cipher suites into canonical 36-character hashes using stack buffers.",
+        "target_files": ["pkg/proxy/ja4.go", "pkg/proxy/ja4_test.go"],
+        "from_catalog": True
+    },
+    {
+        "title": "feat(compress): Add zero-allocation streaming Brotli & Zstandard payload decompression filter",
+        "area": "area/proxy",
+        "difficulty": "enhancement",
+        "spec": "Implement transparent, streaming content-encoding decoders for Brotli (br) and Zstandard (zstd) responses using sync.Pool reader recycling, streaming uncompressed bodies into the capture buffer without buffering entire files in heap memory.",
+        "target_files": ["pkg/proxy/decompress.go", "pkg/proxy/decompress_test.go"],
+        "from_catalog": True
+    },
+    {
+        "title": "feat(ratelimit): Implement distributed sliding-window log and leaky-bucket rate limiter with atomic clocks",
+        "area": "area/proxy",
+        "difficulty": "enhancement",
+        "spec": "Implement an in-memory high-throughput sliding-window log rate limiter with monotonic microsecond timestamps and atomic Compare-And-Swap counters, providing microsecond-precision burst protection per IP or API token with bounded memory overhead.",
+        "target_files": ["pkg/proxy/ratelimit.go", "pkg/proxy/ratelimit_test.go"],
+        "from_catalog": True
+    },
+    {
+        "title": "feat(wasm): Add embedded WebAssembly request and response filter runtime using wazero",
+        "area": "area/proxy",
+        "difficulty": "enhancement",
+        "spec": "Integrate the pure-Go wazero WebAssembly runtime to execute compiled guest filter modules against intercepted HTTP request and response headers and body chunks with memory sandboxing and strict CPU execution timeouts.",
+        "target_files": ["pkg/proxy/wasm_filter.go", "pkg/proxy/wasm_filter_test.go"],
+        "from_catalog": True
+    },
+    {
+        "title": "feat(graphql): Implement GraphQL query complexity scoring & AST introspection security guard in WAF",
+        "area": "area/security",
+        "difficulty": "enhancement",
+        "spec": "Implement a zero-dependency lexical tokenizer and recursive descent AST parser for incoming GraphQL POST bodies, computing query depth and field complexity scores to reject deeply nested denial-of-service queries before forwarding to upstreams.",
+        "target_files": ["pkg/analysis/graphql_guard.go", "pkg/analysis/graphql_guard_test.go"],
+        "from_catalog": True
+    },
+    {
+        "title": "feat(metrics): Implement lock-free Prometheus OpenMetrics expvar exporter with atomic exponential buckets",
+        "area": "area/metrics",
+        "difficulty": "enhancement",
+        "spec": "Implement an ultra-low latency Prometheus text-format metrics exporter using 64-bit atomic counters and exponential latency histograms without global mutex locks on proxy hot paths, exposing /metrics endpoint.",
+        "target_files": ["pkg/metrics/exporter.go", "pkg/metrics/exporter_test.go"],
+        "from_catalog": True
+    },
+    {
+        "title": "feat(upstream): Add active TCP RTT health checker with passive exponential moving average latency tracker",
+        "area": "area/proxy",
+        "difficulty": "enhancement",
+        "spec": "Implement an autonomous upstream cluster manager that computes round-trip latency using an exponential moving average (EMA) on live proxied requests, combined with non-blocking TCP SYN probing to dynamically route around degrading backends.",
+        "target_files": ["pkg/proxy/healthcheck.go", "pkg/proxy/healthcheck_test.go"],
+        "from_catalog": True
+    },
+    {
+        "title": "feat(socks5): Add transparent SOCKS5 upstream proxy dialer with authentication support",
+        "area": "area/proxy",
+        "difficulty": "enhancement",
+        "spec": "Implement an RFC 1928 SOCKS5 client transport wrapper supporting NO_AUTH and USERNAME_PASSWORD handshakes, allowing DevProxy to route intercepted egress traffic through upstream corporate SOCKS5 and Tor proxy gateways.",
+        "target_files": ["pkg/proxy/socks5.go", "pkg/proxy/socks5_test.go"],
         "from_catalog": True
     }
 ]
@@ -469,8 +545,8 @@ def save_backlog(workspace: Path, backlog: list):
 
 def generate_ai_advancement(intel: dict) -> dict:
     """Uses Gemini API to dynamically generate a novel, high-impact architectural advancement task."""
-    api_key = os.environ.get("GEMINI_ISSUE_KEY") or os.environ.get("GEMINI_API_KEY")
-    if not api_key:
+    keys = load_gemini_keys()
+    if not keys:
         return None
 
     memes_context = ""
@@ -512,31 +588,30 @@ Output ONLY valid JSON matching this schema:
         "generationConfig": {"temperature": 0.3, "responseMimeType": "application/json"}
     }
 
-    for model in FALLBACK_MODELS:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
-        for attempt in range(1, 4):
-            try:
-                req = urllib.request.Request(
-                    url,
-                    data=json.dumps(payload).encode("utf-8"),
-                    headers={"Content-Type": "application/json"},
-                    method="POST"
-                )
-                with urllib.request.urlopen(req, timeout=45) as resp:
-                    data = json.loads(resp.read().decode("utf-8"))
-                    text = data["candidates"][0]["content"]["parts"][0]["text"]
-                    candidate = json.loads(text)
-                    return candidate
-            except urllib.error.HTTPError as e:
-                if e.code == 429:
-                    freeze_sec = 15 * attempt
-                    print(f"[FREEZE TIMER] Rate limit encountered on {model}. Backing off for {freeze_sec}s...", flush=True)
-                    time.sleep(freeze_sec)
-                    continue
-                break
-            except Exception as e:
-                print(f"[WARN] Error with {model}: {e}")
-                break
+    for active_key in keys:
+        for model in FALLBACK_MODELS:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={active_key}"
+            for attempt in range(1, 3):
+                try:
+                    req = urllib.request.Request(
+                        url,
+                        data=json.dumps(payload).encode("utf-8"),
+                        headers={"Content-Type": "application/json"},
+                        method="POST"
+                    )
+                    with urllib.request.urlopen(req, timeout=30) as resp:
+                        data = json.loads(resp.read().decode("utf-8"))
+                        text = data["candidates"][0]["content"]["parts"][0]["text"]
+                        candidate = json.loads(text)
+                        return candidate
+                except urllib.error.HTTPError as e:
+                    if e.code in (429, 503):
+                        print(f"[*] Model {model} returned HTTP {e.code}. Trying next model/key...", flush=True)
+                        break
+                    break
+                except Exception as e:
+                    print(f"[WARN] Error with {model}: {e}")
+                    break
     return None
 
 def create_issue(item: dict, intel: dict, workspace: Path) -> bool:

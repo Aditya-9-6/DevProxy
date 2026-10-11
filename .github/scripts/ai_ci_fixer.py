@@ -17,12 +17,43 @@ import subprocess
 import time
 from pathlib import Path
 
-DEFAULT_MODEL = "gemini-3-flash-preview"
+DEFAULT_MODEL = "gemini-3.1-flash-lite"
 FALLBACK_MODELS = [
+    "gemini-3.1-flash-lite",
+    "gemini-3.5-flash-lite",
+    "gemini-3.5-flash",
+    "gemini-3.7-flash",
     "gemini-3-flash-preview",
-    "gemma-4-26b-a4b-it",
-    "gemini-flash-latest",
+    "gemini-3.1-pro-preview",
 ]
+
+DEFAULT_KEYS = []
+
+def load_gemini_keys() -> list[str]:
+    """Dynamically loads Gemini API keys from environment variables and local .gemini_keys files."""
+    keys = []
+    pool_env = os.environ.get("GEMINI_KEY_POOL", "")
+    for k in pool_env.split(","):
+        if k.strip() and k.strip() not in keys:
+            keys.append(k.strip())
+    for var in ("GEMINI_SOLVER_KEY", "GEMINI_API_KEY", "GEMINI_REVIEWER_KEY", "GEMINI_ISSUE_KEY"):
+        val = os.environ.get(var, "").strip()
+        if val and val not in keys:
+            keys.append(val)
+    for check_dir in (Path("."), Path(__file__).resolve().parent, Path(__file__).resolve().parent.parent, Path(__file__).resolve().parent.parent.parent, Path.home()):
+        key_file = check_dir / ".gemini_keys"
+        if key_file.exists():
+            try:
+                for line in key_file.read_text(encoding="utf-8").splitlines():
+                    k = line.strip()
+                    if k and not k.startswith("#") and k not in keys:
+                        keys.append(k)
+            except Exception:
+                pass
+    for k in DEFAULT_KEYS:
+        if k not in keys:
+            keys.append(k)
+    return keys
 
 SYSTEM_PROMPT = """You are an expert autonomous Go systems engineer and compiler repair agent for DevProxy.
 Your mission is to fix failing Go build errors, compiler errors, data races, broken unit tests, AND refactor spaghetti code based on AI Reviewer feedback.
@@ -57,6 +88,9 @@ def call_gemini(api_key: str, prompt: str, fallback_key: str = "", model: str = 
             models_to_try.append(m)
 
     keys_to_try = [k for k in [api_key, fallback_key] if k.strip()]
+    for k in load_gemini_keys():
+        if k not in keys_to_try:
+            keys_to_try.append(k)
 
     last_err = None
     for current_key in keys_to_try:
@@ -236,15 +270,19 @@ def main():
         # Step 1: Run diagnostics
         code, error_log = run_diagnostics(workspace)
         if code == 0 and not error_log:
-            print(f"\n[🎉 SUCCESS] All checks passed 100% GREEN at pass {iteration}! 0 errors, 0 test failures.", flush=True)
-            post_code = 0
-            post_errors = ""
-            break
+            if not review_feedback or iteration > 1:
+                print(f"\n[🎉 SUCCESS] All checks passed 100% GREEN at pass {iteration}! 0 errors, 0 test failures.", flush=True)
+                post_code = 0
+                post_errors = ""
+                break
+            else:
+                print(f"[*] Diagnostics green, but architectural review feedback must be resolved on Pass 1...", flush=True)
 
-        print(f"[*] Diagnostics identified failing checks at pass {iteration}:\n{error_log[:500]}...", flush=True)
+        if error_log:
+            print(f"[*] Diagnostics identified failing checks at pass {iteration}:\n{error_log[:500]}...", flush=True)
 
         # Step 2: Extract referenced files & context
-        combined_context_text = error_log + "\n" + review_feedback
+        combined_context_text = (error_log or "") + "\n" + (review_feedback or "")
         referenced_files = extract_referenced_files(combined_context_text, workspace)
         print(f"[*] Files in repair scope: {referenced_files}", flush=True)
 
@@ -260,11 +298,17 @@ def main():
         pr_diff = get_pr_diff(workspace)
 
         # Step 3: Construct prompt for Gemini
-        prompt = f"""Pull Request #{args.pr_number} has failing Go tests or compiler errors (Pass {iteration}/{max_iterations}).
-Your goal: Fix all compiler errors and broken tests so that 'go test -v ./...' passes 100% GREEN.
+        if not error_log and review_feedback:
+            prompt_header = f"""Pull Request #{args.pr_number} compiles and tests pass, but the Architectural Reviewer flagged anti-patterns / action items (Pass {iteration}/{max_iterations}).
+Your goal: Refactor the code to resolve all architectural review action items while keeping all tests 100% GREEN."""
+        else:
+            prompt_header = f"""Pull Request #{args.pr_number} has failing Go tests or compiler errors (Pass {iteration}/{max_iterations}).
+Your goal: Fix all compiler errors and broken tests so that 'go test -v ./...' passes 100% GREEN."""
+
+        prompt = f"""{prompt_header}
 
 === CI DIAGNOSTIC ERROR LOG ===
-{error_log[:15000]}
+{error_log[:15000] if error_log else "None (compilation clean). Focus on architectural review feedback."}
 
 {f"=== ARCHITECTURAL REVIEW FEEDBACK ==={chr(10)}{review_feedback[:10000]}" if review_feedback else ""}
 

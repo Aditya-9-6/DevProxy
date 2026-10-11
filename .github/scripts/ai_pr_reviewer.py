@@ -16,12 +16,43 @@ import subprocess
 import time
 from pathlib import Path
 
-DEFAULT_MODEL = "gemini-3-flash-preview"
+DEFAULT_MODEL = "gemini-3.1-flash-lite"
 FALLBACK_MODELS = [
+    "gemini-3.1-flash-lite",
+    "gemini-3.5-flash-lite",
+    "gemini-3.5-flash",
+    "gemini-3.7-flash",
     "gemini-3-flash-preview",
-    "gemma-4-26b-a4b-it",
-    "gemini-flash-latest",
+    "gemini-3.1-pro-preview",
 ]
+
+DEFAULT_KEYS = []
+
+def load_gemini_keys() -> list[str]:
+    """Dynamically loads Gemini API keys from environment variables and local .gemini_keys files."""
+    keys = []
+    pool_env = os.environ.get("GEMINI_KEY_POOL", "")
+    for k in pool_env.split(","):
+        if k.strip() and k.strip() not in keys:
+            keys.append(k.strip())
+    for var in ("GEMINI_REVIEWER_KEY", "GEMINI_SOLVER_KEY", "GEMINI_API_KEY", "GEMINI_ISSUE_KEY"):
+        val = os.environ.get(var, "").strip()
+        if val and val not in keys:
+            keys.append(val)
+    for check_dir in (Path("."), Path(__file__).resolve().parent, Path(__file__).resolve().parent.parent, Path(__file__).resolve().parent.parent.parent, Path.home()):
+        key_file = check_dir / ".gemini_keys"
+        if key_file.exists():
+            try:
+                for line in key_file.read_text(encoding="utf-8").splitlines():
+                    k = line.strip()
+                    if k and not k.startswith("#") and k not in keys:
+                        keys.append(k)
+            except Exception:
+                pass
+    for k in DEFAULT_KEYS:
+        if k not in keys:
+            keys.append(k)
+    return keys
 
 REVIEWER_SYSTEM_PROMPT = """You are an elite principal systems software architect and security auditor reviewing Pull Requests on DevProxy (a high-performance HTTP/HTTPS proxy and security engine in Go).
 
@@ -77,6 +108,9 @@ def call_gemini(api_key: str, prompt: str, fallback_key: str = "", model: str = 
             models_to_try.append(m)
 
     keys_to_try = [k for k in [api_key, fallback_key] if k.strip()]
+    for k in load_gemini_keys():
+        if k not in keys_to_try:
+            keys_to_try.append(k)
 
     last_err = None
     for current_key in keys_to_try:

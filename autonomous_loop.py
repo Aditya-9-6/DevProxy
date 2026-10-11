@@ -47,8 +47,8 @@ class KeyPool:
             if val and val not in extra_keys:
                 extra_keys.append(val)
 
-        # Check local gitignored .gemini_keys file in workspace root
-        for check_dir in (Path("."), Path(__file__).resolve().parent, Path(__file__).resolve().parent.parent):
+        # Check local gitignored .gemini_keys file in workspace root and user home
+        for check_dir in (Path("."), Path(__file__).resolve().parent, Path(__file__).resolve().parent.parent, Path.home()):
             key_file = check_dir / ".gemini_keys"
             if key_file.exists():
                 try:

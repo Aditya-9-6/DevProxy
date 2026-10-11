@@ -22,12 +22,43 @@ try:
 except ImportError:
     GOSSIP_AVAILABLE = False
 
-DEFAULT_MODEL = "gemini-3-flash-preview"
+DEFAULT_MODEL = "gemini-3.1-flash-lite"
 FALLBACK_MODELS = [
+    "gemini-3.1-flash-lite",
+    "gemini-3.5-flash-lite",
+    "gemini-3.5-flash",
+    "gemini-3.7-flash",
     "gemini-3-flash-preview",
-    "gemma-4-26b-a4b-it",
-    "gemini-flash-latest",
+    "gemini-3.1-pro-preview",
 ]
+
+DEFAULT_KEYS = []
+
+def load_gemini_keys() -> list[str]:
+    """Dynamically loads Gemini API keys from environment variables and local .gemini_keys files."""
+    keys = []
+    pool_env = os.environ.get("GEMINI_KEY_POOL", "")
+    for k in pool_env.split(","):
+        if k.strip() and k.strip() not in keys:
+            keys.append(k.strip())
+    for var in ("GEMINI_SOLVER_KEY", "GEMINI_API_KEY", "GEMINI_REVIEWER_KEY", "GEMINI_ISSUE_KEY"):
+        val = os.environ.get(var, "").strip()
+        if val and val not in keys:
+            keys.append(val)
+    for check_dir in (Path("."), Path(__file__).resolve().parent, Path(__file__).resolve().parent.parent, Path(__file__).resolve().parent.parent.parent, Path.home()):
+        key_file = check_dir / ".gemini_keys"
+        if key_file.exists():
+            try:
+                for line in key_file.read_text(encoding="utf-8").splitlines():
+                    k = line.strip()
+                    if k and not k.startswith("#") and k not in keys:
+                        keys.append(k)
+            except Exception:
+                pass
+    for k in DEFAULT_KEYS:
+        if k not in keys:
+            keys.append(k)
+    return keys
 
 SYSTEM_PROMPT = """You are an expert autonomous systems software engineer specializing in Go, high-throughput network proxies, HTTP/HTTPS MITM interception, WebSocket streaming, and developer debugging tools.
 You are working on DevProxy, a high-performance, developer-first HTTP/HTTPS debugging proxy and security engine written in Go.
@@ -127,9 +158,15 @@ def call_gemini(api_key: str, prompt: str, model: str = DEFAULT_MODEL, system_pr
         if m not in models_to_try:
             models_to_try.append(m)
     
+    keys_to_try = [api_key] if api_key.strip() else []
+    for k in load_gemini_keys():
+        if k not in keys_to_try:
+            keys_to_try.append(k)
+
     last_err = None
-    for current_model in models_to_try:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{current_model}:generateContent?key={api_key}"
+    for current_key in keys_to_try:
+        for current_model in models_to_try:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{current_model}:generateContent?key={current_key}"
         
         payload = {
             "contents": [
