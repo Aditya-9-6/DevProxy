@@ -18,7 +18,12 @@ func TestBatchFlusher_ConcurrentFlush(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for j := 0; j < 100; j++ {
-				_ = flusher.Flush()
+				batch := flusher.Flush()
+				// Verify data integrity: ensure we got a slice
+				if batch == nil {
+					t.Errorf("Flush returned nil")
+				}
+				flusher.Recycle(batch)
 			}
 		}()
 	}
