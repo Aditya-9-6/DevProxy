@@ -1,16 +1,46 @@
 package hpack
 
-import "testing"
+import (
+	"errors"
+	"testing"
+)
 
 func TestValidator(t *testing.T) {
 	tests := []struct {
 		name    string
 		fields  [][2]string
-		wantErr bool
+		wantErr error
 	}{
-		{"Valid", [][2]string{{":method", "GET"}, {"host", "example.com"}}, false},
-		{"InvalidOrder", [][2]string{{"host", "example.com"}, {":method", "GET"}}, true},
-		{"DuplicatePseudo", [][2]string{{":method", "GET"}, {":method", "POST"}}, true},
+		{
+			name:    "ValidRequest",
+			fields:  [][2]string{{":method", "GET"}, {":path", "/"}, {"host", "example.com"}},
+			wantErr: nil,
+		},
+		{
+			name:    "InvalidOrder",
+			fields:  [][2]string{{"host", "example.com"}, {":method", "GET"}},
+			wantErr: ErrPseudoHeaderAfterRegular,
+		},
+		{
+			name:    "DuplicatePseudo",
+			fields:  [][2]string{{":method", "GET"}, {":method", "POST"}},
+			wantErr: ErrDuplicatePseudoHeader,
+		},
+		{
+			name:    "EmptyHeaderName",
+			fields:  [][2]string{{"", "value"}},
+			wantErr: ErrEmptyHeaderName,
+		},
+		{
+			name:    "UppercaseHeaderName",
+			fields:  [][2]string{{"Content-Type", "application/json"}},
+			wantErr: ErrUppercaseHeaderName,
+		},
+		{
+			name:    "UnknownPseudoHeader",
+			fields:  [][2]string{{":unknown", "value"}},
+			wantErr: ErrUnknownPseudoHeader,
+		},
 	}
 
 	for _, tt := range tests {
@@ -24,8 +54,13 @@ func TestValidator(t *testing.T) {
 					break
 				}
 			}
-			if (err != nil) != tt.wantErr {
-				t.Errorf("ValidateField() error = %v, wantErr %v", err, tt.wantErr)
+
+			if tt.wantErr != nil {
+				if !errors.Is(err, tt.wantErr) {
+					t.Errorf("ValidateField() error = %v, wantErr %v", err, tt.wantErr)
+				}
+			} else if err != nil {
+				t.Errorf("ValidateField() unexpected error = %v", err)
 			}
 		})
 	}
