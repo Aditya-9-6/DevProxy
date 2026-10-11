@@ -5,13 +5,19 @@ import (
 	"sync"
 )
 
-// Segment represents a TCP payload chunk.
+type bufferWrapper struct {
+	buf []byte
+	cap int
+}
+
 type Segment struct {
 	Seq  uint64
 	Data []byte
+	cap  int
 }
 
-// SegmentHeap implements heap.Interface for ordering segments by sequence number.
+var segmentPool = sync.Pool{New: func() interface{} { return &Segment{} }}
+
 type SegmentHeap []*Segment
 
 func (h SegmentHeap) Len() int            { return len(h) }
@@ -26,7 +32,6 @@ func (h *SegmentHeap) Pop() interface{} {
 	return x
 }
 
-// StreamReassembler manages out-of-order TCP segments using a mutex.
 type StreamReassembler struct {
 	mu       sync.Mutex
 	nextSeq  uint64
@@ -41,57 +46,58 @@ func NewStreamReassembler(initialSeq uint64) *StreamReassembler {
 		nextSeq:  initialSeq,
 		segments: make(SegmentHeap, 0),
 		maxSegs:  1000,
-		pool4k:   &sync.Pool{New: func() interface{} { return make([]byte, 4096) }},
-		pool64k:  &sync.Pool{New: func() interface{} { return make([]byte, 65536) }},
+		pool4k:   &sync.Pool{New: func() interface{} { return &bufferWrapper{buf: make([]byte, 4096), cap: 4096} }},
+		pool64k:  &sync.Pool{New: func() interface{} { return &bufferWrapper{buf: make([]byte, 65536), cap: 65536} }},
 	}
 }
 
-func (r *StreamReassembler) getBuffer(size int) []byte {
+func (r *StreamReassembler) getBuffer(size int) (buf []byte, cap int) {
 	if size <= 4096 {
-		return r.pool4k.Get().([]byte)[:size]
+		w := r.pool4k.Get().(*bufferWrapper)
+		return w.buf[:size], w.cap
 	} else if size <= 65536 {
-		return r.pool64k.Get().([]byte)[:size]
+		w := r.pool64k.Get().(*bufferWrapper)
+		return w.buf[:size], w.cap
 	}
-	return make([]byte, size)
+	return make([]byte, size), size
 }
 
-func (r *StreamReassembler) putBuffer(buf []byte) {
-	cap := cap(buf)
+func (r *StreamReassembler) putBuffer(buf []byte, cap int) {
 	if cap == 4096 {
-		r.pool4k.Put(buf[:cap])
+		r.pool4k.Put(&bufferWrapper{buf: buf[:cap], cap: cap})
 	} else if cap == 65536 {
-		r.pool64k.Put(buf[:cap])
+		r.pool64k.Put(&bufferWrapper{buf: buf[:cap], cap: cap})
 	}
 }
 
-// Push adds a segment and invokes the callback for each ordered chunk.
 func (r *StreamReassembler) Push(seq uint64, data []byte, onData func([]byte)) {
+	var ready [][]byte
 	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	if r.segments.Len() >= r.maxSegs {
-		return
-	}
-
-	if seq < r.nextSeq {
-		offset := r.nextSeq - seq
-		if offset >= uint64(len(data)) {
-			return
+	if r.segments.Len() < r.maxSegs {
+		if seq < r.nextSeq {
+			offset := r.nextSeq - seq
+			if offset < uint64(len(data)) {
+				data = data[offset:]
+				seq = r.nextSeq
+			}
 		}
-		data = data[offset:]
-		seq = r.nextSeq
-	}
-
-	buf := r.getBuffer(len(data))
-	copy(buf, data)
-	heap.Push(&r.segments, &Segment{Seq: seq, Data: buf})
-
-	for r.segments.Len() > 0 && r.segments[0].Seq <= r.nextSeq {
-		seg := heap.Pop(&r.segments).(*Segment)
-		if seg.Seq+uint64(len(seg.Data)) > r.nextSeq {
-			onData(seg.Data)
-			r.nextSeq = seg.Seq + uint64(len(seg.Data))
+		buf, cap := r.getBuffer(len(data))
+		copy(buf, data)
+		seg := segmentPool.Get().(*Segment)
+		seg.Seq, seg.Data, seg.cap = seq, buf, cap
+		heap.Push(&r.segments, seg)
+		for r.segments.Len() > 0 && r.segments[0].Seq <= r.nextSeq {
+			s := heap.Pop(&r.segments).(*Segment)
+			if s.Seq+uint64(len(s.Data)) > r.nextSeq {
+				ready = append(ready, s.Data)
+				r.nextSeq = s.Seq + uint64(len(s.Data))
+			}
+			r.putBuffer(s.Data, s.cap)
+			segmentPool.Put(s)
 		}
-		r.putBuffer(seg.Data)
+	}
+	r.mu.Unlock()
+	for _, b := range ready {
+		onData(b)
 	}
 }
