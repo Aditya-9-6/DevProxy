@@ -2,7 +2,14 @@ package proxy
 
 import (
 	"bytes"
+	"context"
+	"errors"
+	"net/http"
+	"net/http/httptest"
 	"testing"
+
+	"github.com/Aditya-9-6/DevProxy/pkg/mock"
+	"github.com/Aditya-9-6/DevProxy/pkg/ringbuffer"
 )
 
 func TestGRPCFramingRoundTrip(t *testing.T) {
@@ -69,5 +76,62 @@ func TestGRPCFramingErrors(t *testing.T) {
 	corruptBuf := bytes.NewReader([]byte{0, 0, 0, 0, 10, 1, 2})
 	if _, err := ReadGRPCMessage(corruptBuf); err == nil {
 		t.Error("Expected error reading truncated payload, got nil")
+	}
+
+	// Oversized message frame (> 64MB)
+	oversizedBuf := bytes.NewReader([]byte{0, 0x05, 0x00, 0x00, 0x01}) // 83MB > 64MB
+	if _, err := ReadGRPCMessage(oversizedBuf); !errors.Is(err, ErrGRPCMessageTooLarge) {
+		t.Errorf("Expected ErrGRPCMessageTooLarge, got %v", err)
+	}
+}
+
+func TestGRPCStreamInterceptor(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	if err := GRPCStreamInterceptor(ctx, "TestService", "TestMethod"); err != nil {
+		t.Fatalf("expected nil error for active context, got %v", err)
+	}
+
+	cancel()
+	if err := GRPCStreamInterceptor(ctx, "TestService", "TestMethod"); err == nil {
+		t.Fatalf("expected context cancellation error, got nil")
+	}
+}
+
+func TestHandleGRPCInterception(t *testing.T) {
+	mockEngine := mock.NewGRPCDescriptorEngine()
+	mockEngine.RegisterMock("/greet.Greeter/SayHello", []byte("mocked reply"))
+	ringBuf := ringbuffer.NewRingBuffer(100)
+
+	// Case 1: Non-gRPC Content-Type returns false
+	req := httptest.NewRequest(http.MethodPost, "/greet.Greeter/SayHello", bytes.NewReader([]byte{}))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	if HandleGRPCInterception(w, req, mockEngine, ringBuf) {
+		t.Errorf("expected false for application/json")
+	}
+
+	// Case 2: Matching mock endpoint returns true with gRPC response
+	var framedReq bytes.Buffer
+	_ = WriteGRPCMessage(&framedReq, &GRPCMessage{Data: []byte("ping")})
+
+	req = httptest.NewRequest(http.MethodPost, "/greet.Greeter/SayHello", &framedReq)
+	req.Header.Set("Content-Type", "application/grpc")
+	w = httptest.NewRecorder()
+
+	if !HandleGRPCInterception(w, req, mockEngine, ringBuf) {
+		t.Fatalf("expected true for matched gRPC mock")
+	}
+
+	if w.Header().Get("Content-Type") != "application/grpc" {
+		t.Errorf("expected Content-Type application/grpc, got %s", w.Header().Get("Content-Type"))
+	}
+
+	// Read and verify mocked response message
+	respMsg, err := ReadGRPCMessage(w.Body)
+	if err != nil {
+		t.Fatalf("failed to read mocked response: %v", err)
+	}
+	if string(respMsg.Data) != "mocked reply" {
+		t.Errorf("response data mismatch: expected 'mocked reply', got '%s'", string(respMsg.Data))
 	}
 }
