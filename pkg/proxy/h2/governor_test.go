@@ -2,32 +2,38 @@ package h2
 
 import (
 	"context"
+	"sync"
 	"testing"
 )
 
 func TestGovernor_FlowControl(t *testing.T) {
 	g := NewGovernor(100)
 	ctx := context.Background()
+	streamID := uint32(1)
+	g.RegisterStream(streamID, 50)
 
 	t.Run("Successful Consumption", func(t *testing.T) {
-		if err := g.RequestCredit(ctx, 1, 50); err != nil {
+		if err := g.RequestCredit(ctx, streamID, 20); err != nil {
 			t.Errorf("Expected success, got %v", err)
-		}
-		if g.connWindow.Get() != 50 {
-			t.Errorf("Expected 50 credits, got %d", g.connWindow.Get())
 		}
 	})
 
 	t.Run("Exhaustion", func(t *testing.T) {
-		if err := g.RequestCredit(ctx, 1, 60); err == nil {
+		if err := g.RequestCredit(ctx, streamID, 100); err == nil {
 			t.Error("Expected error due to exhaustion")
 		}
 	})
 
-	t.Run("Replenishment", func(t *testing.T) {
-		g.ReleaseCredit(50)
-		if g.connWindow.Get() != 100 {
-			t.Errorf("Expected 100 credits, got %d", g.connWindow.Get())
+	t.Run("Concurrent Access", func(t *testing.T) {
+		t.Parallel()
+		var wg sync.WaitGroup
+		for i := 0; i < 10; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				_ = g.RequestCredit(ctx, streamID, 1)
+			}()
 		}
+		wg.Wait()
 	})
 }

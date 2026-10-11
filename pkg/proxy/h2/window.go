@@ -1,7 +1,6 @@
 package h2
 
 import (
-	"sync"
 	"sync/atomic"
 )
 
@@ -36,11 +35,6 @@ func (w *Window) Replenish(amount int64) {
 
 // Get returns current available credits.
 func (w *Window) Get() int64 {
+	w.credits.Load()
 	return w.credits.Load()
-}
-
-var bufferPool = sync.Pool{
-	New: func() interface{} {
-		return make([]byte, 16384)
-	},
 }
