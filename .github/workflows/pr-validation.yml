@@ -114,7 +114,7 @@ jobs:
       - name: Run Microbenchmarks
         run: |
           echo "Running microbenchmarks to guard against throughput and memory allocation regressions..."
-          go test -v -run='^$' -bench=. -benchmem ./pkg/ringbuffer ./pkg/analysis ./pkg/proxy ./pkg/storage ./pkg/certs
+          go test -v -run='^$' -bench=. -benchmem ./pkg/ringbuffer ./pkg/analysis ./pkg/proxy ./pkg/storage ./pkg/certs ./pkg/dashboard
 
   # ============================================================================
   # 4. Security & Protocol Robustness Fuzz Testing
@@ -146,6 +146,13 @@ jobs:
 
       - name: Fuzz LLM Payload Inspector
         run: go test -v -fuzz=FuzzLLMInspector -fuzztime=5s ./pkg/analysis
+
+      - name: Fuzz WebSocket Defragmenter
+        run: go test -v -fuzz=FuzzWSDefragmenter -fuzztime=5s ./pkg/dashboard
+
+      - name: Fuzz gRPC Message Framing
+        run: go test -v -fuzz=FuzzGRPCFraming -fuzztime=5s ./pkg/proxy
+
 
   # ============================================================================
   # 5. End-to-End (E2E) & Integration Smoke Tests

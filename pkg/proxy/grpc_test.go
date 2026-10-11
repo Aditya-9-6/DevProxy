@@ -135,3 +135,34 @@ func TestHandleGRPCInterception(t *testing.T) {
 		t.Errorf("response data mismatch: expected 'mocked reply', got '%s'", string(respMsg.Data))
 	}
 }
+
+func FuzzGRPCFraming(f *testing.F) {
+	f.Add(true, []byte("sample payload"))
+	f.Add(false, []byte("another payload"))
+
+	f.Fuzz(func(t *testing.T, compressed bool, data []byte) {
+		msg := &GRPCMessage{
+			Compressed: compressed,
+			Data:       data,
+		}
+		var buf bytes.Buffer
+		if err := WriteGRPCMessage(&buf, msg); err == nil {
+			_, _ = ReadGRPCMessage(&buf)
+		}
+	})
+}
+
+func BenchmarkGRPCFraming_WriteAndRead(b *testing.B) {
+	msg := &GRPCMessage{
+		Compressed: false,
+		Data:       []byte("sample benchmark grpc message payload"),
+	}
+	var buf bytes.Buffer
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		buf.Reset()
+		_ = WriteGRPCMessage(&buf, msg)
+		_, _ = ReadGRPCMessage(&buf)
+	}
+}

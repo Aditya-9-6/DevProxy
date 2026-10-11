@@ -183,3 +183,24 @@ func TestWSDefragmenter_Reset(t *testing.T) {
 		t.Fatalf("expected 'fresh message', got %s", string(msg.Data))
 	}
 }
+
+func FuzzWSDefragmenter(f *testing.F) {
+	f.Add(true, OpText, []byte("hello"))
+	f.Add(false, OpBinary, []byte("partial"))
+	f.Add(true, OpPing, []byte("ping"))
+
+	f.Fuzz(func(t *testing.T, fin bool, opcode int, data []byte) {
+		d := NewWSDefragmenter(4096)
+		_, _ = d.ProcessFrame(fin, opcode%16, data)
+	})
+}
+
+func BenchmarkWSDefragmenter_ProcessFrame(b *testing.B) {
+	payload := []byte("benchmark test payload for websocket defragmenter")
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		d := NewWSDefragmenter(65536)
+		_, _ = d.ProcessFrame(true, OpText, payload)
+	}
+}

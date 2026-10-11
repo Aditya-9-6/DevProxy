@@ -158,7 +158,7 @@ jobs:
 
             if [ -n "$LINKED_ISSUE" ]; then
               SCORE=$(jq -r .score ai_review_status.json)
-              NOTIFY_MSG=$(printf '🌟 **Solution 100%%%% Ready for Merge!**\n\nThe pull request (#%s) implementing this advancement has passed all autonomous architectural quality gates and anti-spaghetti checks with a score of **%s/100**.\n\ncc **@Aditya-9-6**: To finalize this advancement and merge into `main`, please approve PR #%s or comment `/merge` on the PR.' "$PR_NUM" "$SCORE" "$PR_NUM")
+              NOTIFY_MSG=$(printf '🌟 **Solution 100%%%% Ready for Merge!**\n\nThe pull request (#%s) implementing this advancement has passed all autonomous architectural quality gates and anti-spaghetti checks with a score of **%s/100**.\n\ncc **@Aditya-9-6**: All automated quality gates and tests passed cleanly. Please review and merge PR #%s when you are ready.' "$PR_NUM" "$SCORE" "$PR_NUM")
               gh issue comment "$LINKED_ISSUE" --body "$NOTIFY_MSG" || true
             fi
           fi

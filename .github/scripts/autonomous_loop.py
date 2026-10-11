@@ -9,8 +9,8 @@ Executes the continuous hyper-scale development cycle:
 4. Pre-Commit Quality Gate: Runs gofmt -w ., go vet ./..., and go test -race ./...
 5. Contribution Attribution: Commits with 'Aditya Dahale <aditya-9-6@users.noreply.github.com>'.
 6. Autonomous Reviewer Gate: Audits PR against strict performance and decoupling invariants.
-7. Auto-Merger: Squash-merges approved PRs to continuously illuminate GitHub contribution chart,
-   and explicitly closes linked issues to prevent duplicate solutions.
+7. Manual Maintainer Merge Gate: Labels approved PRs with 'ready-to-merge'
+   and leaves PRs open for manual review and sign-off by the maintainer.
 """
 
 import os
@@ -375,23 +375,11 @@ def heal_and_merge_open_prs(workspace: Path) -> bool:
                                 pass
 
                 if verdict == "APPROVED" and score >= 90:
-                    print(f"[APPROVED] PR #{pr_num} APPROVED ({score}/100)! Merging autonomously...", flush=True)
+                    print(f"[APPROVED] PR #{pr_num} APPROVED ({score}/100)! Marked ready for manual maintainer merge.", flush=True)
                     run_cmd(["gh", "label", "create", "ready-to-merge", "--repo", REPO, "--color", "0E8A16", "-f"], cwd=workspace, check=False)
                     run_cmd(["gh", "pr", "edit", str(pr_num), "--repo", REPO, "--add-label", "ready-to-merge"], cwd=workspace, check=False)
-                    res = subprocess.run(["gh", "pr", "merge", str(pr_num), "--repo", REPO, "--squash", "--admin"], cwd=workspace, capture_output=True, text=True)
-                    if res.returncode != 0:
-                        subprocess.run(["gh", "pr", "merge", str(pr_num), "--repo", REPO, "--squash"], cwd=workspace)
-                    print(f"[MERGED] Merged PR #{pr_num} into main! Contributor activity recorded for {USER_NAME}.", flush=True)
-
-                    # Explicitly close linked issue to prevent duplicate solve
-                    if linked_issue:
-                        print(f"[*] Closing linked Issue #{linked_issue}...", flush=True)
-                        run_cmd(["gh", "issue", "close", str(linked_issue), "--repo", REPO, "--comment", f"Resolved and closed autonomously after merging PR #{pr_num}."], cwd=workspace, check=False)
-
-                    run_cmd("git checkout main", cwd=workspace)
-                    run_cmd("git pull origin main", cwd=workspace)
-                    run_cmd(f"git branch -D {head_ref}", cwd=workspace, check=False)
-                    run_cmd(f"git push origin --delete {head_ref}", cwd=workspace, check=False)
+                    print(f"[READY] PR #{pr_num} is clean, green, and awaiting manual merge by maintainer. Leaving open.", flush=True)
+                    run_cmd("git checkout main", cwd=workspace, check=False)
                     return True
     finally:
         run_cmd("git checkout main", cwd=workspace, check=False)
@@ -542,23 +530,11 @@ def solve_issue(workspace: Path, issue_num: int, issue_title: str, issue_body: s
         run_cmd(["gh", "pr", "comment", str(pr_num), "--repo", REPO, "--body-file", str(review_md_file)], cwd=workspace, check=False)
 
     if verdict == "APPROVED" and score >= 90:
-        print(f"[APPROVED] PR #{pr_num} APPROVED (Score: {score}/100)! Merging into main...", flush=True)
+        print(f"[APPROVED] PR #{pr_num} APPROVED (Score: {score}/100)! Marked ready for manual maintainer merge.", flush=True)
         run_cmd(["gh", "label", "create", "ready-to-merge", "--repo", REPO, "--color", "0E8A16", "-f"], cwd=workspace, check=False)
         run_cmd(["gh", "pr", "edit", str(pr_num), "--repo", REPO, "--add-label", "ready-to-merge"], cwd=workspace, check=False)
-        res = subprocess.run(["gh", "pr", "merge", str(pr_num), "--repo", REPO, "--squash", "--admin"], cwd=workspace, capture_output=True, text=True)
-        if res.returncode != 0:
-            subprocess.run(["gh", "pr", "merge", str(pr_num), "--repo", REPO, "--squash"], cwd=workspace)
-        print(f"[SUCCESS] Merged PR #{pr_num} into main! Contributor activity recorded for {USER_NAME}.", flush=True)
-
-        # Explicitly close linked issue on GitHub
-        print(f"[*] Closing linked Issue #{issue_num}...", flush=True)
-        run_cmd(["gh", "issue", "close", str(issue_num), "--repo", REPO, "--comment", f"Resolved and closed autonomously after merging PR #{pr_num}."], cwd=workspace, check=False)
-
-        run_cmd("git checkout main", cwd=workspace)
-        run_cmd("git pull origin main", cwd=workspace)
-        # Clean up feature branch
-        run_cmd(f"git branch -D {branch_name}", cwd=workspace, check=False)
-        run_cmd(f"git push origin --delete {branch_name}", cwd=workspace, check=False)
+        print(f"[READY] PR #{pr_num} is clean, green, and awaiting manual merge by maintainer. Leaving open.", flush=True)
+        run_cmd("git checkout main", cwd=workspace, check=False)
         return True
     else:
         print(f"[!] PR #{pr_num} verdict: {verdict} (Score: {score}). Awaiting review fixes.", flush=True)

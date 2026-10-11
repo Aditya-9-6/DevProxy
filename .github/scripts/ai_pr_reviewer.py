@@ -314,8 +314,7 @@ Audit the code against all anti-spaghetti, concurrency, performance, and securit
 ### 🚦 Next Steps: Maintainer Sign-Off Required
 **@Aditya-9-6**: All automated quality gates, anti-spaghetti checks, and performance benchmarks have passed cleanly.
 To complete the merge into `main`:
-- **Approve this Pull Request**, OR
-- Comment **`/merge`** on this PR.
+- Review the diff and click **Merge pull request** when you are ready.
 """
         commit_desc = f"Architectural Review Passed ({score}/100) - Ready to merge"
         set_commit_status(head_sha, "success", commit_desc)
