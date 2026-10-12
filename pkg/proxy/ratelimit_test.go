@@ -5,22 +5,18 @@ import (
 	"time"
 )
 
-func TestRateLimiter(t *testing.T) {
-	rl := NewRateLimiter(2, 100*time.Millisecond)
-
-	if !rl.Allow("127.0.0.1") {
-		t.Error("Expected first request to be allowed")
+func TestTokenBucket(t *testing.T) {
+	b := NewTokenBucket(10, 100)
+	for i := 0; i < 10; i++ {
+		if !b.Allow() {
+			t.Errorf("expected allow at index %d", i)
+		}
 	}
-	if !rl.Allow("127.0.0.1") {
-		t.Error("Expected second request to be allowed")
+	if b.Allow() {
+		t.Error("expected deny after capacity exhausted")
 	}
-	if rl.Allow("127.0.0.1") {
-		t.Error("Expected third request to be blocked")
-	}
-
-	time.Sleep(150 * time.Millisecond)
-
-	if !rl.Allow("127.0.0.1") {
-		t.Error("Expected request after window to be allowed")
+	time.Sleep(10 * time.Millisecond)
+	if !b.Allow() {
+		t.Error("expected allow after refill")
 	}
 }

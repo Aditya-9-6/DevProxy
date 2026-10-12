@@ -1,58 +1,65 @@
 package proxy
 
 import (
-	"sync"
+	"sync/atomic"
 	"time"
 )
 
-// rateWindow tracks timestamps for the sliding window rate limiter.
-type rateWindow struct {
-	timestamps []int64
-	idx        int
+const cacheLinePad = 64
+
+type paddedCounter struct {
+	count atomic.Uint64
+	_     [cacheLinePad - 8]byte
 }
 
-// RateLimiter implements a sliding-window log rate limiter.
-type RateLimiter struct {
-	limit    uint64
-	windowNs int64
-	mu       sync.RWMutex
-	buckets  map[string]*rateWindow
+type TokenBucket struct {
+	capacity   uint64
+	refillRate uint64
+	lastRefill atomic.Int64
+	tokens     paddedCounter
 }
 
-// NewRateLimiter creates a new sliding window rate limiter.
-func NewRateLimiter(limit uint64, window time.Duration) *RateLimiter {
-	return &RateLimiter{
-		limit:    limit,
-		windowNs: window.Nanoseconds(),
-		buckets:  make(map[string]*rateWindow),
+func NewTokenBucket(capacity, refillRate uint64) *TokenBucket {
+	b := &TokenBucket{
+		capacity:   capacity,
+		refillRate: refillRate,
 	}
+	b.tokens.count.Store(capacity)
+	b.lastRefill.Store(time.Now().UnixNano())
+	return b
 }
 
-// Allow checks if the request is allowed under the rate limit.
-func (rl *RateLimiter) Allow(key string) bool {
+func (b *TokenBucket) Allow() bool {
 	now := time.Now().UnixNano()
-	rl.mu.Lock()
-	defer rl.mu.Unlock()
+	last := b.lastRefill.Load()
 
-	w, ok := rl.buckets[key]
-	if !ok {
-		w = &rateWindow{timestamps: make([]int64, rl.limit)}
-		rl.buckets[key] = w
-	}
-
-	// Check if oldest entry is outside window
-	count := 0
-	for i := 0; i < int(rl.limit); i++ {
-		if w.timestamps[i] > 0 && (now-w.timestamps[i]) < rl.windowNs {
-			count++
+	delta := uint64(now - last)
+	if delta > 0 {
+		refill := (delta * b.refillRate) / uint64(time.Second)
+		if refill > 0 {
+			if b.lastRefill.CompareAndSwap(last, now) {
+				current := b.tokens.count.Load()
+				for {
+					newVal := current + refill
+					if newVal > b.capacity {
+						newVal = b.capacity
+					}
+					if b.tokens.count.CompareAndSwap(current, newVal) {
+						break
+					}
+					current = b.tokens.count.Load()
+				}
+			}
 		}
 	}
 
-	if uint64(count) >= rl.limit {
-		return false
+	for {
+		current := b.tokens.count.Load()
+		if current == 0 {
+			return false
+		}
+		if b.tokens.count.CompareAndSwap(current, current-1) {
+			return true
+		}
 	}
-
-	w.timestamps[w.idx] = now
-	w.idx = (w.idx + 1) % int(rl.limit)
-	return true
 }
