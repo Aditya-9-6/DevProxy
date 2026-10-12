@@ -17,11 +17,15 @@ func (b *BackpressureController) ShouldShed() bool {
 }
 
 func (b *BackpressureController) Acquire() bool {
-	if b.ShouldShed() {
-		return false
+	for {
+		current := b.activeRequests.Load()
+		if current >= b.maxRequests {
+			return false
+		}
+		if b.activeRequests.CompareAndSwap(current, current+1) {
+			return true
+		}
 	}
-	b.activeRequests.Add(1)
-	return true
 }
 
 func (b *BackpressureController) Release() {
