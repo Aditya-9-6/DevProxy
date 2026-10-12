@@ -1,58 +1,56 @@
 package proxy
 
 import (
-	"sync"
+	"sync/atomic"
 	"time"
 )
 
-// rateWindow tracks timestamps for the sliding window rate limiter.
-type rateWindow struct {
-	timestamps []int64
-	idx        int
+// TokenBucket implements a thread-safe, lock-free token bucket using atomic fields.
+// Padding is used to prevent false sharing on cache lines.
+type TokenBucket struct {
+	_          [8]uint64
+	capacity   uint64
+	refillRate uint64
+	_          [8]uint64
+	tokens     atomic.Uint64
+	lastRefill atomic.Int64
+	_          [8]uint64
 }
 
-// RateLimiter implements a sliding-window log rate limiter.
-type RateLimiter struct {
-	limit    uint64
-	windowNs int64
-	mu       sync.RWMutex
-	buckets  map[string]*rateWindow
-}
-
-// NewRateLimiter creates a new sliding window rate limiter.
-func NewRateLimiter(limit uint64, window time.Duration) *RateLimiter {
-	return &RateLimiter{
-		limit:    limit,
-		windowNs: window.Nanoseconds(),
-		buckets:  make(map[string]*rateWindow),
+func NewTokenBucket(capacity, refillRate uint64) *TokenBucket {
+	b := &TokenBucket{
+		capacity:   capacity,
+		refillRate: refillRate,
 	}
+	b.tokens.Store(capacity)
+	b.lastRefill.Store(time.Now().UnixNano())
+	return b
 }
 
-// Allow checks if the request is allowed under the rate limit.
-func (rl *RateLimiter) Allow(key string) bool {
-	now := time.Now().UnixNano()
-	rl.mu.Lock()
-	defer rl.mu.Unlock()
+func (b *TokenBucket) Allow() bool {
+	for {
+		now := time.Now().UnixNano()
+		last := b.lastRefill.Load()
+		tok := b.tokens.Load()
 
-	w, ok := rl.buckets[key]
-	if !ok {
-		w = &rateWindow{timestamps: make([]int64, rl.limit)}
-		rl.buckets[key] = w
-	}
+		delta := now - last
+		refill := uint64(0)
+		if delta > 0 {
+			refill = (uint64(delta) * b.refillRate) / uint64(time.Second)
+		}
 
-	// Check if oldest entry is outside window
-	count := 0
-	for i := 0; i < int(rl.limit); i++ {
-		if w.timestamps[i] > 0 && (now-w.timestamps[i]) < rl.windowNs {
-			count++
+		newTokens := tok + refill
+		if newTokens > b.capacity {
+			newTokens = b.capacity
+		}
+
+		if newTokens == 0 {
+			return false
+		}
+
+		if b.tokens.CompareAndSwap(tok, newTokens-1) {
+			b.lastRefill.Store(now)
+			return true
 		}
 	}
-
-	if uint64(count) >= rl.limit {
-		return false
-	}
-
-	w.timestamps[w.idx] = now
-	w.idx = (w.idx + 1) % int(rl.limit)
-	return true
 }
