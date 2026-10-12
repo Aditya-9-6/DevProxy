@@ -40,3 +40,14 @@ func TestDependencyTreeConcurrency(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+func BenchmarkDependencyTreeAdd(b *testing.B) {
+	tree := NewDependencyTree()
+	b.RunParallel(func(pb *testing.PB) {
+		i := uint32(1)
+		for pb.Next() {
+			tree.AddChild(0, i, 16)
+			i++
+		}
+	})
+}

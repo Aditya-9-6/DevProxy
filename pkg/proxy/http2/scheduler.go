@@ -11,7 +11,7 @@ type StreamPriority struct {
 	Exclusive bool
 }
 
-// Scheduler manages stream scheduling using a lock-free approach.
+// Scheduler manages stream scheduling.
 type Scheduler struct {
 	pool sync.Pool
 }
