@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"crypto/tls"
+	"fmt"
 	proxyTLS "github.com/Aditya-9-6/DevProxy/pkg/tls"
 )
 
@@ -10,13 +11,20 @@ type Transport struct {
 	negotiator *proxyTLS.ALPNNegotiator
 }
 
+// NewTransport creates a new Transport with the given ALPNNegotiator.
+func NewTransport(negotiator *proxyTLS.ALPNNegotiator) *Transport {
+	return &Transport{
+		negotiator: negotiator,
+	}
+}
+
 func (t *Transport) HandleConnection(conn *tls.Conn) error {
 	state := conn.ConnectionState()
 	proto := state.NegotiatedProtocol
 
-	config := t.negotiator.GetConfig()
-	if len(config.NextProtos) > 0 && config.NextProtos[0] == proto {
-		// Logic to invoke handler from router
+	if proto == "" {
+		return fmt.Errorf("no ALPN protocol negotiated")
 	}
-	return nil
+
+	return t.negotiator.HandleConnection(conn)
 }
