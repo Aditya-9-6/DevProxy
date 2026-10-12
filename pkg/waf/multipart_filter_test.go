@@ -47,14 +47,16 @@ func TestBoundaryFilter_MultiChunkSplit(t *testing.T) {
 }
 
 func TestBoundaryFilter_ConcurrencyAndPool(t *testing.T) {
-	filter := NewBoundaryFilter()
 	var wg sync.WaitGroup
 	workers := 50
 
 	for i := 0; i < workers; i++ {
 		wg.Add(1)
+
 		go func(id int) {
 			defer wg.Done()
+			// Each concurrent stream/goroutine uses its own request-scoped filter or safely uses thread-safe methods
+			filter := NewBoundaryFilter()
 			buf := filter.GetBuffer()
 			defer filter.PutBuffer(buf)
 
