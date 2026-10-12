@@ -2,29 +2,31 @@ package proxy
 
 import (
 	"hash/fnv"
-	"sync/atomic"
+	"sync"
 )
 
 const (
 	InternerSize = 1024
-	CacheLinePad = 64
 )
 
 type headerEntry struct {
-	key   string
-	value string
+	key string
+}
+
+type bucket struct {
+	sync.RWMutex
+	entries map[string]string
 }
 
 type HeaderInterner struct {
-	_       [CacheLinePad]byte
-	buckets atomic.Pointer[[]headerEntry]
-	_       [CacheLinePad]byte
+	buckets [InternerSize]*bucket
 }
 
 func NewHeaderInterner() *HeaderInterner {
-	initial := make([]headerEntry, InternerSize)
 	h := &HeaderInterner{}
-	h.buckets.Store(&initial)
+	for i := 0; i < InternerSize; i++ {
+		h.buckets[i] = &bucket{entries: make(map[string]string)}
+	}
 	return h
 }
 
@@ -33,13 +35,22 @@ func (h *HeaderInterner) Intern(key string) string {
 	hash.Write([]byte(key))
 	idx := int(hash.Sum32() % InternerSize)
 
-	buckets := *h.buckets.Load()
-	entry := &buckets[idx]
+	b := h.buckets[idx]
 
-	if entry.key == key {
-		return entry.key
+	b.RLock()
+	if val, ok := b.entries[key]; ok {
+		b.RUnlock()
+		return val
+	}
+	b.RUnlock()
+
+	b.Lock()
+	defer b.Unlock()
+
+	if val, ok := b.entries[key]; ok {
+		return val
 	}
 
-	entry.key = key
+	b.entries[key] = key
 	return key
 }
