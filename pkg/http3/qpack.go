@@ -5,6 +5,19 @@ import (
 	"sync/atomic"
 )
 
+// HeaderBlock wraps a pooled buffer to ensure safe memory management.
+type HeaderBlock struct {
+	Data []byte
+}
+
+// Release returns the underlying buffer to the pool.
+func (h *HeaderBlock) Release() {
+	if h.Data != nil {
+		PutBuffer(h.Data)
+		h.Data = nil
+	}
+}
+
 // QPACKDecoder manages the dynamic table state for HTTP/3 header decompression.
 type QPACKDecoder struct {
 	mu           sync.RWMutex
@@ -23,11 +36,11 @@ func (d *QPACKDecoder) GetBlockedCount() int64 {
 }
 
 // DecodeHeaderBlock performs zero-copy header recovery using pooled buffers.
-func (d *QPACKDecoder) DecodeHeaderBlock(data []byte) ([]byte, error) {
-	buf := streamBufferPool.Get().([]byte)
-	defer streamBufferPool.Put(buf)
+// The caller is responsible for calling Release() on the returned HeaderBlock.
+func (d *QPACKDecoder) DecodeHeaderBlock(data []byte) (*HeaderBlock, error) {
+	buf := GetBuffer()
+	copy(buf, data)
 
-	// Implementation of QPACK decoding logic would go here.
-	// This is a placeholder for the core logic.
-	return append([]byte(nil), data...), nil
+	// TODO: Implement actual QPACK state machine logic here.
+	return &HeaderBlock{Data: buf[:len(data)]}, nil
 }
