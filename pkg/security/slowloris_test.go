@@ -8,6 +8,7 @@ import (
 
 func TestCountMinSketch(t *testing.T) {
 	s := NewCountMinSketch()
+	defer s.Close()
 	key := []byte("192.168.1.1")
 	s.Increment(key)
 	s.Increment(key)
@@ -18,6 +19,7 @@ func TestCountMinSketch(t *testing.T) {
 
 func TestCountMinSketchConcurrent(t *testing.T) {
 	s := NewCountMinSketch()
+	defer s.Close()
 	key := []byte("192.168.1.1")
 	var wg sync.WaitGroup
 	for i := 0; i < 100; i++ {
@@ -35,6 +37,7 @@ func TestCountMinSketchConcurrent(t *testing.T) {
 
 func TestSlowlorisFilter(t *testing.T) {
 	filter := NewSlowlorisFilter(5)
+	defer filter.Close()
 	addr := &net.TCPAddr{IP: net.ParseIP("1.2.3.4"), Port: 80}
 	conn := &mockConn{remoteAddr: addr}
 

@@ -1,7 +1,9 @@
 package security
 
 import (
+	"context"
 	"hash/maphash"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -12,27 +14,47 @@ const (
 )
 
 type CountMinSketch struct {
+	facets  [SketchDepth]maphash.Seed
 	buckets [SketchDepth][SketchWidth]atomic.Uint64
-	hashers [SketchDepth]maphash.Hash
+	cancel  context.CancelFunc
+	wg      sync.WaitGroup
 }
 
 func NewCountMinSketch() *CountMinSketch {
-	c := &CountMinSketch{}
-	for i := 0; i < SketchDepth; i++ {
-		c.hashers[i].SetSeed(maphash.MakeSeed())
+	ctx, cancel := context.WithCancel(context.Background())
+	c := &CountMinSketch{
+		cancel: cancel,
 	}
-	go c.decayLoop()
+	for i := 0; i < SketchDepth; i++ {
+		c.facets[i] = maphash.MakeSeed()
+	}
+	c.wg.Add(1)
+	go c.decayLoop(ctx)
 	return c
 }
 
-func (c *CountMinSketch) decayLoop() {
+func (c *CountMinSketch) Close() {
+	if c.cancel != nil {
+		c.cancel()
+	}
+	c.wg.Wait()
+}
+
+func (c *CountMinSketch) decayLoop(ctx context.Context) {
+	defer c.wg.Done()
 	ticker := time.NewTicker(1 * time.Minute)
-	for range ticker.C {
-		for i := 0; i < SketchDepth; i++ {
-			for j := 0; j < SketchWidth; j++ {
-				val := c.buckets[i][j].Load()
-				if val > 0 {
-					c.buckets[i][j].Store(val / 2)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			for i := 0; i < SketchDepth; i++ {
+				for j := 0; j < SketchWidth; j++ {
+					val := c.buckets[i][j].Load()
+					if val > 0 {
+						c.buckets[i][j].Store(val / 2)
+					}
 				}
 			}
 		}
@@ -40,9 +62,10 @@ func (c *CountMinSketch) decayLoop() {
 }
 
 func (c *CountMinSketch) hash(data []byte, depth int) uint64 {
-	c.hashers[depth].Reset()
-	c.hashers[depth].Write(data)
-	return c.hashers[depth].Sum64() % SketchWidth
+	var h maphash.Hash
+	h.SetSeed(c.facets[depth])
+	h.Write(data)
+	return h.Sum64() % SketchWidth
 }
 
 func (c *CountMinSketch) Increment(key []byte) {
