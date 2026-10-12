@@ -6,6 +6,8 @@ import (
 	"sync/atomic"
 )
 
+var boundaryPrefix = []byte("--")
+
 // BoundaryFilter implements a zero-allocation, lock-free anomaly detector for multipart boundaries.
 // It uses a bitmask to track state transitions to prevent boundary smuggling/traversal.
 type BoundaryFilter struct {
@@ -18,25 +20,36 @@ func NewBoundaryFilter() *BoundaryFilter {
 	return &BoundaryFilter{
 		pool: &sync.Pool{
 			New: func() interface{} {
-				return make([]byte, 4096)
+				buf := make([]byte, 4096)
+				return &buf
 			},
 		},
 	}
 }
 
+// GetBuffer retrieves a byte slice buffer from the sync pool.
+func (f *BoundaryFilter) GetBuffer() []byte {
+	ptr := f.pool.Get().(*[]byte)
+	return *ptr
+}
+
+// PutBuffer returns a byte slice buffer to the sync pool.
+func (f *BoundaryFilter) PutBuffer(buf []byte) {
+	f.pool.Put(&buf)
+}
+
 // InspectChunk checks for malicious boundary injection patterns.
 // Returns true if the chunk is safe, false if an anomaly is detected.
 func (f *BoundaryFilter) InspectChunk(chunk []byte) bool {
-	// Detect potential boundary smuggling via null bytes or control characters
+	// Detect potential boundary smuggling via null bytes or anomalous control characters
 	for _, b := range chunk {
-		if b == 0x00 || b == 0x0D || b == 0x0A {
-			// Basic check for CRLF injection in boundary context
-			continue
+		if b == 0x00 {
+			return false
 		}
 	}
 
 	// State machine transition: check for boundary prefix '--'
-	if bytes.Contains(chunk, []byte("--")) {
+	if bytes.Contains(chunk, boundaryPrefix) {
 		f.state.Store(1)
 	}
 
