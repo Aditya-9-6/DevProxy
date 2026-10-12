@@ -4,10 +4,12 @@ import (
 	"net"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestMultiplexer(t *testing.T) {
 	m := NewMultiplexer()
+	defer m.Close()
 	addr := "127.0.0.1:8080"
 	conn, _ := net.Pipe()
 	m.Put(addr, conn)
@@ -19,6 +21,34 @@ func TestMultiplexer(t *testing.T) {
 	_, ok = m.Get(addr)
 	if ok {
 		t.Errorf("connection should have been removed")
+	}
+}
+
+func TestMultiplexerTTL(t *testing.T) {
+	m := NewMultiplexer()
+	m.TTL = 10 * time.Millisecond
+	defer m.Close()
+	addr := "127.0.0.1:8081"
+	conn, _ := net.Pipe()
+	m.Put(addr, conn)
+	time.Sleep(20 * time.Millisecond)
+	_, ok := m.Get(addr)
+	if ok {
+		t.Errorf("connection should have expired")
+	}
+}
+
+func TestBackpressureShedding(t *testing.T) {
+	bp := NewBackpressureController(1)
+	if !bp.Acquire() {
+		t.Fatal("failed to acquire first slot")
+	}
+	if bp.Acquire() {
+		t.Error("should have shed load")
+	}
+	bp.Release()
+	if !bp.Acquire() {
+		t.Error("should have acquired after release")
 	}
 }
 
