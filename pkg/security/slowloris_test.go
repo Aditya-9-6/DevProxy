@@ -2,6 +2,7 @@ package security
 
 import (
 	"net"
+	"sync"
 	"testing"
 )
 
@@ -12,6 +13,23 @@ func TestCountMinSketch(t *testing.T) {
 	s.Increment(key)
 	if s.Estimate(key) < 2 {
 		t.Errorf("Expected count >= 2, got %d", s.Estimate(key))
+	}
+}
+
+func TestCountMinSketchConcurrent(t *testing.T) {
+	s := NewCountMinSketch()
+	key := []byte("192.168.1.1")
+	var wg sync.WaitGroup
+	for i := 0; i < 100; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			s.Increment(key)
+		}()
+	}
+	wg.Wait()
+	if s.Estimate(key) < 100 {
+		t.Errorf("Expected count >= 100, got %d", s.Estimate(key))
 	}
 }
 

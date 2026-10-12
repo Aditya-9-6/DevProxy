@@ -19,7 +19,7 @@ func NewSlowlorisFilter(limit uint64) *SlowlorisFilter {
 func (f *SlowlorisFilter) ShouldBlock(conn net.Conn) bool {
 	addr, _, err := net.SplitHostPort(conn.RemoteAddr().String())
 	if err != nil {
-		return false
+		addr = conn.RemoteAddr().String()
 	}
 	key := []byte(addr)
 	f.sketch.Increment(key)
