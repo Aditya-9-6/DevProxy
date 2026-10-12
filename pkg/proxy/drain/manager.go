@@ -12,27 +12,44 @@ const (
 	StateClosed
 )
 
-// Manager coordinates graceful connection shutdown using atomic state transitions.
+// ConnectionState tracks individual connection lifecycle and is pooled for zero-alloc usage.
+type ConnectionState struct {
+	Active bool
+}
+
+// Manager coordinates graceful connection shutdown using atomic state transitions, zero-alloc pooling, and signal notifications.
 type Manager struct {
 	state atomic.Int32
 	count atomic.Int64
 	pool  sync.Pool
+	mu    sync.Mutex
+	cond  *sync.Cond
 }
 
-// NewManager creates a new drain manager.
+// NewManager initializes the drain manager.
 func NewManager() *Manager {
-	return &Manager{
+	m := &Manager{
 		pool: sync.Pool{
 			New: func() interface{} {
-				return &ConnectionState{}
+				return &ConnectionState{Active: true}
 			},
 		},
 	}
+	m.cond = sync.NewCond(&m.mu)
+	return m
 }
 
-// ConnectionState tracks individual connection lifecycle.
-type ConnectionState struct {
-	Active bool
+// GetState acquires a pooled ConnectionState.
+func (m *Manager) GetState() *ConnectionState {
+	cs := m.pool.Get().(*ConnectionState)
+	cs.Active = true
+	return cs
+}
+
+// PutState returns a ConnectionState to the pool.
+func (m *Manager) PutState(cs *ConnectionState) {
+	cs.Active = false
+	m.pool.Put(cs)
 }
 
 // Register increments the active connection counter if not draining.
@@ -44,17 +61,36 @@ func (m *Manager) Register() bool {
 	return true
 }
 
-// Unregister decrements the active connection counter.
+// Unregister decrements the active connection counter and signals waiters if zero.
 func (m *Manager) Unregister() {
-	m.count.Add(-1)
+	val := m.count.Add(-1)
+	if val <= 0 {
+		m.mu.Lock()
+		m.cond.Broadcast()
+		m.mu.Unlock()
+	}
 }
 
 // Drain initiates the shutdown process.
 func (m *Manager) Drain() {
 	m.state.Store(StateDraining)
+	if m.ActiveCount() == 0 {
+		m.mu.Lock()
+		m.cond.Broadcast()
+		m.mu.Unlock()
+	}
 }
 
 // ActiveCount returns the number of currently tracked connections.
 func (m *Manager) ActiveCount() int64 {
 	return m.count.Load()
+}
+
+// Wait blocks until the active connection count reaches zero.
+func (m *Manager) Wait() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for m.ActiveCount() > 0 {
+		m.cond.Wait()
+	}
 }
