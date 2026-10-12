@@ -3,7 +3,13 @@ module github.com/Aditya-9-6/DevProxy
 go 1.25.0
 
 require (
+	github.com/andybalholm/brotli v1.2.6
+	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/uuid v1.6.0
+<<<<<<< HEAD
+=======
+	github.com/klauspost/compress v1.20.1
+>>>>>>> origin/main
 	golang.org/x/net v0.58.0
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.59.0
