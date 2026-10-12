@@ -1,6 +1,7 @@
 package http2
 
 import (
+	"sync"
 	"testing"
 	"time"
 )
@@ -23,4 +24,19 @@ func TestSchedulerPool(t *testing.T) {
 		t.Fatal("Expected priority object")
 	}
 	s.PutPriority(p)
+}
+
+func TestDependencyTreeConcurrency(t *testing.T) {
+	t.Parallel()
+	tree := NewDependencyTree()
+	var wg sync.WaitGroup
+
+	for i := 1; i <= 10; i++ {
+		wg.Add(1)
+		go func(id uint32) {
+			defer wg.Done()
+			tree.AddChild(0, id, 16)
+		}(uint32(i))
+	}
+	wg.Wait()
 }
