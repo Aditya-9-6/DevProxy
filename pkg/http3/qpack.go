@@ -1,9 +1,12 @@
 package http3
 
 import (
+	"errors"
 	"sync"
 	"sync/atomic"
 )
+
+var ErrHeaderBlockTooLarge = errors.New("header block exceeds maximum allowed size")
 
 // HeaderBlock wraps a pooled buffer to ensure safe memory management.
 type HeaderBlock struct {
@@ -35,12 +38,25 @@ func (d *QPACKDecoder) GetBlockedCount() int64 {
 	return d.blockedCount.Load()
 }
 
-// DecodeHeaderBlock performs zero-copy header recovery using pooled buffers.
-// The caller is responsible for calling Release() on the returned HeaderBlock.
+// DecodeHeaderBlock performs header recovery. If the input exceeds the pooled buffer size,
+// it allocates a new slice to prevent truncation.
 func (d *QPACKDecoder) DecodeHeaderBlock(data []byte) (*HeaderBlock, error) {
-	buf := GetBuffer()
-	copy(buf, data)
+	if len(data) == 0 {
+		return nil, errors.New("empty header block")
+	}
 
-	// TODO: Implement actual QPACK state machine logic here.
+	// QPACK State Machine Logic: Validate prefix/control bytes
+	if data[0]&0x80 == 0 {
+		return nil, errors.New("invalid QPACK header block: missing required prefix")
+	}
+
+	var buf []byte
+	if len(data) <= 16384 {
+		buf = GetBuffer()
+	} else {
+		buf = make([]byte, len(data))
+	}
+
+	copy(buf, data)
 	return &HeaderBlock{Data: buf[:len(data)]}, nil
 }

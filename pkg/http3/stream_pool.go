@@ -16,5 +16,7 @@ func GetBuffer() []byte {
 
 // PutBuffer returns a buffer to the pool.
 func PutBuffer(b []byte) {
-	streamBufferPool.Put(b)
+	if cap(b) == 16384 {
+		streamBufferPool.Put(b)
+	}
 }
