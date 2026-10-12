@@ -43,6 +43,8 @@ func TestHeaderInternerConcurrent(t *testing.T) {
 
 func BenchmarkHeaderInterner(b *testing.B) {
 	interner := NewHeaderInterner()
+	b.ReportAllocs()
+	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
 			interner.Intern("X-Request-ID")

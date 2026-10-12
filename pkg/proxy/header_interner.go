@@ -1,7 +1,6 @@
 package proxy
 
 import (
-	"hash/fnv"
 	"sync"
 )
 
@@ -9,13 +8,10 @@ const (
 	InternerSize = 1024
 )
 
-type headerEntry struct {
-	key string
-}
-
 type bucket struct {
 	sync.RWMutex
 	entries map[string]string
+	_       [56]byte // Padding to prevent false sharing (cache-line alignment)
 }
 
 type HeaderInterner struct {
@@ -30,11 +26,18 @@ func NewHeaderInterner() *HeaderInterner {
 	return h
 }
 
-func (h *HeaderInterner) Intern(key string) string {
-	hash := fnv.New32a()
-	hash.Write([]byte(key))
-	idx := int(hash.Sum32() % InternerSize)
+// hashFNV1a implements a stack-based FNV-1a hash to avoid heap allocations.
+func hashFNV1a(s string) uint32 {
+	var hash uint32 = 2166136261
+	for i := 0; i < len(s); i++ {
+		hash ^= uint32(s[i])
+		hash *= 16777619
+	}
+	return hash
+}
 
+func (h *HeaderInterner) Intern(key string) string {
+	idx := int(hashFNV1a(key) % InternerSize)
 	b := h.buckets[idx]
 
 	b.RLock()
