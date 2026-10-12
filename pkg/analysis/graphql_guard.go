@@ -5,7 +5,7 @@ import (
 	"sync"
 )
 
-var bufferPool = sync.Pool{
+var gqlBufferPool = sync.Pool{
 	New: func() interface{} {
 		return make([]byte, 0, 4096)
 	},
@@ -39,7 +39,7 @@ func (g *GraphQLGuard) Evaluate(event *ringbuffer.TrafficEvent) []*Finding {
 			RuleName:    g.Name(),
 			Title:       "GraphQL Query Depth Exceeded",
 			Description: "The query depth exceeds the security threshold.",
-			Evidence:    "Depth: 10",
+			Evidence:    "Depth exceeds max allowed",
 			Location:    "Request Body",
 			URL:         event.URL,
 		}}
