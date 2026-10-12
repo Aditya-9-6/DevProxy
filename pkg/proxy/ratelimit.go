@@ -5,18 +5,16 @@ import (
 	"time"
 )
 
-const cacheLinePad = 64
-
-type paddedCounter struct {
-	count atomic.Uint64
-	_     [cacheLinePad - 8]byte
-}
-
+// TokenBucket implements a thread-safe, lock-free token bucket.
 type TokenBucket struct {
 	capacity   uint64
 	refillRate uint64
-	lastRefill atomic.Int64
-	tokens     paddedCounter
+	state      atomic.Pointer[bucketState]
+}
+
+type bucketState struct {
+	tokens     uint64
+	lastRefill int64
 }
 
 func NewTokenBucket(capacity, refillRate uint64) *TokenBucket {
@@ -24,41 +22,36 @@ func NewTokenBucket(capacity, refillRate uint64) *TokenBucket {
 		capacity:   capacity,
 		refillRate: refillRate,
 	}
-	b.tokens.count.Store(capacity)
-	b.lastRefill.Store(time.Now().UnixNano())
+	b.state.Store(&bucketState{tokens: capacity, lastRefill: time.Now().UnixNano()})
 	return b
 }
 
 func (b *TokenBucket) Allow() bool {
-	now := time.Now().UnixNano()
-	last := b.lastRefill.Load()
-
-	delta := uint64(now - last)
-	if delta > 0 {
-		refill := (delta * b.refillRate) / uint64(time.Second)
-		if refill > 0 {
-			if b.lastRefill.CompareAndSwap(last, now) {
-				current := b.tokens.count.Load()
-				for {
-					newVal := current + refill
-					if newVal > b.capacity {
-						newVal = b.capacity
-					}
-					if b.tokens.count.CompareAndSwap(current, newVal) {
-						break
-					}
-					current = b.tokens.count.Load()
-				}
-			}
-		}
-	}
-
 	for {
-		current := b.tokens.count.Load()
-		if current == 0 {
+		old := b.state.Load()
+		now := time.Now().UnixNano()
+
+		delta := now - old.lastRefill
+		refill := uint64(0)
+		if delta > 0 {
+			refill = (uint64(delta) * b.refillRate) / uint64(time.Second)
+		}
+
+		newTokens := old.tokens + refill
+		if newTokens > b.capacity {
+			newTokens = b.capacity
+		}
+
+		if newTokens == 0 {
 			return false
 		}
-		if b.tokens.count.CompareAndSwap(current, current-1) {
+
+		next := &bucketState{
+			tokens:     newTokens - 1,
+			lastRefill: now,
+		}
+
+		if b.state.CompareAndSwap(old, next) {
 			return true
 		}
 	}
