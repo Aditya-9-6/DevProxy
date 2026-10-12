@@ -20,10 +20,11 @@ var chunkBufferPool = sync.Pool{
 
 // ChunkDecoder implements io.Reader to decode HTTP chunked transfer encoding.
 type ChunkDecoder struct {
-	r    *bufio.Reader
-	curr []byte
-	pos  int
-	err  error
+	r         *bufio.Reader
+	curr      []byte
+	pos       int
+	err       error
+	activeBuf *bytes.Buffer
 }
 
 func NewChunkDecoder(r io.Reader) *ChunkDecoder {
@@ -35,8 +36,14 @@ func (d *ChunkDecoder) Read(p []byte) (int, error) {
 		return 0, d.err
 	}
 	if d.pos >= len(d.curr) {
+		if d.activeBuf != nil {
+			chunkBufferPool.Put(d.activeBuf)
+			d.activeBuf = nil
+		}
+
 		line, err := d.r.ReadString('\n')
 		if err != nil {
+			d.err = err
 			return 0, err
 		}
 		size, err := strconv.ParseInt(strings.TrimSpace(line), 16, 64)
@@ -48,18 +55,26 @@ func (d *ChunkDecoder) Read(p []byte) (int, error) {
 			d.err = io.EOF
 			return 0, io.EOF
 		}
+
 		buf := chunkBufferPool.Get().(*bytes.Buffer)
 		buf.Reset()
 		buf.Grow(int(size))
 		_, err = io.CopyN(buf, d.r, size)
-		d.r.Discard(2) // Discard \r\n
-		d.curr = buf.Bytes()
-		d.pos = 0
 		if err != nil {
 			chunkBufferPool.Put(buf)
+			d.err = err
 			return 0, err
 		}
-		chunkBufferPool.Put(buf)
+
+		if _, err := d.r.Discard(2); err != nil { // Discard \r\n
+			chunkBufferPool.Put(buf)
+			d.err = err
+			return 0, err
+		}
+
+		d.activeBuf = buf
+		d.curr = buf.Bytes()
+		d.pos = 0
 	}
 	n := copy(p, d.curr[d.pos:])
 	d.pos += n
