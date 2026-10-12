@@ -2,23 +2,23 @@ package proxy
 
 import (
 	"net"
-	"sort"
 	"sync"
 )
 
-// SubnetClassifier uses a sorted slice of CIDRs to perform O(log N) lookups.
+// SubnetClassifier uses a Radix Tree (Trie) for O(K) lookup performance.
 type SubnetClassifier struct {
-	mu       sync.RWMutex
-	networks []cidrEntry
+	mu   sync.RWMutex
+	root *node
 }
 
-type cidrEntry struct {
-	ipNet *net.IPNet
-	tier  int
+type node struct {
+	children [2]*node
+	tier     int
+	isLeaf   bool
 }
 
 func NewSubnetClassifier() *SubnetClassifier {
-	return &SubnetClassifier{}
+	return &SubnetClassifier{root: &node{}}
 }
 
 func (s *SubnetClassifier) AddTier(cidr string, tier int) error {
@@ -28,23 +28,44 @@ func (s *SubnetClassifier) AddTier(cidr string, tier int) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.networks = append(s.networks, cidrEntry{ipNet, tier})
-	// Sort by mask size descending (most specific first)
-	sort.Slice(s.networks, func(i, j int) bool {
-		s1, _ := s.networks[i].ipNet.Mask.Size()
-		s2, _ := s.networks[j].ipNet.Mask.Size()
-		return s1 > s2
-	})
+
+	bits, _ := ipNet.Mask.Size()
+	curr := s.root
+	for i := 0; i < bits; i++ {
+		bit := (ipNet.IP[i/8] >> (7 - (i % 8))) & 1
+		if curr.children[bit] == nil {
+			curr.children[bit] = &node{}
+		}
+		curr = curr.children[bit]
+	}
+	curr.tier = tier
+	curr.isLeaf = true
 	return nil
 }
 
 func (s *SubnetClassifier) Classify(ip net.IP) int {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	for _, entry := range s.networks {
-		if entry.ipNet.Contains(ip) {
-			return entry.tier
-		}
+
+	curr := s.root
+	bestTier := 0
+	ipV4 := ip.To4()
+	if ipV4 != nil {
+		ip = ipV4
 	}
-	return 0
+
+	for i := 0; i < len(ip)*8; i++ {
+		if curr.isLeaf {
+			bestTier = curr.tier
+		}
+		bit := (ip[i/8] >> (7 - (i % 8))) & 1
+		if curr.children[bit] == nil {
+			break
+		}
+		curr = curr.children[bit]
+	}
+	if curr.isLeaf {
+		bestTier = curr.tier
+	}
+	return bestTier
 }
