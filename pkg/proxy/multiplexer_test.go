@@ -24,6 +24,11 @@ func TestMultiplexer(t *testing.T) {
 	}
 }
 
+func TestMultiplexerReaperCancellation(t *testing.T) {
+	m := NewMultiplexer()
+	m.Close()
+}
+
 func TestMultiplexerTTL(t *testing.T) {
 	m := NewMultiplexer()
 	m.TTL = 10 * time.Millisecond

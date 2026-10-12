@@ -15,7 +15,8 @@ type entry struct {
 
 // Multiplexer manages a pool of upstream connections for HTTP/2 stream reuse.
 type Multiplexer struct {
-	conns  sync.Map
+	mu     sync.RWMutex
+	conns  map[string]entry
 	count  atomic.Uint64
 	TTL    time.Duration
 	ctx    context.Context
@@ -25,6 +26,7 @@ type Multiplexer struct {
 func NewMultiplexer() *Multiplexer {
 	ctx, cancel := context.WithCancel(context.Background())
 	m := &Multiplexer{
+		conns:  make(map[string]entry),
 		TTL:    30 * time.Second,
 		ctx:    ctx,
 		cancel: cancel,
@@ -41,39 +43,50 @@ func (m *Multiplexer) reaper() {
 		case <-m.ctx.Done():
 			return
 		case <-ticker.C:
-			m.conns.Range(func(key, value interface{}) bool {
-				e := value.(entry)
+			m.mu.Lock()
+			for addr, e := range m.conns {
 				if time.Since(e.createdAt) > m.TTL {
-					m.Remove(key.(string))
+					delete(m.conns, addr)
+					m.count.Add(^uint64(0))
+					e.conn.Close()
 				}
-				return true
-			})
+			}
+			m.mu.Unlock()
 		}
 	}
 }
 
 func (m *Multiplexer) Get(addr string) (net.Conn, bool) {
-	val, ok := m.conns.Load(addr)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	e, ok := m.conns[addr]
 	if !ok {
 		return nil, false
 	}
-	e := val.(entry)
 	if time.Since(e.createdAt) > m.TTL {
-		go m.Remove(addr)
+		delete(m.conns, addr)
+		m.count.Add(^uint64(0))
+		e.conn.Close()
 		return nil, false
 	}
 	return e.conn, true
 }
 
 func (m *Multiplexer) Put(addr string, conn net.Conn) {
-	m.conns.Store(addr, entry{conn: conn, createdAt: time.Now()})
-	m.count.Add(1)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.conns[addr]; !ok {
+		m.count.Add(1)
+	}
+	m.conns[addr] = entry{conn: conn, createdAt: time.Now()}
 }
 
 func (m *Multiplexer) Remove(addr string) {
-	if val, ok := m.conns.LoadAndDelete(addr); ok {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if e, ok := m.conns[addr]; ok {
+		delete(m.conns, addr)
 		m.count.Add(^uint64(0))
-		e := val.(entry)
 		e.conn.Close()
 	}
 }
