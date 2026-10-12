@@ -3,6 +3,7 @@ package security
 import (
 	"fmt"
 	"sync"
+	"time"
 )
 
 // HTTP2FrameType represents standard HTTP/2 frame types.
@@ -41,33 +42,112 @@ type H2StreamAnomaly struct {
 	Message   string
 }
 
-// HTTP2StreamValidator validates HTTP/2 frame sequencing using lock-free bit vectors per stream.
-type HTTP2StreamValidator struct {
-	mu     sync.Mutex
-	states map[uint32]StreamState
-	bitVec *CacheAlignedBitVector
+// streamRecord stores stream state and last updated timestamp for eviction.
+type streamRecord struct {
+	state     StreamState
+	updatedAt time.Time
 }
 
-// NewHTTP2StreamValidator initializes an HTTP2StreamValidator.
+const shardCount = 16
+
+// streamShard represents a sharded lock container to reduce global lock contention.
+type streamShard struct {
+	sync.RWMutex
+	states map[uint32]streamRecord
+}
+
+// HTTP2StreamValidator validates HTTP/2 frame sequencing using sharded locks and lock-free bit vectors.
+type HTTP2StreamValidator struct {
+	shards    [shardCount]streamShard
+	bitVec    *CacheAlignedBitVector
+	ttl       time.Duration
+	closeChan chan struct{}
+	wg        sync.WaitGroup
+}
+
+// NewHTTP2StreamValidator initializes an HTTP2StreamValidator with sliding window cleanup.
 func NewHTTP2StreamValidator() *HTTP2StreamValidator {
-	return &HTTP2StreamValidator{
-		states: make(map[uint32]StreamState),
-		bitVec: NewCacheAlignedBitVector(65536),
+	return NewHTTP2StreamValidatorWithTTL(time.Minute * 10)
+}
+
+// NewHTTP2StreamValidatorWithTTL initializes an HTTP2StreamValidator with a custom TTL.
+func NewHTTP2StreamValidatorWithTTL(ttl time.Duration) *HTTP2StreamValidator {
+	v := &HTTP2StreamValidator{
+		bitVec:    NewCacheAlignedBitVector(1 << 31), // Full HTTP/2 31-bit stream ID space support
+		ttl:       ttl,
+		closeChan: make(chan struct{}),
 	}
+
+	for i := 0; i < shardCount; i++ {
+		v.shards[i].states = make(map[uint32]streamRecord)
+	}
+
+	v.wg.Add(1)
+	go v.cleanupLoop()
+
+	return v
+}
+
+// getShard selects the appropriate shard for a given stream ID.
+func (v *HTTP2StreamValidator) getShard(streamID uint32) *streamShard {
+	return &v.shards[streamID%shardCount]
+}
+
+// cleanupLoop periodically evicts closed or stale streams to prevent memory leaks.
+func (v *HTTP2StreamValidator) cleanupLoop() {
+	defer v.wg.Done()
+	ticker := time.NewTicker(v.ttl / 2)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-v.closeChan:
+			return
+		case <-ticker.C:
+			now := time.Now()
+			for i := 0; i < shardCount; i++ {
+				shard := &v.shards[i]
+				shard.Lock()
+				for id, rec := range shard.states {
+					if rec.state == StateClosed || now.Sub(rec.updatedAt) > v.ttl {
+						delete(shard.states, id)
+						v.bitVec.Clear(int(id))
+					}
+				}
+				shard.Unlock()
+			}
+		}
+	}
+}
+
+// Close terminates the validator background cleanup goroutine.
+func (v *HTTP2StreamValidator) Close() {
+	close(v.closeChan)
+	v.wg.Wait()
 }
 
 // ValidateFrame inspects an incoming HTTP/2 frame against RFC 7540 sequencing rules.
 func (v *HTTP2StreamValidator) ValidateFrame(streamID uint32, frameType HTTP2FrameType, flags uint8) (*H2StreamAnomaly, error) {
-	v.mu.Lock()
-	state, exists := v.states[streamID]
-	if !exists {
-		state = StateIdle
+	if streamID == 0 {
+		// Connection-level frames are handled separately
+		return nil, nil
 	}
 
+	shard := v.getShard(streamID)
+	shard.Lock()
+	defer shard.Unlock()
+
+	rec, exists := shard.states[streamID]
+	state := StateIdle
+	if exists {
+		state = rec.state
+	}
+
+	now := time.Now()
+
 	// Sequence rule: HEADERS or PUSH_PROMISE must establish stream if ID != 0
-	if streamID != 0 && state == StateIdle {
-		if frameType != FrameHeaders && frameType != FramePriority {
-			v.mu.Unlock()
+	if state == StateIdle {
+		if frameType != FrameHeaders && frameType != FramePriority && frameType != FramePushPromise {
 			return &H2StreamAnomaly{
 				StreamID:  streamID,
 				FrameType: frameType,
@@ -75,13 +155,12 @@ func (v *HTTP2StreamValidator) ValidateFrame(streamID uint32, frameType HTTP2Fra
 			}, nil
 		}
 		state = StateOpen
-		v.states[streamID] = state
-		v.bitVec.Set(int(streamID % 65536))
+		shard.states[streamID] = streamRecord{state: state, updatedAt: now}
+		v.bitVec.Set(int(streamID))
 	}
 
 	// Check half-closed or closed state violations
 	if state == StateClosed {
-		v.mu.Unlock()
 		return &H2StreamAnomaly{
 			StreamID:  streamID,
 			FrameType: frameType,
@@ -92,12 +171,20 @@ func (v *HTTP2StreamValidator) ValidateFrame(streamID uint32, frameType HTTP2Fra
 	// Update state based on frame flags (END_STREAM = 0x1)
 	if (flags & 0x1) != 0 {
 		if state == StateOpen {
-			v.states[streamID] = StateHalfClosedRemote
+			state = StateHalfClosedRemote
 		} else if state == StateHalfClosedLocal {
-			v.states[streamID] = StateClosed
+			state = StateClosed
 		}
 	}
 
-	v.mu.Unlock()
+	if frameType == FrameRSTStream {
+		state = StateClosed
+	}
+
+	shard.states[streamID] = streamRecord{state: state, updatedAt: now}
+	if state == StateClosed {
+		v.bitVec.Clear(int(streamID))
+	}
+
 	return nil, nil
 }
