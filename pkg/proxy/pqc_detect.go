@@ -16,6 +16,9 @@ func DetectPQCHybridHandshake(extensions []byte) bool {
 	for len(extensions) >= 4 {
 		extType := binary.BigEndian.Uint16(extensions[0:2])
 		extLen := int(binary.BigEndian.Uint16(extensions[2:4]))
+		if len(extensions) < 4+extLen {
+			break
+		}
 		extData := extensions[4 : 4+extLen]
 
 		if extType == 10 && len(extData) >= 2 {
