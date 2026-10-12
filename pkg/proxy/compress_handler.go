@@ -3,6 +3,7 @@ package proxy
 import (
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/Aditya-9-6/DevProxy/pkg/compression"
@@ -17,12 +18,23 @@ type CompressHandler struct {
 	algo      compression.CompressionType
 }
 
-// NewCompressHandler creates a new compression response wrapper.
+// NewCompressHandler creates a new compression response wrapper respecting client Accept-Encoding.
 func NewCompressHandler(w http.ResponseWriter, r *http.Request) *CompressHandler {
 	acceptEncoding := r.Header.Get("Accept-Encoding")
-	_ = acceptEncoding
+
 	mgr := compression.GetGlobalManager()
-	algo := mgr.SelectAlgorithm(r.Header.Get("Content-Type"), 2048)
+	rawAlgo := mgr.SelectAlgorithm(r.Header.Get("Content-Type"), 2048)
+
+	algo := compression.CompressionNone
+	if strings.Contains(acceptEncoding, "zstd") && (rawAlgo == compression.CompressionZstd || rawAlgo == "") {
+		algo = compression.CompressionZstd
+	} else if strings.Contains(acceptEncoding, "br") && (rawAlgo == compression.CompressionBrotli || rawAlgo == "") {
+		algo = compression.CompressionBrotli
+	} else if strings.Contains(acceptEncoding, "gzip") {
+		algo = compression.CompressionGzip
+	} else if strings.Contains(acceptEncoding, "*") {
+		algo = rawAlgo
+	}
 
 	return &CompressHandler{
 		w:         w,
@@ -40,8 +52,10 @@ func (h *CompressHandler) WriteHeader(statusCode int) {
 		return
 	}
 	h.started = true
-	h.Header().Set("Content-Encoding", string(h.algo))
-	h.Header().Del("Content-Length") // Chunked transfer encoding
+	if h.algo != compression.CompressionNone {
+		h.Header().Set("Content-Encoding", string(h.algo))
+		h.Header().Del("Content-Length") // Chunked transfer encoding
+	}
 	h.originalW.WriteHeader(statusCode)
 
 	start := time.Now()

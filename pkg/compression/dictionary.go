@@ -3,6 +3,7 @@ package compression
 import (
 	"compress/gzip"
 	"io"
+	"math"
 	"sync/atomic"
 	"time"
 
@@ -22,7 +23,6 @@ const (
 
 // DictionaryManager tracks latency and entropy atomically without global locks.
 type DictionaryManager struct {
-	// Fixed [1000]atomic.Uint64 latency buckets (nanoseconds ranges or index buckets)
 	latencies [1000]atomic.Uint64
 	requests  atomic.Uint64
 }
@@ -52,7 +52,6 @@ func (m *DictionaryManager) SelectAlgorithm(contentType string, bodyLen int) Com
 	if bodyLen < 512 {
 		return CompressionNone
 	}
-	// Adaptive selection based on content type and request throughput
 	reqCount := m.requests.Load()
 	if reqCount%3 == 0 {
 		return CompressionZstd
@@ -64,22 +63,57 @@ func (m *DictionaryManager) SelectAlgorithm(contentType string, bodyLen int) Com
 
 // CompressStream wraps an io.Writer with the requested compression algorithm using zero-alloc pool buffers.
 func CompressStream(w io.Writer, algo CompressionType) (io.WriteCloser, error) {
+	buf := AcquireBuffer()
+
 	switch algo {
 	case CompressionGzip:
 		gz := gzip.NewWriter(w)
-		return gz, nil
+		return &pooledWriter{WriteCloser: gz, poolBuf: buf}, nil
 	case CompressionBrotli:
 		br := brotli.NewWriter(w)
-		return br, nil
+		return &pooledWriter{WriteCloser: nopWriteCloserWithFlush{w: br}, poolBuf: buf}, nil
 	case CompressionZstd:
 		enc, err := zstd.NewWriter(w)
 		if err != nil {
+			ReleaseBuffer(buf)
 			return nil, err
 		}
-		return enc, nil
+		return &pooledWriter{WriteCloser: enc, poolBuf: buf}, nil
 	default:
+		ReleaseBuffer(buf)
 		return &nopWriteCloser{w: w}, nil
 	}
+}
+
+type pooledWriter struct {
+	io.WriteCloser
+	poolBuf []byte
+	closed  bool
+}
+
+func (p *pooledWriter) Close() error {
+	if p.closed {
+		return nil
+	}
+	p.closed = true
+	err := p.WriteCloser.Close()
+	ReleaseBuffer(p.poolBuf)
+	return err
+}
+
+type nopWriteCloserWithFlush struct {
+	w io.Writer
+}
+
+func (n nopWriteCloserWithFlush) Write(p []byte) (int, error) {
+	return n.w.Write(p)
+}
+
+func (n nopWriteCloserWithFlush) Close() error {
+	if flusher, ok := n.w.(interface{ Flush() error }); ok {
+		return flusher.Flush()
+	}
+	return nil
 }
 
 type nopWriteCloser struct {
@@ -118,22 +152,8 @@ func ComputeEntropy(data []byte) float64 {
 }
 
 func log2(x float64) float64 {
-	// approximate log2 via natural log division
-	return ln(x) / 0.6931471805599453
-}
-
-func ln(x float64) float64 {
 	if x <= 0 {
 		return 0
 	}
-	// Taylor series approximation for ln(x)
-	val := (x - 1) / (x + 1)
-	val2 := val * val
-	sum := val
-	term := val
-	for i := 3; i < 15; i += 2 {
-		term *= val2
-		sum += term / float64(i)
-	}
-	return 2 * sum
+	return math.Log2(x)
 }
