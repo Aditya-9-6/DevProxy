@@ -11,11 +11,10 @@ type Node struct {
 	Weight   atomic.Uint32
 	Parent   *Node
 	Children map[uint32]*Node
-	mu       sync.RWMutex
 }
 
 // DependencyTree manages stream relationships with thread-safety.
-// Uses a flat map for O(1) lookups to avoid recursive traversal.
+// Uses a global RWMutex for consistency during structural modifications.
 type DependencyTree struct {
 	Root  *Node
 	nodes map[uint32]*Node
@@ -39,11 +38,10 @@ func (t *DependencyTree) AddChild(parentID, childID uint32, weight uint32) {
 		parent = t.Root
 	}
 
-	// Cycle detection: ensure child is not an ancestor of parent
 	curr := parent
 	for curr != nil {
 		if curr.StreamID == childID {
-			return // Cycle detected, abort
+			return
 		}
 		curr = curr.Parent
 	}
@@ -52,4 +50,19 @@ func (t *DependencyTree) AddChild(parentID, childID uint32, weight uint32) {
 	node.Weight.Store(weight)
 	parent.Children[childID] = node
 	t.nodes[childID] = node
+}
+
+func (t *DependencyTree) RemoveChild(streamID uint32) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	node, ok := t.nodes[streamID]
+	if !ok || node == t.Root {
+		return
+	}
+
+	if node.Parent != nil {
+		delete(node.Parent.Children, streamID)
+	}
+	delete(t.nodes, streamID)
 }

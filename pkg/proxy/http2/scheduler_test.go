@@ -36,9 +36,26 @@ func TestDependencyTreeConcurrency(t *testing.T) {
 		go func(id uint32) {
 			defer wg.Done()
 			tree.AddChild(0, id, 16)
+			tree.RemoveChild(id)
 		}(uint32(i))
 	}
 	wg.Wait()
+}
+
+func TestDependencyTreeCycleDetection(t *testing.T) {
+	tree := NewDependencyTree()
+	tree.AddChild(0, 1, 16)
+	tree.AddChild(1, 2, 16)
+	tree.AddChild(2, 1, 16) // Should be ignored
+
+	tree.mu.RLock()
+	_, exists := tree.nodes[1].Children[2]
+	_, cycle := tree.nodes[2].Children[1]
+	tree.mu.RUnlock()
+
+	if !exists || cycle {
+		t.Error("Cycle detection failed to prevent invalid tree structure")
+	}
 }
 
 func BenchmarkDependencyTreeAdd(b *testing.B) {
