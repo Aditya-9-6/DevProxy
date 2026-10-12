@@ -16,15 +16,33 @@ func TestBoundaryFilter_InspectChunk(t *testing.T) {
 		{"Empty", []byte(""), true},
 		{"Data", []byte("some content"), true},
 		{"Smuggling NullByte", []byte("--boundary\x00smuggle"), false},
+		{"CRLF Injection Anomalous", []byte("data\r\rdata"), false},
+		{"Multiple Newlines", []byte("data\n\ndata"), false},
+		{"Duplicate Headers TE.CL", []byte("--boundary\r\nContent-Length: 10\r\nTransfer-Encoding: chunked\r\n\r\n"), false},
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+		structTest := tt
+		t.Run(structTest.name, func(t *testing.T) {
 			t.Parallel()
-			if got := filter.InspectChunk(tt.chunk); got != tt.want {
-				t.Errorf("InspectChunk() = %v, want %v", got, tt.want)
+			if got := filter.InspectChunk(structTest.chunk); got != structTest.want {
+				t.Errorf("InspectChunk() = %v, want %v", got, structTest.want)
 			}
 		})
+	}
+}
+
+func TestBoundaryFilter_MultiChunkSplit(t *testing.T) {
+	filter := NewBoundaryFilter()
+	// Test boundary string split across two separate calls to InspectChunk
+	chunk1 := []byte("some payload-")
+	chunk2 := []byte("-boundary123")
+
+	if !filter.InspectChunk(chunk1) {
+		t.Errorf("InspectChunk chunk1 failed")
+	}
+	if !filter.InspectChunk(chunk2) {
+		t.Errorf("InspectChunk chunk2 failed")
 	}
 }
 
