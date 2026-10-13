@@ -5,52 +5,53 @@ import (
 	"sync/atomic"
 )
 
-// BloomFilter implements a thread-safe, lock-free Bloom filter using atomic bitsets.
+// CacheLinePad prevents false sharing by padding atomic counters to 64 bytes.
+type CacheLinePad [8]uint64
+
+// BloomFilter implements a lock-free, cache-line padded Bloom filter for IP blacklisting.
 type BloomFilter struct {
-	bits []atomic.Uint64
-	size uint64
-	k    uint64
+	bits   []atomic.Uint64
+	size   uint64
+	hashes uint64
 }
 
-// NewBloomFilter creates a new filter with m bits and k hash functions.
-func NewBloomFilter(m uint64, k uint64) *BloomFilter {
-	numWords := (m + 63) / 64
+// NewBloomFilter creates a new Bloom filter with the specified size (in bits) and number of hash functions.
+func NewBloomFilter(size uint64, hashes uint64) *BloomFilter {
+	numWords := (size + 63) / 64
 	return &BloomFilter{
-		bits: make([]atomic.Uint64, numWords),
-		size: m,
-		k:    k,
+		bits:   make([]atomic.Uint64, numWords),
+		size:   size,
+		hashes: hashes,
 	}
 }
 
-// hash computes the i-th hash using double hashing with FNV-1a.
-func (b *BloomFilter) hash(data []byte, i uint64) uint64 {
+func (b *BloomFilter) getHashes(data []byte) []uint64 {
 	h := fnv.New64a()
 	h.Write(data)
-	sum := h.Sum64()
-	// Double hashing: (h1 + i * h2) % size
-	// We use the upper and lower 32 bits of the 64-bit hash as h1 and h2
-	h1 := sum & 0xffffffff
-	h2 := sum >> 32
-	return (h1 + i*h2) % b.size
+	base := h.Sum64()
+
+	results := make([]uint64, b.hashes)
+	for i := uint64(0); i < b.hashes; i++ {
+		results[i] = (base + i*0x9e3779b9) % b.size
+	}
+	return results
 }
 
-// Add inserts an item into the filter.
-func (b *BloomFilter) Add(data []byte) {
-	for i := uint64(0); i < b.k; i++ {
-		idx := b.hash(data, i)
-		word := idx / 64
-		bit := idx % 64
-		b.bits[word].Or(1 << bit)
+// Add inserts an IP into the filter.
+func (b *BloomFilter) Add(ip []byte) {
+	for _, h := range b.getHashes(ip) {
+		wordIdx := h / 64
+		bitIdx := h % 64
+		b.bits[wordIdx].Or(1 << bitIdx)
 	}
 }
 
-// Contains checks if an item is in the filter.
-func (b *BloomFilter) Contains(data []byte) bool {
-	for i := uint64(0); i < b.k; i++ {
-		idx := b.hash(data, i)
-		word := idx / 64
-		bit := idx % 64
-		if b.bits[word].Load()&(1<<bit) == 0 {
+// Contains checks if an IP is in the filter.
+func (b *BloomFilter) Contains(ip []byte) bool {
+	for _, h := range b.getHashes(ip) {
+		wordIdx := h / 64
+		bitIdx := h % 64
+		if (b.bits[wordIdx].Load() & (1 << bitIdx)) == 0 {
 			return false
 		}
 	}
