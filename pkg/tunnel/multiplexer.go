@@ -22,20 +22,26 @@ func NewMultiplexer() *Multiplexer {
 	}
 }
 
-// Tunnel streams data between two connections, using splice if available.
+// Tunnel streams data between two connections using pooled buffers and handles cancellation cleanly.
 func (m *Multiplexer) Tunnel(ctx context.Context, client, upstream *net.TCPConn) error {
 	m.tracker.Increment()
 	defer m.tracker.Decrement()
 
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
 	errChan := make(chan error, 2)
-	go func() {
-		_, err := io.Copy(upstream, client)
+
+	copyStream := func(dst, src io.Writer, reader io.Reader) {
+		buf := m.pool.Get().([]byte)
+		defer m.pool.Put(buf)
+		_, err := io.CopyBuffer(dst, reader, buf)
 		errChan <- err
-	}()
-	go func() {
-		_, err := io.Copy(client, upstream)
-		errChan <- err
-	}()
+		cancel()
+	}
+
+	go copyStream(upstream, client, client)
+	go copyStream(client, upstream, upstream)
 
 	select {
 	case <-ctx.Done():
