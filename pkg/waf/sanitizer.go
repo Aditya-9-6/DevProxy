@@ -1,11 +1,11 @@
 package waf
 
 // SanitizeHeaderValue strips CR/LF characters to prevent HTTP Request Splitting attacks.
-// Returns a slice pointing into the pooled buffer. The caller must return the buffer to the pool using PutBuffer(buf).
-func SanitizeHeaderValue(val []byte) []byte {
-	buf := GetBuffer()
-	if len(val) > len(buf) {
-		return nil
+// Returns a PooledBuffer that must be closed by the caller.
+func SanitizeHeaderValue(val []byte) (*PooledBuffer, bool) {
+	pbuf := GetPooledBuffer()
+	if len(val) > len(pbuf.Data) {
+		return nil, false
 	}
 
 	idx := 0
@@ -13,8 +13,9 @@ func SanitizeHeaderValue(val []byte) []byte {
 		if b == '\r' || b == '\n' {
 			continue
 		}
-		buf[idx] = b
+		pbuf.Data[idx] = b
 		idx++
 	}
-	return buf[:idx]
+	pbuf.Data = pbuf.Data[:idx]
+	return pbuf, true
 }

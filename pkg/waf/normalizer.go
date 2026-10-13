@@ -5,11 +5,11 @@ import (
 )
 
 // NormalizeHeaderKey converts header keys to canonical form and strips non-printable control characters.
-// Returns a slice pointing into the pooled buffer. The caller must return the buffer to the pool using PutBuffer(buf).
-func NormalizeHeaderKey(key []byte) []byte {
-	buf := GetBuffer()
-	if len(key) > len(buf) {
-		return nil
+// Returns a PooledBuffer that must be closed by the caller.
+func NormalizeHeaderKey(key []byte) (*PooledBuffer, bool) {
+	pbuf := GetPooledBuffer()
+	if len(key) > len(pbuf.Data) {
+		return nil, false
 	}
 
 	capitalize := true
@@ -20,15 +20,16 @@ func NormalizeHeaderKey(key []byte) []byte {
 		}
 		r := rune(b)
 		if capitalize {
-			buf[idx] = byte(unicode.ToUpper(r))
+			pbuf.Data[idx] = byte(unicode.ToUpper(r))
 			capitalize = false
 		} else {
-			buf[idx] = byte(unicode.ToLower(r))
+			pbuf.Data[idx] = byte(unicode.ToLower(r))
 		}
 		if b == '-' {
 			capitalize = true
 		}
 		idx++
 	}
-	return buf[:idx]
+	pbuf.Data = pbuf.Data[:idx]
+	return pbuf, true
 }
