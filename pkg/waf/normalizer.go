@@ -4,11 +4,13 @@ import (
 	"unicode"
 )
 
-// NormalizeHeaderKey converts header keys to canonical form (e.g., "content-type" -> "Content-Type")
-// and strips non-printable control characters to prevent request smuggling. Operates on []byte to avoid allocations.
+// NormalizeHeaderKey converts header keys to canonical form and strips non-printable control characters.
+// Returns a slice pointing into the pooled buffer. The caller must return the buffer to the pool using PutBuffer(buf).
 func NormalizeHeaderKey(key []byte) []byte {
 	buf := GetBuffer()
-	defer PutBuffer(buf)
+	if len(key) > len(buf) {
+		return nil
+	}
 
 	capitalize := true
 	idx := 0
@@ -28,7 +30,5 @@ func NormalizeHeaderKey(key []byte) []byte {
 		}
 		idx++
 	}
-	result := make([]byte, idx)
-	copy(result, buf[:idx])
-	return result
+	return buf[:idx]
 }
