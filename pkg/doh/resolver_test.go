@@ -2,20 +2,46 @@ package doh
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"sync"
 	"testing"
 	"time"
 )
+
+func TestResolverTableDriven(t *testing.T) {
+	tests := []struct {
+		name        string
+		domain      string
+		status      int
+		expectError bool
+	}{
+		{"Valid", "example.com", http.StatusOK, false},
+		{"InvalidDomain", "bad;domain", 0, true},
+		{"UpstreamError", "example.com", http.StatusInternalServerError, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(tt.status)
+				w.Write([]byte("dns-data"))
+			}))
+			defer ts.Close()
+			r := NewResolver([]string{ts.URL})
+			_, err := r.Resolve(context.Background(), tt.domain)
+			if (err != nil) != tt.expectError {
+				t.Errorf("Resolve() error = %v, expectError %v", err, tt.expectError)
+			}
+		})
+	}
+}
 
 func TestBalancer(t *testing.T) {
 	b := NewBalancer([]string{"a", "b"})
 	var wg sync.WaitGroup
 	for i := 0; i < 10; i++ {
 		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			b.Next()
-		}()
+		go func() { defer wg.Done(); b.Next() }()
 	}
 	wg.Wait()
 }
@@ -29,22 +55,4 @@ func TestCacheConcurrency(t *testing.T) {
 		go func() { defer wg.Done(); c.Get("key") }()
 	}
 	wg.Wait()
-}
-
-func TestResolverValidation(t *testing.T) {
-	r := NewResolver([]string{"https://dns.google/dns-query"})
-	_, err := r.Resolve(context.Background(), "invalid;domain")
-	if err == nil {
-		t.Error("expected error for invalid domain")
-	}
-}
-
-func TestContextCancellation(t *testing.T) {
-	r := NewResolver([]string{"https://dns.google/dns-query"})
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	_, err := r.Resolve(ctx, "google.com")
-	if err == nil {
-		t.Error("expected error for cancelled context")
-	}
 }

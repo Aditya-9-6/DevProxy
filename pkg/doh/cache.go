@@ -1,50 +1,64 @@
 package doh
 
 import (
+	"container/list"
 	"sync"
 	"time"
 )
 
 type cacheEntry struct {
+	key       string
 	data      []byte
 	expiresAt time.Time
 }
 
-// Cache provides a thread-safe, size-limited store.
+// Cache provides a thread-safe, LRU-based store.
 type Cache struct {
 	mu    sync.RWMutex
-	items map[string]cacheEntry
+	items map[string]*list.Element
+	list  *list.List
 	limit int
 }
 
 func NewCache() *Cache {
 	return &Cache{
-		items: make(map[string]cacheEntry),
+		items: make(map[string]*list.Element),
+		list:  list.New(),
 		limit: 1000,
 	}
 }
 
 func (c *Cache) Get(key string) ([]byte, bool) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	entry, ok := c.items[key]
-	if !ok || time.Now().After(entry.expiresAt) {
-		return nil, false
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if el, ok := c.items[key]; ok {
+		if time.Now().After(el.Value.(*cacheEntry).expiresAt) {
+			c.removeElement(el)
+			return nil, false
+		}
+		c.list.MoveToFront(el)
+		return el.Value.(*cacheEntry).data, true
 	}
-	return entry.data, true
+	return nil, false
 }
 
 func (c *Cache) Set(key string, data []byte, ttl time.Duration) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if len(c.items) >= c.limit {
-		for k := range c.items {
-			delete(c.items, k)
-			break
-		}
+	if el, ok := c.items[key]; ok {
+		c.list.MoveToFront(el)
+		el.Value.(*cacheEntry).data = data
+		el.Value.(*cacheEntry).expiresAt = time.Now().Add(ttl)
+		return
 	}
-	c.items[key] = cacheEntry{
-		data:      data,
-		expiresAt: time.Now().Add(ttl),
+	if c.list.Len() >= c.limit {
+		c.removeElement(c.list.Back())
 	}
+	entry := &cacheEntry{key: key, data: data, expiresAt: time.Now().Add(ttl)}
+	c.items[key] = c.list.PushFront(entry)
+}
+
+func (c *Cache) removeElement(el *list.Element) {
+	c.list.Remove(el)
+	delete(c.items, el.Value.(*cacheEntry).key)
 }
