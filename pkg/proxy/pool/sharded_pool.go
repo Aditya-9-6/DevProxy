@@ -5,10 +5,14 @@ import (
 	"runtime"
 	"sync"
 	"sync/atomic"
-	time "time"
 )
 
 const MaxIdlePerShard = 128
+
+type pooledConn struct {
+	net.Conn
+	shardIdx uint32
+}
 
 type Shard struct {
 	_          [64]byte
@@ -37,35 +41,19 @@ func NewShardedPool() *ShardedPool {
 	return &ShardedPool{shards: shards, mask: uint32(numShards - 1)}
 }
 
-func (p *ShardedPool) GetShard() *Shard {
-	idx := p.counter.Add(1) & p.mask
-	return p.shards[idx]
-}
-
-func isConnClosed(conn net.Conn) bool {
-	if tcpConn, ok := conn.(*net.TCPConn); ok {
-		_ = tcpConn.SetReadDeadline(time.Now().Add(time.Millisecond))
-		var one [1]byte
-		n, err := tcpConn.Read(one[:])
-		_ = tcpConn.SetReadDeadline(time.Time{})
-		if n == 0 && err != nil {
-			return true
-		}
-	}
-	return false
+func (p *ShardedPool) getShardIndex() uint32 {
+	return p.counter.Add(1) & p.mask
 }
 
 func (p *ShardedPool) Acquire(dialer func() (net.Conn, error)) (net.Conn, error) {
-	shard := p.GetShard()
+	idx := p.getShardIndex()
+	shard := p.shards[idx]
+
 	shard.mu.Lock()
 	for len(shard.IdleConns) > 0 {
 		conn := shard.IdleConns[len(shard.IdleConns)-1]
 		shard.IdleConns = shard.IdleConns[:len(shard.IdleConns)-1]
 		shard.mu.Unlock()
-		if isConnClosed(conn) {
-			conn.Close()
-			continue
-		}
 		shard.ActiveConn.Add(1)
 		return conn, nil
 	}
@@ -74,6 +62,7 @@ func (p *ShardedPool) Acquire(dialer func() (net.Conn, error)) (net.Conn, error)
 	conn, err := dialer()
 	if err == nil && conn != nil {
 		shard.ActiveConn.Add(1)
+		return &pooledConn{Conn: conn, shardIdx: idx}, nil
 	}
 	return conn, err
 }
@@ -82,18 +71,26 @@ func (p *ShardedPool) Release(conn net.Conn) {
 	if conn == nil {
 		return
 	}
-	if isConnClosed(conn) {
-		conn.Close()
-		return
-	}
-	shard := p.GetShard()
-	shard.mu.Lock()
-	if len(shard.IdleConns) < MaxIdlePerShard {
-		shard.IdleConns = append(shard.IdleConns, conn)
-		shard.mu.Unlock()
+
+	var idx uint32
+	var rawConn net.Conn
+
+	if pc, ok := conn.(*pooledConn); ok {
+		idx = pc.shardIdx
+		rawConn = pc.Conn
 	} else {
-		shard.mu.Unlock()
-		conn.Close()
+		rawConn = conn
+		idx = p.getShardIndex()
+	}
+
+	shard := p.shards[idx]
+	shard.mu.Lock()
+	defer shard.mu.Unlock()
+
+	if len(shard.IdleConns) < MaxIdlePerShard {
+		shard.IdleConns = append(shard.IdleConns, rawConn)
+	} else {
+		rawConn.Close()
 	}
 	shard.ActiveConn.Add(^uint64(0))
 }

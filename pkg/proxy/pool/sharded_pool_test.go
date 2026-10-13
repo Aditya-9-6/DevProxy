@@ -73,10 +73,10 @@ func TestShardedPool_Race(t *testing.T) {
 
 func TestShardedPool_Distribution(t *testing.T) {
 	p := NewShardedPool()
-	shardsHit := make(map[*Shard]bool)
+	shardsHit := make(map[int]bool)
 	for i := 0; i < 1000; i++ {
-		s := p.GetShard()
-		shardsHit[s] = true
+		idx := p.getShardIndex()
+		shardsHit[int(idx)] = true
 	}
 	if len(shardsHit) <= 1 && len(p.shards) > 1 {
 		t.Errorf("expected load to be distributed across multiple shards, got %d shard(s) hit", len(shardsHit))
