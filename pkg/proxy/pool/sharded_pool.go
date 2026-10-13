@@ -5,7 +5,7 @@ import (
 	"runtime"
 	"sync"
 	"sync/atomic"
-	"unsafe"
+	time "time"
 )
 
 const MaxIdlePerShard = 128
@@ -19,8 +19,9 @@ type Shard struct {
 }
 
 type ShardedPool struct {
-	shards []*Shard
-	mask   uint32
+	shards  []*Shard
+	mask    uint32
+	counter atomic.Uint32
 }
 
 func NewShardedPool() *ShardedPool {
@@ -37,38 +38,62 @@ func NewShardedPool() *ShardedPool {
 }
 
 func (p *ShardedPool) GetShard() *Shard {
-	var x int
-	ptr := unsafe.Pointer(&x)
-	idx := (uint32(uintptr(ptr)) >> 6) & p.mask
+	idx := p.counter.Add(1) & p.mask
 	return p.shards[idx]
+}
+
+func isConnClosed(conn net.Conn) bool {
+	if tcpConn, ok := conn.(*net.TCPConn); ok {
+		_ = tcpConn.SetReadDeadline(time.Now().Add(time.Millisecond))
+		var one [1]byte
+		n, err := tcpConn.Read(one[:])
+		_ = tcpConn.SetReadDeadline(time.Time{})
+		if n == 0 && err != nil {
+			return true
+		}
+	}
+	return false
 }
 
 func (p *ShardedPool) Acquire(dialer func() (net.Conn, error)) (net.Conn, error) {
 	shard := p.GetShard()
 	shard.mu.Lock()
-	if len(shard.IdleConns) > 0 {
+	for len(shard.IdleConns) > 0 {
 		conn := shard.IdleConns[len(shard.IdleConns)-1]
 		shard.IdleConns = shard.IdleConns[:len(shard.IdleConns)-1]
 		shard.mu.Unlock()
+		if isConnClosed(conn) {
+			conn.Close()
+			continue
+		}
 		shard.ActiveConn.Add(1)
 		return conn, nil
 	}
 	shard.mu.Unlock()
+
 	conn, err := dialer()
-	if err == nil {
+	if err == nil && conn != nil {
 		shard.ActiveConn.Add(1)
 	}
 	return conn, err
 }
 
 func (p *ShardedPool) Release(conn net.Conn) {
+	if conn == nil {
+		return
+	}
+	if isConnClosed(conn) {
+		conn.Close()
+		return
+	}
 	shard := p.GetShard()
 	shard.mu.Lock()
 	if len(shard.IdleConns) < MaxIdlePerShard {
 		shard.IdleConns = append(shard.IdleConns, conn)
+		shard.mu.Unlock()
 	} else {
+		shard.mu.Unlock()
 		conn.Close()
 	}
-	shard.mu.Unlock()
 	shard.ActiveConn.Add(^uint64(0))
 }
