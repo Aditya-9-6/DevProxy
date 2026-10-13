@@ -1,23 +1,24 @@
 package waf
 
 import (
+	"bytes"
 	"testing"
 )
 
 func TestNormalizeHeaderKey(t *testing.T) {
 	tests := []struct {
-		input    string
-		expected string
+		input    []byte
+		expected []byte
 	}{
-		{"content-type", "Content-Type"},
-		{"x-forwarded-for", "X-Forwarded-For"},
-		{"host", "Host"},
-		{"bad\x00key", "Badkey"},
+		{[]byte("content-type"), []byte("Content-Type")},
+		{[]byte("x-forwarded-for"), []byte("X-Forwarded-For")},
+		{[]byte("host"), []byte("Host")},
+		{[]byte("bad\x00key"), []byte("Badkey")},
 	}
 
 	for _, tt := range tests {
 		got := NormalizeHeaderKey(tt.input)
-		if got != tt.expected {
+		if !bytes.Equal(got, tt.expected) {
 			t.Errorf("NormalizeHeaderKey(%q) = %q; want %q", tt.input, got, tt.expected)
 		}
 	}
@@ -25,18 +26,26 @@ func TestNormalizeHeaderKey(t *testing.T) {
 
 func TestSanitizeHeaderValue(t *testing.T) {
 	tests := []struct {
-		input    string
-		expected string
+		input    []byte
+		expected []byte
 	}{
-		{"value", "value"},
-		{"value\r\nInjection", "valueInjection"},
-		{"\n\r", ""},
+		{[]byte("value"), []byte("value")},
+		{[]byte("value\r\nInjection"), []byte("valueInjection")},
+		{[]byte("\n\r"), []byte("")},
 	}
 
 	for _, tt := range tests {
 		got := SanitizeHeaderValue(tt.input)
-		if got != tt.expected {
+		if !bytes.Equal(got, tt.expected) {
 			t.Errorf("SanitizeHeaderValue(%q) = %q; want %q", tt.input, got, tt.expected)
 		}
+	}
+}
+
+func BenchmarkNormalizeHeaderKey(b *testing.B) {
+	input := []byte("content-type-header-test")
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		NormalizeHeaderKey(input)
 	}
 }

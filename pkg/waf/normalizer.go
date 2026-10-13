@@ -1,28 +1,34 @@
 package waf
 
 import (
-	"strings"
 	"unicode"
 )
 
 // NormalizeHeaderKey converts header keys to canonical form (e.g., "content-type" -> "Content-Type")
-// and strips non-printable control characters to prevent request smuggling.
-func NormalizeHeaderKey(key string) string {
-	var b strings.Builder
+// and strips non-printable control characters to prevent request smuggling. Operates on []byte to avoid allocations.
+func NormalizeHeaderKey(key []byte) []byte {
+	buf := GetBuffer()
+	defer PutBuffer(buf)
+
 	capitalize := true
-	for _, r := range key {
-		if r < 32 || r == 127 {
+	idx := 0
+	for _, b := range key {
+		if b < 32 || b == 127 {
 			continue
 		}
+		r := rune(b)
 		if capitalize {
-			b.WriteRune(unicode.ToUpper(r))
+			buf[idx] = byte(unicode.ToUpper(r))
 			capitalize = false
 		} else {
-			b.WriteRune(unicode.ToLower(r))
+			buf[idx] = byte(unicode.ToLower(r))
 		}
-		if r == '-' {
+		if b == '-' {
 			capitalize = true
 		}
+		idx++
 	}
-	return b.String()
+	result := make([]byte, idx)
+	copy(result, buf[:idx])
+	return result
 }
