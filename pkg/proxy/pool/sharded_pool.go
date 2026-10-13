@@ -5,12 +5,11 @@ import (
 	"runtime"
 	"sync"
 	"sync/atomic"
+	"unsafe"
 )
 
-// CacheLinePad prevents false sharing by padding structs to 64 bytes.
-type CacheLinePad [8]uint64
+const MaxIdlePerShard = 128
 
-// Shard represents a cache-aligned connection pool bucket.
 type Shard struct {
 	_          [64]byte
 	ActiveConn atomic.Uint64
@@ -19,29 +18,31 @@ type Shard struct {
 	_          [64]byte
 }
 
-// ShardedPool implements a high-throughput connection pool with per-P affinity.
 type ShardedPool struct {
 	shards []*Shard
 	mask   uint32
 }
 
-// NewShardedPool creates a pool with 2^N shards based on CPU count.
 func NewShardedPool() *ShardedPool {
-	numShards := runtime.GOMAXPROCS(0)
-	// Ensure power of 2 for fast masking
-	return &ShardedPool{
-		shards: make([]*Shard, numShards),
-		mask:   uint32(numShards - 1),
+	numShards := 1
+	procs := runtime.GOMAXPROCS(0)
+	for numShards < procs {
+		numShards <<= 1
 	}
+	shards := make([]*Shard, numShards)
+	for i := range shards {
+		shards[i] = &Shard{IdleConns: make([]net.Conn, 0, MaxIdlePerShard)}
+	}
+	return &ShardedPool{shards: shards, mask: uint32(numShards - 1)}
 }
 
-// GetShard returns the shard associated with the current processor.
 func (p *ShardedPool) GetShard() *Shard {
-	idx := runtime.NumCPU() % len(p.shards)
+	var x int
+	ptr := unsafe.Pointer(&x)
+	idx := (uint32(uintptr(ptr)) >> 6) & p.mask
 	return p.shards[idx]
 }
 
-// Acquire retrieves a connection from the local shard.
 func (p *ShardedPool) Acquire(dialer func() (net.Conn, error)) (net.Conn, error) {
 	shard := p.GetShard()
 	shard.mu.Lock()
@@ -53,7 +54,6 @@ func (p *ShardedPool) Acquire(dialer func() (net.Conn, error)) (net.Conn, error)
 		return conn, nil
 	}
 	shard.mu.Unlock()
-
 	conn, err := dialer()
 	if err == nil {
 		shard.ActiveConn.Add(1)
@@ -61,11 +61,14 @@ func (p *ShardedPool) Acquire(dialer func() (net.Conn, error)) (net.Conn, error)
 	return conn, err
 }
 
-// Release returns a connection to the local shard.
 func (p *ShardedPool) Release(conn net.Conn) {
 	shard := p.GetShard()
 	shard.mu.Lock()
-	shard.IdleConns = append(shard.IdleConns, conn)
+	if len(shard.IdleConns) < MaxIdlePerShard {
+		shard.IdleConns = append(shard.IdleConns, conn)
+	} else {
+		conn.Close()
+	}
 	shard.mu.Unlock()
 	shard.ActiveConn.Add(^uint64(0))
 }
