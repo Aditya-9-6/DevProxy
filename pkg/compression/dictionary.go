@@ -47,18 +47,20 @@ func (m *DictionaryManager) RecordLatency(algo CompressionType, duration time.Du
 	m.latencies[bucketIdx].Add(1)
 }
 
-// SelectAlgorithm dynamically chooses compression based on payload entropy and historical latency metrics.
+// SelectAlgorithm dynamically chooses compression based on historical latency metrics.
 func (m *DictionaryManager) SelectAlgorithm(contentType string, bodyLen int) CompressionType {
 	if bodyLen < 512 {
 		return CompressionNone
 	}
-	reqCount := m.requests.Load()
-	if reqCount%3 == 0 {
-		return CompressionZstd
-	} else if reqCount%3 == 1 {
-		return CompressionBrotli
+	var totalLatency uint64
+	for i := 0; i < 1000; i++ {
+		totalLatency += m.latencies[i].Load() * uint64(i)
 	}
-	return CompressionGzip
+	// Simple heuristic: if average latency is low, prefer Zstd, else Brotli/Gzip
+	if totalLatency < 5000 {
+		return CompressionZstd
+	}
+	return CompressionBrotli
 }
 
 // CompressStream wraps an io.Writer with the requested compression algorithm using zero-alloc pool buffers.

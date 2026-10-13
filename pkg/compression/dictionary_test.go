@@ -3,6 +3,7 @@ package compression
 import (
 	"bytes"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -14,11 +15,7 @@ func TestDictionaryManagerAndCompression(t *testing.T) {
 
 	algo := mgr.SelectAlgorithm("application/json", 1024)
 	if algo == "" {
-		data := []byte("hello world test stream payload entropy check")
-		e := ComputeEntropy(data)
-		if e < 0 {
-			t.Errorf("invalid entropy %f", e)
-		}
+		t.Error("expected algorithm selection")
 	}
 
 	var buf bytes.Buffer
@@ -33,9 +30,6 @@ func TestDictionaryManagerAndCompression(t *testing.T) {
 	if err := wc.Close(); err != nil {
 		t.Fatalf("failed to close: %v", err)
 	}
-
-	buf2 := AcquireBuffer()
-	ReleaseBuffer(buf2)
 }
 
 func TestCompressionEdgeCasesAndAlgorithms(t *testing.T) {
@@ -79,7 +73,7 @@ func TestConcurrentStreamingStress(t *testing.T) {
 	const workers = 10
 	const iterations = 20
 
-	var wg syncHelper
+	var wg sync.WaitGroup
 	wg.Add(workers)
 
 	for i := 0; i < workers; i++ {
@@ -98,25 +92,4 @@ func TestConcurrentStreamingStress(t *testing.T) {
 		}(i)
 	}
 	wg.Wait()
-}
-
-type syncHelper struct {
-	count int
-	mu    struct{ syncMutex }
-}
-
-type syncMutex struct{}
-
-func (s *syncHelper) Add(n int) {
-	s.count += n
-}
-
-func (s *syncHelper) Done() {
-	s.count--
-}
-
-func (s *syncHelper) Wait() {
-	for s.count > 0 {
-		time.Sleep(time.Millisecond)
-	}
 }

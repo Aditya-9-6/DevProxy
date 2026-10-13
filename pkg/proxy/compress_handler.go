@@ -21,7 +21,6 @@ type CompressHandler struct {
 // NewCompressHandler creates a new compression response wrapper respecting client Accept-Encoding.
 func NewCompressHandler(w http.ResponseWriter, r *http.Request) *CompressHandler {
 	acceptEncoding := r.Header.Get("Accept-Encoding")
-
 	mgr := compression.GetGlobalManager()
 	rawAlgo := mgr.SelectAlgorithm(r.Header.Get("Content-Type"), 2048)
 
@@ -54,7 +53,7 @@ func (h *CompressHandler) WriteHeader(statusCode int) {
 	h.started = true
 	if h.algo != compression.CompressionNone {
 		h.Header().Set("Content-Encoding", string(h.algo))
-		h.Header().Del("Content-Length") // Chunked transfer encoding
+		h.Header().Del("Content-Length")
 	}
 	h.originalW.WriteHeader(statusCode)
 
