@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-var domainRegex = regexp.MustCompile(`^[a-zA-Z0-9.-]+$`)
+var domainRegex = regexp.MustCompile(`^([a-zA-Z0-9][a-zA-Z0-9-]{0,61}\.)+[a-zA-Z]{2,}$`)
 
 // Resolver performs DoH lookups.
 type Resolver struct {
@@ -61,16 +61,14 @@ func (r *Resolver) Resolve(ctx context.Context, domain string) ([]byte, error) {
 	}
 	defer resp.Body.Close()
 
-	buf := r.cache.pool.Get().([]byte)
-	n, err := io.ReadAtLeast(resp.Body, buf, 0)
-	if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
-		r.cache.pool.Put(buf)
-		return nil, err
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("upstream error: %d", resp.StatusCode)
 	}
 
-	data := make([]byte, n)
-	copy(data, buf[:n])
-	r.cache.pool.Put(buf)
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
 
 	r.cache.Set(domain, data, 5*time.Minute)
 	return data, nil
