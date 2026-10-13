@@ -29,11 +29,14 @@ func TestDNSCache_Eviction(t *testing.T) {
 	ips := []string{"127.0.0.1"}
 
 	c.Set(host, ips, 1*time.Millisecond)
-	time.Sleep(5 * time.Millisecond)
+	time.Sleep(10 * time.Millisecond)
 
-	_, ok := c.Get(host)
-	if ok {
-		t.Error("expected expired DNS cache entry to be evicted/unavailable")
+	ipsRet, isStale, ok := c.Get(host)
+	if !ok || !isStale {
+		t.Error("expected expired DNS cache entry to be returned as stale for background revalidation")
+	}
+	if len(ipsRet) != 1 || ipsRet[0] != "127.0.0.1" {
+		t.Error("expected original IPs in stale cache result")
 	}
 }
 

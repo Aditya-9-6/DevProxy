@@ -15,21 +15,26 @@ func NewResolver(cache *DNSCache) *Resolver {
 }
 
 func (r *Resolver) Lookup(ctx context.Context, host string) ([]string, error) {
-	if ips, ok := r.cache.Get(host); ok {
+	qCtx := GetQueryContext(host, 1)
+	defer PutQueryContext(qCtx)
+
+	if ips, isStale, ok := r.cache.Get(qCtx.Host); ok {
+		if isStale {
+			go func() {
+				bgCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				if addrs, err := net.DefaultResolver.LookupHost(bgCtx, host); err == nil {
+					r.cache.Set(host, addrs, 5*time.Minute)
+				}
+			}()
+		}
 		return ips, nil
 	}
 
-	resolver := &net.Resolver{
-		PreferGo: true,
-		Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
-			d := net.Dialer{Timeout: 2 * time.Second}
-			return d.DialContext(ctx, "udp", "8.8.8.8:53")
-		},
+	addrs, err := net.DefaultResolver.LookupHost(ctx, host)
+	if err != nil {
+		return nil, err
 	}
-
-	ips, err := resolver.LookupHost(ctx, host)
-	if err == nil {
-		r.cache.Set(host, ips, 5*time.Minute)
-	}
-	return ips, err
+	r.cache.Set(host, addrs, 5*time.Minute)
+	return addrs, nil
 }
