@@ -1,26 +1,33 @@
 package proxy
 
 import (
+	"sync"
 	"testing"
-	"time"
 )
 
-func TestRateLimiter(t *testing.T) {
-	rl := NewRateLimiter(2, 100*time.Millisecond)
+func TestTokenBucket(t *testing.T) {
+	b := NewTokenBucket(10, 1000)
+	for i := 0; i < 10; i++ {
+		if !b.Allow() {
+			t.Errorf("expected allow at index %d", i)
+		}
+	}
+	if b.Allow() {
+		t.Error("expected deny after capacity exhausted")
+	}
+}
 
-	if !rl.Allow("127.0.0.1") {
-		t.Error("Expected first request to be allowed")
+func TestTokenBucketConcurrent(t *testing.T) {
+	b := NewTokenBucket(1000, 10000)
+	var wg sync.WaitGroup
+	wg.Add(10)
+	for i := 0; i < 10; i++ {
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 100; j++ {
+				b.Allow()
+			}
+		}()
 	}
-	if !rl.Allow("127.0.0.1") {
-		t.Error("Expected second request to be allowed")
-	}
-	if rl.Allow("127.0.0.1") {
-		t.Error("Expected third request to be blocked")
-	}
-
-	time.Sleep(150 * time.Millisecond)
-
-	if !rl.Allow("127.0.0.1") {
-		t.Error("Expected request after window to be allowed")
-	}
+	wg.Wait()
 }

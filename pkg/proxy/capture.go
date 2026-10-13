@@ -7,7 +7,6 @@ import (
 )
 
 // DefaultMaxBodyCaptureBytes limits how many bytes of a body are buffered for security scanning (64 KB).
-// The rest of the stream passes through to the client at full line-rate without consuming RAM.
 const DefaultMaxBodyCaptureBytes = 64 * 1024
 
 // BoundedCaptureWriter records up to limit bytes while accepting unbounded writes.
@@ -48,8 +47,6 @@ func (w *BoundedCaptureWriter) Bytes() []byte {
 }
 
 // ReadAndCapture wraps an io.ReadCloser with a bounded capture buffer.
-// As the caller reads from the returned reader, bytes are streamed directly while the first
-// 'limit' bytes are copied into the capture buffer.
 func ReadAndCapture(rc io.ReadCloser, limit int) (io.ReadCloser, *BoundedCaptureWriter) {
 	if rc == nil {
 		return nil, NewBoundedCaptureWriter(limit)
@@ -62,26 +59,4 @@ func ReadAndCapture(rc io.ReadCloser, limit int) (io.ReadCloser, *BoundedCapture
 type wrappedReadCloser struct {
 	io.Reader
 	io.Closer
-}
-
-// StreamBufferSize defines the buffer size used for streaming data chunks (32 KB).
-const StreamBufferSize = 32 * 1024
-
-var bufferPool = sync.Pool{
-	New: func() interface{} {
-		buf := make([]byte, StreamBufferSize)
-		return &buf
-	},
-}
-
-// GetBuffer retrieves a recycled 32KB buffer from the memory pool.
-func GetBuffer() *[]byte {
-	return bufferPool.Get().(*[]byte)
-}
-
-// PutBuffer returns a buffer to the memory pool.
-func PutBuffer(b *[]byte) {
-	if b != nil {
-		bufferPool.Put(b)
-	}
 }
