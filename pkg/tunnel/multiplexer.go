@@ -26,22 +26,29 @@ func NewMultiplexer() *Multiplexer {
 func (m *Multiplexer) Tunnel(ctx context.Context, client, upstream *net.TCPConn) error {
 	m.tracker.Increment()
 	defer m.tracker.Decrement()
+	defer client.Close()
+	defer upstream.Close()
 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
 	errChan := make(chan error, 2)
 
-	copyStream := func(dst, src io.Writer, reader io.Reader) {
+	copyStream := func(dst, src *net.TCPConn) {
+		written, err := SpliceCopy(dst, src)
+		if err == nil && written > 0 {
+			errChan <- nil
+			return
+		}
 		buf := m.pool.Get().([]byte)
 		defer m.pool.Put(buf)
-		_, err := io.CopyBuffer(dst, reader, buf)
+		_, err = io.CopyBuffer(dst, src, buf)
 		errChan <- err
 		cancel()
 	}
 
-	go copyStream(upstream, client, client)
-	go copyStream(client, upstream, upstream)
+	go copyStream(upstream, client)
+	go copyStream(client, upstream)
 
 	select {
 	case <-ctx.Done():
