@@ -1,17 +1,9 @@
 package waf
 
-import (
-	"sync/atomic"
-)
-
-// CacheLinePad prevents false sharing on hot atomic counters.
-type CacheLinePad [8]uint64
-
 // JSONInspector provides zero-allocation structural analysis.
+// It is stateless and safe for concurrent use.
 type JSONInspector struct {
-	MaxDepth      uint64
-	DepthCounter  CacheLinePad
-	CollisionFlag CacheLinePad
+	MaxDepth uint64
 }
 
 func NewJSONInspector(maxDepth uint64) *JSONInspector {
@@ -47,7 +39,6 @@ func (j *JSONInspector) InspectStream(data []byte) bool {
 		case '{', '[':
 			depth++
 			if depth > j.MaxDepth {
-				atomic.StoreUint64(&j.DepthCounter[0], depth)
 				return false
 			}
 		case '}', ']':
