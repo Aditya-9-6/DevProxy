@@ -1,7 +1,9 @@
 package proxy
 
 import (
+	"bufio"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -15,6 +17,7 @@ type CompressHandler struct {
 	originalW http.ResponseWriter
 	wc        io.WriteCloser
 	started   bool
+	closed    bool
 	algo      compression.CompressionType
 }
 
@@ -75,9 +78,33 @@ func (h *CompressHandler) Write(p []byte) (int, error) {
 	return h.originalW.Write(p)
 }
 
+func (h *CompressHandler) Flush() {
+	if !h.started {
+		h.WriteHeader(http.StatusOK)
+	}
+	if flusher, ok := h.wc.(interface{ Flush() error }); ok {
+		_ = flusher.Flush()
+	} else if flusher, ok := h.originalW.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}
+
+func (h *CompressHandler) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	if hijacker, ok := h.originalW.(http.Hijacker); ok {
+		return hijacker.Hijack()
+	}
+	return nil, nil, http.ErrNotSupported
+}
+
 func (h *CompressHandler) Close() error {
+	if h.closed {
+		return nil
+	}
+	h.closed = true
 	if h.wc != nil {
-		return h.wc.Close()
+		err := h.wc.Close()
+		h.wc = nil
+		return err
 	}
 	return nil
 }
