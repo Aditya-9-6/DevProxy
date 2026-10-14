@@ -1,46 +1,56 @@
 package waf
 
 import (
+	"hash"
 	"hash/fnv"
 	"sync"
+	"sync/atomic"
 )
 
-// CookieValidator implements a lock-free bloom filter for cookie integrity.
-// It uses sync.Pool to manage bitsets without heap allocations on the hot path.
+// CookieValidator implements a thread-safe bloom filter for cookie integrity.
 type CookieValidator struct {
-	pool sync.Pool
-	size uint32
+	bits     []uint64
+	size     uint32
+	hashPool sync.Pool
 }
 
 func NewCookieValidator(size uint32) *CookieValidator {
 	return &CookieValidator{
 		size: size,
-		pool: sync.Pool{
+		bits: make([]uint64, (size/64)+1),
+		hashPool: sync.Pool{
 			New: func() interface{} {
-				return make([]byte, size/8+1)
+				return fnv.New32a()
 			},
 		},
 	}
 }
 
 func (cv *CookieValidator) hash(data []byte) uint32 {
-	h := fnv.New32a()
+	h := cv.hashPool.Get().(hash.Hash32)
+	h.Reset()
 	h.Write(data)
-	return h.Sum32() % cv.size
+	sum := h.Sum32()
+	cv.hashPool.Put(h)
+	return sum % cv.size
 }
 
 func (cv *CookieValidator) IsTampered(cookieData []byte) bool {
-	buf := cv.pool.Get().([]byte)
-	defer cv.pool.Put(buf)
-
 	h := cv.hash(cookieData)
-	return (buf[h/8] & (1 << (h % 8))) == 0
+	idx := h / 64
+	bit := uint64(1) << (h % 64)
+	return (atomic.LoadUint64(&cv.bits[idx]) & bit) == 0
 }
 
 func (cv *CookieValidator) MarkValid(cookieData []byte) {
-	buf := cv.pool.Get().([]byte)
-	defer cv.pool.Put(buf)
-
 	h := cv.hash(cookieData)
-	buf[h/8] |= (1 << (h % 8))
+	idx := h / 64
+	bit := uint64(1) << (h % 64)
+	for {
+		old := atomic.LoadUint64(&cv.bits[idx])
+		new := old | bit
+		if atomic.CompareAndSwapUint64(&cv.bits[idx], old, new) {
+			break
+		}
+	}
 }

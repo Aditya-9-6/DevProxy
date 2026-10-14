@@ -1,6 +1,7 @@
 package waf
 
 import (
+	"sync"
 	"testing"
 )
 
@@ -21,6 +22,25 @@ func TestCookieValidator(t *testing.T) {
 	}
 
 	cv.MarkValid(cookie)
-	// Note: Bloom filter might have false positives, but should not have false negatives.
-	// For this test, we verify the basic set/get flow.
+	if cv.IsTampered(cookie) {
+		t.Error("Expected cookie to be marked as valid after MarkValid")
+	}
+}
+
+func TestCookieValidatorConcurrency(t *testing.T) {
+	cv := NewCookieValidator(1024)
+	cookie := []byte("concurrent_test")
+	var wg sync.WaitGroup
+
+	for i := 0; i < 100; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			cv.MarkValid(cookie)
+			if cv.IsTampered(cookie) {
+				t.Errorf("Race condition detected: cookie marked valid but reported tampered")
+			}
+		}()
+	}
+	wg.Wait()
 }
