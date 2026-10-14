@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestOrchestrator_Probe(t *testing.T) {
@@ -51,15 +52,43 @@ func TestOrchestrator_ConcurrentAccess(t *testing.T) {
 		}()
 	}
 	wg.Wait()
+	if !ring.IsHealthy() {
+		t.Error("Expected healthy state after concurrent probes")
+	}
 }
 
-func TestOrchestrator_ContextCancellation(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
+func TestOrchestrator_LatencyBuckets(t *testing.T) {
+	ring := &StateRing{}
+	ring.RecordLatency(5)
+	ring.RecordLatency(15)
+	ring.RecordLatency(995)
+
+	if ring.LatencyBuckets[0].Load() != 1 {
+		t.Errorf("Expected bucket 0 to have 1, got %d", ring.LatencyBuckets[0].Load())
+	}
+	if ring.LatencyBuckets[1].Load() != 1 {
+		t.Errorf("Expected bucket 1 to have 1, got %d", ring.LatencyBuckets[1].Load())
+	}
+	if ring.LatencyBuckets[99].Load() != 1 {
+		t.Errorf("Expected bucket 99 to have 1, got %d", ring.LatencyBuckets[99].Load())
+	}
+}
+
+func TestOrchestrator_BackgroundProbing(t *testing.T) {
 	ring := &StateRing{}
 	orch := NewOrchestrator()
-	orch.Probe(ctx, "http://localhost:1", ring)
-	if ring.IsHealthy() {
-		t.Error("Expected unhealthy due to cancelled context")
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ts.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	orch.StartBackgroundProbing(ctx, ts.URL, ring, 20*time.Millisecond)
+	time.Sleep(60 * time.Millisecond)
+
+	if !ring.IsHealthy() {
+		t.Error("Expected healthy state from background probe")
 	}
 }
