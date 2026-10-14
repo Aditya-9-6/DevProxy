@@ -4,20 +4,14 @@ import (
 	"bytes"
 )
 
-<<<<<<< HEAD
 // NormalizePath performs zero-allocation URI normalization using sync.Pool buffers.
 func NormalizePath(path string) string {
 	buf := GetBuffer()
 	defer PutBuffer(buf)
 
-	// Percent decode first to handle encoded traversal patterns like %2e%2e/
 	src := []byte(path)
 	decoded := percentDecodeInto(buf[:0], src)
-
-	// Normalize backslashes and slashes
 	normalized := normalizeSlashes(decoded)
-
-	// Resolve dot segments per RFC 3986
 	resolved := resolvePathSegments(normalized)
 
 	return string(resolved)
@@ -27,7 +21,6 @@ func NormalizePath(path string) string {
 func IsDoubleEncoded(path string) bool {
 	for i := 0; i < len(path)-2; i++ {
 		if path[i] == '%' && path[i+1] == '2' && (path[i+2] == '5' || path[i+2] == '3') {
-			// Check for subsequent percent encoding
 			for j := i + 3; j < len(path)-2; j++ {
 				if path[j] == '%' {
 					return true
@@ -36,6 +29,11 @@ func IsDoubleEncoded(path string) bool {
 		}
 	}
 	return false
+}
+
+// NormalizeContentDisposition strips malicious characters from headers.
+func NormalizeContentDisposition(header []byte) []byte {
+	return bytes.ReplaceAll(bytes.ReplaceAll(header, []byte("\r"), nil), []byte("\n"), nil)
 }
 
 func percentDecodeInto(dst, src []byte) []byte {
@@ -72,7 +70,6 @@ func normalizeSlashes(src []byte) []byte {
 			src[i] = '/'
 		}
 	}
-	// Collapse multiple slashes
 	out := src[:0]
 	lastSlash := false
 	for _, b := range src {
@@ -114,15 +111,8 @@ func resolvePathSegments(path []byte) []byte {
 		buf.WriteByte('/')
 		buf.Write(s)
 	}
-	// Preserve trailing slash if original had one and stack isn't empty
 	if len(path) > 0 && path[len(path)-1] == '/' {
 		buf.WriteByte('/')
 	}
 	return buf.Bytes()
-=======
-// NormalizeContentDisposition strips malicious characters from headers.
-func NormalizeContentDisposition(header []byte) []byte {
-	// Remove potential CRLF injection sequences
-	return bytes.ReplaceAll(bytes.ReplaceAll(header, []byte("\r"), nil), []byte("\n"), nil)
->>>>>>> origin/main
 }
