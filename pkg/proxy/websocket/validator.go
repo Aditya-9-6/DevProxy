@@ -1,6 +1,7 @@
 package websocket
 
 import (
+	"math"
 	"sync/atomic"
 )
 
@@ -18,9 +19,24 @@ func (v *FrameValidator) ValidateMask(mask [4]byte) bool {
 }
 
 func (v *FrameValidator) TrackEntropy(payload []byte) {
-	var sum uint64
-	for _, b := range payload {
-		sum += uint64(b)
+	if len(payload) == 0 {
+		v.EntropyScore.Store(0)
+		return
 	}
-	v.EntropyScore.Store(sum)
+
+	counts := make(map[byte]int)
+	for _, b := range payload {
+		counts[b]++
+	}
+
+	var entropy float64
+	length := float64(len(payload))
+	for _, count := range counts {
+		p := float64(count) / length
+		entropy -= p * math.Log2(p)
+	}
+
+	// Store entropy scaled by 1000 for atomic integer representation
+	score := uint64(entropy * 1000)
+	v.EntropyScore.Store(score)
 }
