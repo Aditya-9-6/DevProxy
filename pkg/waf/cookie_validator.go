@@ -11,9 +11,11 @@ import (
 // Uses double hashing to minimize collision probability.
 // False positive rate is approximately (1 - e^(-kn/m))^k where k=2.
 type CookieValidator struct {
+	_        [56]byte
 	bits     []uint64
 	size     uint32
 	hashPool sync.Pool
+	_        [56]byte
 }
 
 func NewCookieValidator(size uint32) *CookieValidator {
@@ -49,6 +51,7 @@ func (cv *CookieValidator) IsTampered(cookieData []byte) bool {
 	h1, h2 := cv.hashes(cookieData)
 	idx1, idx2 := h1/64, h2/64
 	bit1, bit2 := uint64(1)<<(h1%64), uint64(1)<<(h2%64)
+	// Check bits atomically. If either bit is 0, it is considered tampered.
 	return (atomic.LoadUint64(&cv.bits[idx1])&bit1) == 0 || (atomic.LoadUint64(&cv.bits[idx2])&bit2) == 0
 }
 
@@ -60,6 +63,9 @@ func (cv *CookieValidator) MarkValid(cookieData []byte) {
 		idx, bit := pair[0], pair[1]
 		for {
 			old := atomic.LoadUint64(&cv.bits[idx])
+			if (old & bit) != 0 {
+				break
+			}
 			new := old | bit
 			if atomic.CompareAndSwapUint64(&cv.bits[idx], old, new) {
 				break

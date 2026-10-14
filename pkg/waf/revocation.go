@@ -16,9 +16,6 @@ func NewRevocationEpoch() *RevocationEpoch {
 	return &RevocationEpoch{}
 }
 
-// GlobalRevocationState is the singleton instance for the proxy.
-var GlobalRevocationState = NewRevocationEpoch()
-
 func (r *RevocationEpoch) RevokeAll() {
 	r.Version.Add(1)
 }
