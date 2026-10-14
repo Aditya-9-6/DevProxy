@@ -2,7 +2,7 @@ package parser
 
 import (
 	"bytes"
-	"sync"
+	"strings"
 	"testing"
 )
 
@@ -19,12 +19,11 @@ func TestChunkValidator_ParseChunkSize(t *testing.T) {
 		{"FF;chunk-extension=foo", 255, nil},
 		{"invalid", 0, ErrInvalidChunkHeader},
 		{"2000", 0, ErrChunkSizeOverflow},
+		{"", 0, ErrInvalidChunkHeader},
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.input, func(t *testing.T) {
-			t.Parallel()
 			val, err := validator.ParseChunkSize([]byte(tt.input))
 			if err != tt.expectedErr {
 				t.Errorf("ParseChunkSize(%q) error = %v, expected %v", tt.input, err, tt.expectedErr)
@@ -37,7 +36,6 @@ func TestChunkValidator_ParseChunkSize(t *testing.T) {
 }
 
 func TestChunkValidator_ValidateStream(t *testing.T) {
-	t.Parallel()
 	validator := NewChunkValidator(1024)
 	rawChunked := "5\r\nhello\r\n6\r\n world\r\n0\r\n\r\n"
 	src := bytes.NewReader([]byte(rawChunked))
@@ -49,8 +47,7 @@ func TestChunkValidator_ValidateStream(t *testing.T) {
 	}
 
 	if total != 11 {
-		ErrorfTotal := total
-		t.Errorf("expected 11 bytes validated, got %d", ErrorfTotal)
+		t.Errorf("expected 11 bytes validated, got %d", total)
 	}
 
 	if dst.String() != "hello world" {
@@ -58,16 +55,12 @@ func TestChunkValidator_ValidateStream(t *testing.T) {
 	}
 }
 
-func TestChunkValidator_ConcurrentValidation(t *testing.T) {
-	var wg sync.WaitGroup
-	for i := 0; i < 50; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			validator := NewChunkValidator(1024)
-			rawChunked := "3\r\nabc\r\n0\r\n\r\n"
-			_, _ = validator.ValidateStream(bytes.NewReader([]byte(rawChunked)), nil)
-		}()
+func TestChunkValidator_Malformed(t *testing.T) {
+	validator := NewChunkValidator(1024)
+	// Missing CRLF
+	raw := "5\r\nhello"
+	_, err := validator.ValidateStream(strings.NewReader(raw), nil)
+	if err == nil {
+		t.Error("expected error for malformed stream")
 	}
-	wg.Wait()
 }

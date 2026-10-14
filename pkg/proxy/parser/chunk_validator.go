@@ -19,7 +19,7 @@ type ChunkValidator struct {
 
 var validatorBufferPool = sync.Pool{
 	New: func() interface{} {
-		return make([]byte, 4096)
+		return make([]byte, 32768)
 	},
 }
 
@@ -62,10 +62,25 @@ func (v *ChunkValidator) ValidateStream(r io.Reader, w io.Writer) (uint64, error
 			break
 		}
 
-		chunkData := make([]byte, chunkSize)
-		_, err = io.ReadFull(br, chunkData)
-		if err != nil {
-			return total, ErrChunkStreamLeak
+		buf := validatorBufferPool.Get().([]byte)
+		defer validatorBufferPool.Put(buf)
+
+		remaining := chunkSize
+		for remaining > 0 {
+			toRead := uint64(len(buf))
+			if remaining < toRead {
+				toRead = remaining
+			}
+			n, err := io.ReadFull(br, buf[:toRead])
+			if err != nil {
+				return total, ErrChunkStreamLeak
+			}
+			if w != nil {
+				if _, wErr := w.Write(buf[:n]); wErr != nil {
+					return total, wErr
+				}
+			}
+			remaining -= uint64(n)
 		}
 
 		crlf := make([]byte, 2)
@@ -77,12 +92,6 @@ func (v *ChunkValidator) ValidateStream(r io.Reader, w io.Writer) (uint64, error
 		total += chunkSize
 		v.bytesValidated.Add(chunkSize)
 		v.chunksValidated.Add(1)
-
-		if w != nil {
-			if _, wErr := w.Write(chunkData); wErr != nil {
-				return total, wErr
-			}
-		}
 	}
 
 	return total, nil
@@ -93,6 +102,9 @@ func (v *ChunkValidator) ParseChunkSize(line []byte) (uint64, error) {
 	line = bytes.TrimSpace(line)
 	if idx := bytes.IndexByte(line, ';'); idx >= 0 {
 		line = line[:idx]
+	}
+	if len(line) == 0 {
+		return 0, ErrInvalidChunkHeader
 	}
 	size, err := strconv.ParseUint(string(line), 16, 64)
 	if err != nil {
