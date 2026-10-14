@@ -35,10 +35,12 @@ jobs:
         contains(github.event.pull_request.labels.*.name, 'ai-generated')
       )) ||
       (github.event_name == 'issue_comment' && github.event.issue.pull_request &&
-       contains('["OWNER", "COLLABORATOR", "MEMBER"]', github.event.comment.author_association) && (
-        startsWith(github.event.comment.body, '/review') ||
-        startsWith(github.event.comment.body, '@devproxy-bot review') ||
-        startsWith(github.event.comment.body, '@spryzen-bot review')
+       (contains('["OWNER", "COLLABORATOR", "MEMBER"]', github.event.comment.author_association) ||
+        github.actor == github.repository_owner ||
+        github.event.comment.user.login == 'Aditya-9-6') && (
+        startsWith(trim(github.event.comment.body), '/review') ||
+        startsWith(trim(github.event.comment.body), '@devproxy-bot review') ||
+        startsWith(trim(github.event.comment.body), '@spryzen-bot review')
       ))
     runs-on: ubuntu-latest
     steps:
@@ -102,6 +104,7 @@ jobs:
           GEMINI_REVIEWER_KEY: ${{ secrets.GEMINI_REVIEWER_KEY }}
           GEMINI_SOLVER_KEY: ${{ secrets.GEMINI_SOLVER_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_KEY_POOL: ${{ secrets.GEMINI_KEY_POOL || '' }}
           PR_NUM: ${{ steps.meta.outputs.pr_num }}
           GH_TOKEN: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
@@ -169,6 +172,7 @@ jobs:
           GEMINI_SOLVER_KEY: ${{ secrets.GEMINI_SOLVER_KEY }}
           GEMINI_REVIEWER_KEY: ${{ secrets.GEMINI_REVIEWER_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_KEY_POOL: ${{ secrets.GEMINI_KEY_POOL || '' }}
           PR_NUM: ${{ steps.meta.outputs.pr_num }}
           HEAD_REF: ${{ steps.meta.outputs.head_ref }}
           AUTH_TOKEN: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
