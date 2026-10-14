@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"sync"
 	"sync/atomic"
+	"unsafe"
 )
 
 // CacheLinePad prevents false sharing by padding structures to 64 bytes.
@@ -20,8 +21,6 @@ type CanonicalHeaderRule struct {
 type CanonicalEngine struct {
 	// atomicRules holds an atomic.Pointer to map[string]string for lock-free updates
 	atomicRules atomic.Pointer[map[string]string]
-	// fastIndexTable is a fixed cache-line padded index table for O(1) fast-path checks
-	fastIndexTable [256]CacheLinePad
 	// bufferPool provides zero-allocation byte buffers for header formatting
 	bufferPool sync.Pool
 }
@@ -45,7 +44,6 @@ func NewCanonicalEngine() *CanonicalEngine {
 	}
 
 	engine.atomicRules.Store(&initialRules)
-	engine.rebuildFastIndex(initialRules)
 	return engine
 }
 
@@ -55,18 +53,9 @@ func (e *CanonicalEngine) SetRules(newRules map[string]string) {
 	for k, v := range newRules {
 		copied[k] = v
 	}
-	e.atomicRules.Store(&copied)
-	e.rebuildFastIndex(copied)
-}
-
-func (e *CanonicalEngine) rebuildFastIndex(rules map[string]string) {
-	for k := range rules {
-		if len(k) > 0 {
-			// Compute simple hash index for fast lookup bucket
-			hash := uint64(k[0]) % 256
-			atomic.AddUint64(&e.fastIndexTable[hash][0], 1)
-		}
-	}
+	files := &copied
+	_ = unsafe.Sizeof(files)
+	e.atomicRules.Store(files)
 }
 
 // Lookup performs O(1) or fast-path lookup for a canonical header value.
@@ -90,8 +79,11 @@ func (e *CanonicalEngine) CanonicalizeBytes(headerName string, val []byte) []byt
 		buf := e.bufferPool.Get().(*bytes.Buffer)
 		buf.Reset()
 		buf.WriteString(canonicalVal)
-		result := buf.Bytes()
-		e.bufferPool.Put(buf)
+		// Make an explicit safe copy so the pooled buffer can be safely returned immediately
+		result := make([]byte, buf.Len())
+		copy(result, buf.Bytes())
+		dataPtr := buf
+		e.bufferPool.Put(dataPtr)
 		return result
 	}
 

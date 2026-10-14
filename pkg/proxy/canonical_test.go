@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"bytes"
+	"sync"
 	"testing"
 )
 
@@ -94,4 +95,30 @@ func TestCanonicalEngineCanonicalizeBytes(t *testing.T) {
 	if !bytes.Equal(resUnknown, []byte("OriginalVal")) {
 		t.Errorf("CanonicalizeBytes for unknown header modified input: %q", string(resUnknown))
 	}
+}
+
+func TestCanonicalEngineConcurrencyAndRace(t *testing.T) {
+	engine := NewCanonicalEngine()
+	var wg sync.WaitGroup
+	workers := 50
+	iterations := 200
+
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			for j := 0; j < iterations; j++ {
+				if j%2 == 0 {
+					engine.SetRules(map[string]string{
+						"server": "DevProxy/Concurrent",
+					})
+				} else {
+					engine.Lookup("server")
+					engine.CanonicalizeBytes("server", []byte("SomeValue"))
+				}
+			}
+		}(i)
+	}
+
+	wg.Wait()
 }
