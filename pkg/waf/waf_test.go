@@ -44,3 +44,14 @@ func TestCookieValidatorConcurrency(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+func BenchmarkCookieValidator(b *testing.B) {
+	cv := NewCookieValidator(1024)
+	cookie := []byte("bench_test")
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			cv.MarkValid(cookie)
+			cv.IsTampered(cookie)
+		}
+	})
+}
