@@ -7,16 +7,13 @@ var BufferPool = sync.Pool{
 		return make([]byte, 32*1024)
 	},
 }
-var bufferPool = sync.Pool{
-	New: func() interface{} {
-		return make([]byte, 4096)
-	},
-}
 
+// GetBuffer returns a buffer from the pool.
 func GetBuffer() []byte {
-	return bufferPool.Get().([]byte)
+	return BufferPool.Get().([]byte)
 }
 
+// PutBuffer returns a buffer to the pool.
 func PutBuffer(b []byte) {
-	bufferPool.Put(b)
+	BufferPool.Put(b)
 }
