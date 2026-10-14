@@ -1,17 +1,15 @@
 package waf
 
 import (
+	"github.com/Aditya-9-6/DevProxy/pkg/internal/align"
 	"math"
 	"sync/atomic"
 )
 
-// CacheLinePad prevents false sharing.
-type CacheLinePad [8]uint64
-
 // CookieSecurityEngine tracks session hijacking heuristics.
 type CookieSecurityEngine struct {
-	ViolationCount CacheLinePad
-	EntropyScore   CacheLinePad
+	ViolationCount align.CacheLinePad
+	EntropyScore   align.CacheLinePad
 }
 
 func NewCookieSecurityEngine() *CookieSecurityEngine {

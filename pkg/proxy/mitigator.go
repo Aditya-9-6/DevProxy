@@ -1,17 +1,15 @@
 package proxy
 
 import (
+	"github.com/Aditya-9-6/DevProxy/pkg/internal/align"
 	"sync/atomic"
 	"time"
 )
 
-// CacheLinePad prevents false sharing by padding atomic counters to 64 bytes.
-type CacheLinePad [8]uint64
-
 // Mitigator tracks socket states using lock-free atomic counters.
 type Mitigator struct {
-	ActiveConnections   CacheLinePad
-	SlowLorisViolations CacheLinePad
+	ActiveConnections   align.CacheLinePad
+	SlowLorisViolations align.CacheLinePad
 	ReadDeadline        atomic.Int64
 }
 
