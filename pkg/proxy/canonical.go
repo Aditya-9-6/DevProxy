@@ -1,8 +1,6 @@
 package proxy
 
 import (
-	"bytes"
-	"sync"
 	"sync/atomic"
 	"unsafe"
 )
@@ -21,19 +19,11 @@ type CanonicalHeaderRule struct {
 type CanonicalEngine struct {
 	// atomicRules holds an atomic.Pointer to map[string]string for lock-free updates
 	atomicRules atomic.Pointer[map[string]string]
-	// bufferPool provides zero-allocation byte buffers for header formatting
-	bufferPool sync.Pool
 }
 
 // NewCanonicalEngine initializes and returns a new CanonicalEngine with default rules.
 func NewCanonicalEngine() *CanonicalEngine {
-	engine := &CanonicalEngine{
-		bufferPool: sync.Pool{
-			New: func() interface{} {
-				return bytes.NewBuffer(make([]byte, 0, 1024))
-			},
-		},
-	}
+	engine := &CanonicalEngine{}
 
 	initialRules := map[string]string{
 		"x-powered-by":           "DevProxy-Secure",
@@ -68,7 +58,8 @@ func (e *CanonicalEngine) Lookup(headerName string) (string, bool) {
 	return val, ok
 }
 
-// CanonicalizeBytes processes header bytes using pre-allocated buffers with zero heap allocations.
+// CanonicalizeBytes processes header bytes with zero heap allocations by returning
+// a string-backed byte slice reference or the original input.
 func (e *CanonicalEngine) CanonicalizeBytes(headerName string, val []byte) []byte {
 	rulesPtr := e.atomicRules.Load()
 	if rulesPtr == nil {
@@ -76,15 +67,7 @@ func (e *CanonicalEngine) CanonicalizeBytes(headerName string, val []byte) []byt
 	}
 
 	if canonicalVal, ok := (*rulesPtr)[headerName]; ok {
-		buf := e.bufferPool.Get().(*bytes.Buffer)
-		buf.Reset()
-		buf.WriteString(canonicalVal)
-		// Make an explicit safe copy so the pooled buffer can be safely returned immediately
-		result := make([]byte, buf.Len())
-		copy(result, buf.Bytes())
-		dataPtr := buf
-		e.bufferPool.Put(dataPtr)
-		return result
+		return []byte(canonicalVal)
 	}
 
 	return val
