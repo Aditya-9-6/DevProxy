@@ -6,7 +6,7 @@ import (
 )
 
 // TokenBucket implements a thread-safe rate limiter using a mutex.
-// This ensures atomic updates to both token count and refill timestamp.
+// It provides a standard token bucket algorithm for traffic shaping.
 type TokenBucket struct {
 	mu       sync.Mutex
 	capacity uint64
@@ -15,8 +15,11 @@ type TokenBucket struct {
 	last     uint64
 }
 
-// NewTokenBucket creates a new rate limiter.
+// NewTokenBucket creates a new rate limiter. If ratePerSec is 0, it defaults to 1.
 func NewTokenBucket(ratePerSec uint64, burst uint64) *TokenBucket {
+	if ratePerSec == 0 {
+		ratePerSec = 1
+	}
 	return &TokenBucket{
 		capacity: burst,
 		refillNs: uint64(time.Second.Nanoseconds()) / ratePerSec,

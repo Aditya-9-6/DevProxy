@@ -7,24 +7,33 @@ import (
 )
 
 func TestTokenBucket_Allow(t *testing.T) {
-	rate := uint64(100)
-	burst := uint64(5)
-	tb := NewTokenBucket(rate, burst)
+	t.Run("BasicBurst", func(t *testing.T) {
+		rate := uint64(100)
+		burst := uint64(5)
+		tb := NewTokenBucket(rate, burst)
 
-	for i := uint64(0); i < burst; i++ {
-		if !tb.Allow() {
-			t.Errorf("expected token at index %d", i)
+		for i := uint64(0); i < burst; i++ {
+			if !tb.Allow() {
+				t.Errorf("expected token at index %d", i)
+			}
 		}
-	}
 
-	if tb.Allow() {
-		t.Error("expected bucket to be empty")
-	}
+		if tb.Allow() {
+			t.Error("expected bucket to be empty")
+		}
 
-	time.Sleep(20 * time.Millisecond)
-	if !tb.Allow() {
-		t.Error("expected token after refill")
-	}
+		time.Sleep(20 * time.Millisecond)
+		if !tb.Allow() {
+			t.Error("expected token after refill")
+		}
+	})
+
+	t.Run("EdgeCases", func(t *testing.T) {
+		tb := NewTokenBucket(0, 0)
+		if tb.Allow() {
+			t.Error("expected zero burst to deny")
+		}
+	})
 }
 
 func TestTokenBucket_Concurrent(t *testing.T) {
@@ -45,4 +54,14 @@ func TestTokenBucket_Concurrent(t *testing.T) {
 		}()
 	}
 	wg.Wait()
+}
+
+func BenchmarkTokenBucket_Allow(b *testing.B) {
+	tb := NewTokenBucket(10000, 100)
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			tb.Allow()
+		}
+	})
 }
