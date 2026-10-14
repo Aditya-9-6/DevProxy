@@ -3,10 +3,8 @@ package proxy
 import (
 	"sync/atomic"
 	"time"
+	// Removed duplicate CacheLinePad declaration to resolve redeclaration conflict with canonical.go
 )
-
-// CacheLinePad prevents false sharing by padding atomic counters to 64 bytes.
-type CacheLinePad [8]uint64
 
 // Mitigator tracks socket states using lock-free atomic counters.
 type Mitigator struct {
