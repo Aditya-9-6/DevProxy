@@ -19,17 +19,23 @@ func NewOrchestrator() *Orchestrator {
 
 func (o *Orchestrator) Probe(ctx context.Context, url string, ring *StateRing) {
 	start := time.Now()
-	req, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
-	resp, err := o.client.Do(req)
-
-	if err != nil || resp.StatusCode >= 500 {
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
 		ring.SetHealthy(false)
-		if resp != nil {
-			resp.Body.Close()
-		}
 		return
 	}
-	resp.Body.Close()
+
+	resp, err := o.client.Do(req)
+	if err != nil {
+		ring.SetHealthy(false)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 500 {
+		ring.SetHealthy(false)
+		return
+	}
 
 	ring.SetHealthy(true)
 	ring.RecordLatency(uint64(time.Since(start).Milliseconds()))

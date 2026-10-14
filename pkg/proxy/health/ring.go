@@ -4,32 +4,39 @@ import (
 	"sync/atomic"
 )
 
-// CacheLinePad prevents false sharing.
-type CacheLinePad [8]uint64
+// CacheLinePad prevents false sharing by padding to 64 bytes.
+// The struct is aligned to 64 bytes to fit a standard CPU cache line.
+type CacheLinePad struct {
+	V atomic.Uint64
+	_ [56]byte
+}
 
 // StateRing maintains atomic health status for a node.
+// It is designed for high-throughput concurrent access.
 type StateRing struct {
-	// 0: Healthy, 1: Unhealthy
 	Status CacheLinePad
-	// Latency buckets for O(1) reporting
-	LatencyBuckets [1000]atomic.Uint64
+	// LatencyBuckets uses a smaller, more efficient histogram representation
+	// to reduce memory footprint while maintaining O(1) access.
+	LatencyBuckets [100]atomic.Uint64
 }
 
 func (r *StateRing) SetHealthy(healthy bool) {
 	if healthy {
-		atomic.StoreUint64(&r.Status[0], 1)
+		r.Status.V.Store(1)
 	} else {
-		atomic.StoreUint64(&r.Status[0], 0)
+		r.Status.V.Store(0)
 	}
 }
 
 func (r *StateRing) IsHealthy() bool {
-	return atomic.LoadUint64(&r.Status[0]) == 1
+	return r.Status.V.Load() == 1
 }
 
 func (r *StateRing) RecordLatency(ms uint64) {
-	if ms >= 1000 {
-		ms = 999
+	// Map latency to 100 buckets (0-990ms, 10ms increments)
+	idx := ms / 10
+	if idx >= 100 {
+		idx = 99
 	}
-	r.LatencyBuckets[ms].Add(1)
+	r.LatencyBuckets[idx].Add(1)
 }
