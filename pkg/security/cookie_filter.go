@@ -1,7 +1,9 @@
 package security
 
 import (
+	"hash"
 	"hash/fnv"
+	"sync"
 	"sync/atomic"
 )
 
@@ -11,11 +13,18 @@ type CacheLinePad [8]uint64
 // CookieFilter implements a lock-free probabilistic signature verification filter.
 // It uses a bit-array of size 2^20 (1M bits) for low collision probability.
 type CookieFilter struct {
-	bits [1024 * 1024 / 64]CacheLinePad
+	bits    [1024 * 1024 / 64]CacheLinePad
+	hashers sync.Pool
 }
 
 func NewCookieFilter() *CookieFilter {
-	return &CookieFilter{}
+	return &CookieFilter{
+		hashers: sync.Pool{
+			New: func() interface{} {
+				return fnv.New64a()
+			},
+		},
+	}
 }
 
 // Add inserts a signature into the filter.
@@ -32,7 +41,10 @@ func (f *CookieFilter) Contains(signature string) bool {
 }
 
 func (f *CookieFilter) hashes(s string) (uint64, uint64) {
-	h := fnv.New64a()
+	h := f.hashers.Get().(hash.Hash64)
+	defer f.hashers.Put(h)
+
+	h.Reset()
 	h.Write([]byte(s))
 	h1 := h.Sum64()
 	h.Write([]byte("salt"))
