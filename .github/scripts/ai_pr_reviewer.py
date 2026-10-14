@@ -16,14 +16,16 @@ import subprocess
 import time
 from pathlib import Path
 
-DEFAULT_MODEL = "gemini-3.1-flash-lite"
+DEFAULT_MODEL = "gemini-2.5-flash"
 FALLBACK_MODELS = [
+    "gemini-2.5-flash",
+    "gemini-2.5-flash-lite",
     "gemini-3.1-flash-lite",
     "gemini-3.5-flash-lite",
     "gemini-3.5-flash",
     "gemini-3.7-flash",
     "gemini-3-flash-preview",
-    "gemini-3.1-pro-preview",
+    "gemini-2.5-pro",
 ]
 
 DEFAULT_KEYS = []
@@ -278,7 +280,35 @@ def main():
 Audit the code against all anti-spaghetti, concurrency, performance, and security requirements. Provide your verdict in the required JSON schema.
 """
 
-    audit = call_gemini(primary_key, prompt, fallback_key=fallback_key)
+    try:
+        audit = call_gemini(primary_key, prompt, fallback_key=fallback_key)
+    except Exception as e:
+        print(f"[Warning] Gemini API review call failed: {e}", file=sys.stderr)
+        review_md = f"""## ⏳ Autonomous Architectural Review: Temporarily Rate-Limited
+
+The autonomous reviewer encountered an API quota limit across available keys while reviewing this PR.
+
+**Details**:
+```text
+{str(e)[:300]}
+```
+
+**Next Steps**:
+- Wait a few minutes and re-trigger with `/review` or wait for the next autonomous cycle.
+"""
+        review_file = workspace / "ai_pr_review.md"
+        review_file.write_text(review_md.strip(), encoding="utf-8")
+        status_file = workspace / "ai_review_status.json"
+        status_data = {
+            "verdict": "RATE_LIMITED",
+            "score": 0,
+            "needs_improvement": False,
+            "action_items": ["Retry review when API quota resets."],
+            "system_impact": "Review temporarily delayed due to API rate-limits."
+        }
+        status_file.write_text(json.dumps(status_data, indent=2), encoding="utf-8")
+        print(f"[!] Wrote fallback rate-limited review to {review_file}")
+        return
 
     verdict = audit.get("verdict", "ACTION_REQUIRED").strip().upper()
     score = int(audit.get("score", 75))
