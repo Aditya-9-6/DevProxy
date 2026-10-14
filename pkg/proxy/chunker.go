@@ -35,7 +35,8 @@ func (d *ChunkDecoder) Read(p []byte) (int, error) {
 	if d.err != nil {
 		return 0, d.err
 	}
-	if d.pos >= len(d.curr) {
+
+	for d.pos >= len(d.curr) {
 		if d.activeBuf != nil {
 			chunkBufferPool.Put(d.activeBuf)
 			d.activeBuf = nil
@@ -70,7 +71,9 @@ func (d *ChunkDecoder) Read(p []byte) (int, error) {
 			return 0, err
 		}
 
-		if _, err := d.r.Discard(2); err != nil { // Discard \r\n
+		// Discard trailing \r\n
+		_, err = d.r.Discard(2)
+		if err != nil {
 			chunkBufferPool.Put(buf)
 			d.err = err
 			return 0, err
@@ -80,6 +83,7 @@ func (d *ChunkDecoder) Read(p []byte) (int, error) {
 		d.curr = buf.Bytes()
 		d.pos = 0
 	}
+
 	n := copy(p, d.curr[d.pos:])
 	d.pos += n
 	return n, nil
