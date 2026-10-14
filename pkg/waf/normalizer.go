@@ -4,6 +4,7 @@ import (
 	"bytes"
 )
 
+<<<<<<< HEAD
 // NormalizePath performs zero-allocation URI normalization using sync.Pool buffers.
 func NormalizePath(path string) string {
 	buf := GetBuffer()
@@ -118,4 +119,10 @@ func resolvePathSegments(path []byte) []byte {
 		buf.WriteByte('/')
 	}
 	return buf.Bytes()
+=======
+// NormalizeContentDisposition strips malicious characters from headers.
+func NormalizeContentDisposition(header []byte) []byte {
+	// Remove potential CRLF injection sequences
+	return bytes.ReplaceAll(bytes.ReplaceAll(header, []byte("\r"), nil), []byte("\n"), nil)
+>>>>>>> origin/main
 }
