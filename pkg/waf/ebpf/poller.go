@@ -2,13 +2,16 @@ package ebpf
 
 import (
 	"context"
+	"sync"
 	"sync/atomic"
+	"time"
 )
 
 // Poller manages the lifecycle of the eBPF ring buffer consumer.
 type Poller struct {
 	ctx       context.Context
 	cancel    context.CancelFunc
+	startOnce sync.Once
 	Events    chan []byte
 	Telemetry *Telemetry
 	Dropped   atomic.Uint64
@@ -26,28 +29,29 @@ func NewPoller() *Poller {
 }
 
 func (p *Poller) Start() {
-	go func() {
-		for {
-			select {
-			case <-p.ctx.Done():
-				return
-			default:
-				// Simulate eBPF ring buffer poll
-				data := EventPool.Get().([]byte)
-				// Simulate successful read
+	p.startOnce.Do(func() {
+		go func() {
+			for {
 				select {
-				case p.Events <- data:
-					p.Processed.Add(1)
-					p.Telemetry.RecordHit()
+				case <-p.ctx.Done():
+					return
 				default:
-					// Backpressure: drop event if channel is full
-					EventPool.Put(data)
-					p.Dropped.Add(1)
-					p.Telemetry.RecordDrop()
+					// Simulate blocking eBPF poll to avoid 100% CPU usage
+					time.Sleep(1 * time.Millisecond)
+					data := EventPool.Get().([]byte)
+					select {
+					case p.Events <- data:
+						p.Processed.Add(1)
+						p.Telemetry.RecordHit()
+					default:
+						EventPool.Put(data)
+						p.Dropped.Add(1)
+						p.Telemetry.RecordDrop()
+					}
 				}
 			}
-		}
-	}()
+		}()
+	})
 }
 
 func (p *Poller) Stop() {

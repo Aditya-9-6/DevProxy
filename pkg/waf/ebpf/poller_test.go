@@ -9,8 +9,25 @@ import (
 func TestPollerLifecycle(t *testing.T) {
 	p := NewPoller()
 	p.Start()
+	p.Start() // Test idempotency
 	time.Sleep(10 * time.Millisecond)
 	p.Stop()
+}
+
+func TestPollerBackpressure(t *testing.T) {
+	p := NewPoller()
+	// Fill the channel to trigger backpressure
+	for i := 0; i < 1024; i++ {
+		p.Events <- make([]byte, 256)
+	}
+	p.Start()
+	time.Sleep(50 * time.Millisecond)
+	p.Stop()
+
+	drops, _ := p.Telemetry.GetStats()
+	if drops == 0 {
+		t.Error("expected drops due to backpressure, got 0")
+	}
 }
 
 func TestPollerConcurrency(t *testing.T) {
