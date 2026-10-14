@@ -3,10 +3,12 @@ package transport
 import (
 	"bytes"
 	"context"
+	"sync"
 	"testing"
 )
 
 func TestChunkGuard_NormalOperation(t *testing.T) {
+	t.Parallel()
 	data := []byte("hello devproxy chunked stream")
 	guard := NewChunkGuard(1024, 256)
 	ctx := context.Background()
@@ -30,6 +32,7 @@ func TestChunkGuard_NormalOperation(t *testing.T) {
 }
 
 func TestChunkGuard_MaxTotalExceeded(t *testing.T) {
+	t.Parallel()
 	data := []byte("this stream exceeds maximum total size quota")
 	guard := NewChunkGuard(10, 100)
 	ctx := context.Background()
@@ -47,6 +50,7 @@ func TestChunkGuard_MaxTotalExceeded(t *testing.T) {
 }
 
 func TestChunkGuard_ContextCancellation(t *testing.T) {
+	t.Parallel()
 	guard := NewChunkGuard(1000, 100)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -57,5 +61,27 @@ func TestChunkGuard_ContextCancellation(t *testing.T) {
 	_, err := reader.Read(buf)
 	if err == nil {
 		t.Errorf("expected context cancellation error, got nil")
+	}
+}
+
+func TestChunkGuard_ConcurrentReads(t *testing.T) {
+	guard := NewChunkGuard(100000, 1024)
+	ctx := context.Background()
+
+	var wg sync.WaitGroup
+	for i := 0; i < 50; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			reader := guard.WrapReader(ctx, bytes.NewReader([]byte("concurrent stream payload")))
+			buf := make([]byte, 64)
+			_, _ = reader.Read(buf)
+		}()
+	}
+	wg.Wait()
+
+	_, _, active := guard.Stats()
+	if active {
+		// Expected final state evaluation
 	}
 }

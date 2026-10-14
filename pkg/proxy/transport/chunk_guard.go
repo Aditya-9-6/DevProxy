@@ -35,23 +35,15 @@ var (
 )
 
 // NewChunkGuard initializes a new ChunkGuard with specified size limits.
-func NewChunkGuard(maxTotalBytes, maxChunkSize uint64) *ChunkGuardCG {
-	return &ChunkGuardCG{
+func NewChunkGuard(maxTotalBytes, maxChunkSize uint64) *ChunkGuard {
+	return &ChunkGuard{
 		maxTotalBytes: maxTotalBytes,
 		maxChunkSize:  maxChunkSize,
 	}
 }
 
-type ChunkGuardCG struct {
-	maxTotalBytes   uint64
-	maxChunkSize    uint64
-	bytesRead       atomic.Uint64
-	chunksProcessed atomic.Uint64
-	active          atomic.Bool
-}
-
 // WrapReader wraps an io.Reader to enforce chunk limits and size constraints atomically.
-func (g *ChunkGuardCG) WrapReader(ctx context.Context, r io.Reader) io.Reader {
+func (g *ChunkGuard) WrapReader(ctx context.Context, r io.Reader) io.Reader {
 	g.active.Store(true)
 	return &guardedStreamReader{
 		ctx:   ctx,
@@ -63,7 +55,7 @@ func (g *ChunkGuardCG) WrapReader(ctx context.Context, r io.Reader) io.Reader {
 type guardedStreamReader struct {
 	ctx   context.Context
 	r     io.Reader
-	guard *ChunkGuardCG
+	guard *ChunkGuard
 }
 
 func (s *guardedStreamReader) Read(p []byte) (int, error) {
@@ -89,6 +81,6 @@ func (s *guardedStreamReader) Read(p []byte) (int, error) {
 }
 
 // Stats returns current atomic metrics.
-func (g *ChunkGuardCG) Stats() (bytesRead uint64, chunks uint64, active bool) {
+func (g *ChunkGuard) Stats() (bytesRead uint64, chunks uint64, active bool) {
 	return g.bytesRead.Load(), g.chunksProcessed.Load(), g.active.Load()
 }
