@@ -46,7 +46,11 @@ func (d *ChunkDecoder) Read(p []byte) (int, error) {
 			d.err = err
 			return 0, err
 		}
-		size, err := strconv.ParseInt(strings.TrimSpace(line), 16, 64)
+		sizeStr := strings.TrimSpace(line)
+		if idx := strings.IndexByte(sizeStr, ';'); idx != -1 {
+			sizeStr = sizeStr[:idx]
+		}
+		size, err := strconv.ParseInt(sizeStr, 16, 64)
 		if err != nil || size < 0 || size > MaxChunkSize {
 			d.err = io.ErrUnexpectedEOF
 			return 0, d.err
@@ -81,6 +85,14 @@ func (d *ChunkDecoder) Read(p []byte) (int, error) {
 	return n, nil
 }
 
+func (d *ChunkDecoder) Close() error {
+	if d.activeBuf != nil {
+		chunkBufferPool.Put(d.activeBuf)
+		d.activeBuf = nil
+	}
+	return nil
+}
+
 // ChunkEncoder implements io.Writer to encode data into HTTP chunked format.
 type ChunkEncoder struct {
 	w io.Writer
@@ -104,4 +116,9 @@ func (e *ChunkEncoder) Write(p []byte) (int, error) {
 	}
 	_, err = e.w.Write([]byte("\r\n"))
 	return len(p), err
+}
+
+func (e *ChunkEncoder) Close() error {
+	_, err := e.w.Write([]byte("0\r\n\r\n"))
+	return err
 }
