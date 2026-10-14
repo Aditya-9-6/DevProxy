@@ -18,9 +18,8 @@ func TestDatagramEncapsulationDecapsulation(t *testing.T) {
 	}
 
 	datagram, err := ReadDatagram(&buf, pool)
-	kanalErr := err
-	if kanalErr != nil {
-		t.Fatalf("failed to read datagram: %v", kanalErr)
+	if err != nil {
+		t.Fatalf("failed to read datagram: %v", err)
 	}
 
 	if datagram.ContextID != contextID {
