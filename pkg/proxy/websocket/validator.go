@@ -24,7 +24,7 @@ func (v *FrameValidator) TrackEntropy(payload []byte) {
 		return
 	}
 
-	counts := make(map[byte]int)
+	var counts [256]int
 	for _, b := range payload {
 		counts[b]++
 	}
@@ -32,11 +32,12 @@ func (v *FrameValidator) TrackEntropy(payload []byte) {
 	var entropy float64
 	length := float64(len(payload))
 	for _, count := range counts {
-		p := float64(count) / length
-		entropy -= p * math.Log2(p)
+		if count > 0 {
+			p := float64(count) / length
+			entropy -= p * math.Log2(p)
+		}
 	}
 
-	// Store entropy scaled by 1000 for atomic integer representation
 	score := uint64(entropy * 1000)
 	v.EntropyScore.Store(score)
 }

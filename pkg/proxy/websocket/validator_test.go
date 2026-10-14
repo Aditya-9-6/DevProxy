@@ -20,3 +20,12 @@ func TestFrameValidator(t *testing.T) {
 		t.Error("Expected non-zero entropy score")
 	}
 }
+
+func BenchmarkTrackEntropy(b *testing.B) {
+	v := &FrameValidator{}
+	data := []byte("some random payload data for entropy calculation")
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		v.TrackEntropy(data)
+	}
+}

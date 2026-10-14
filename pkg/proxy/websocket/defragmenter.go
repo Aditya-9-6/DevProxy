@@ -6,6 +6,8 @@ import (
 
 var ErrBufferOverflow = errors.New("websocket: fragment payload exceeds buffer capacity")
 
+const MaxBufferSize = 10 * 1024 * 1024 // 10MB limit
+
 type Defragmenter struct {
 	buffer []byte
 	offset int
@@ -16,10 +18,17 @@ func (d *Defragmenter) Write(p []byte) (int, error) {
 		d.buffer = GetBuffer()
 	}
 
+	if d.offset+len(p) > MaxBufferSize {
+		return 0, ErrBufferOverflow
+	}
+
 	if d.offset+len(p) > len(d.buffer) {
 		newSize := len(d.buffer) * 2
 		for d.offset+len(p) > newSize {
 			newSize *= 2
+		}
+		if newSize > MaxBufferSize {
+			newSize = MaxBufferSize
 		}
 		newBuf := make([]byte, newSize)
 		copy(newBuf, d.buffer[:d.offset])
