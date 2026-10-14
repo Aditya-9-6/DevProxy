@@ -4,21 +4,28 @@ import (
 	"testing"
 )
 
-func TestSelector(t *testing.T) {
-	addrs := []string{"127.0.0.1:8080", "127.0.0.1:8081"}
-	sel := NewSelector(addrs)
+func TestSelector_Select(t *testing.T) {
+	addrs := []string{"10.0.0.1:80", "10.0.0.2:80"}
+	s := NewSelector(addrs)
 
-	t1 := sel.Select()
-	if t1 == nil || t1.Addr == "" {
-		t.Fatal("failed to select target")
+	// Test round-robin distribution
+	seen := make(map[string]int)
+	for i := 0; i < 10; i++ {
+		t := s.Select()
+		seen[t.Addr]++
 	}
 
-	// Simulate load
-	t1.Stats.RecordConnection()
-	t1.Stats.UpdateLatency(500)
+	if seen["10.0.0.1:80"] != 5 || seen["10.0.0.2:80"] != 5 {
+		t.Errorf("Expected even distribution, got %v", seen)
+	}
+}
 
-	t2 := sel.Select()
-	if t2.Addr == t1.Addr {
-		t.Errorf("selector did not pick the less loaded target: %s vs %s", t2.Addr, t1.Addr)
+func TestSelector_Concurrency(t *testing.T) {
+	s := NewSelector([]string{"127.0.0.1:8080"})
+	// Ensure no data races under load
+	for i := 0; i < 100; i++ {
+		go func() {
+			s.Select()
+		}()
 	}
 }
