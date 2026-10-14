@@ -7,6 +7,7 @@ import (
 // LFUEvictor implements a thread-safe O(1) LFU cache eviction policy.
 type LFUEvictor struct {
 	mu       sync.Mutex
+	_pad     [64]byte // Cache-line padding to prevent false sharing
 	capacity uint64
 	size     uint64
 	nodes    map[string]*Node
@@ -28,6 +29,10 @@ func (e *LFUEvictor) Push(key string, value interface{}) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
+	if e.capacity == 0 {
+		return
+	}
+
 	if node, ok := e.nodes[key]; ok {
 		node.Value = value
 		e.increment(node)
@@ -36,6 +41,10 @@ func (e *LFUEvictor) Push(key string, value interface{}) {
 
 	if e.size >= e.capacity {
 		e.evictInternal()
+	}
+
+	if e.capacity == 0 {
+		return
 	}
 
 	node := e.pool.Get().(*Node)
@@ -74,6 +83,9 @@ func (e *LFUEvictor) addToFreqList(f uint64, node *Node) {
 
 func (e *LFUEvictor) removeFromFreqList(node *Node) {
 	list := node.List
+	if list == nil {
+		return
+	}
 	if node.Prev != nil {
 		node.Prev.Next = node.Next
 	} else {
