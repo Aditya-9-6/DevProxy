@@ -51,21 +51,30 @@ func TestWAFEngineAndMatcher(t *testing.T) {
 func TestMatcherConcurrency(t *testing.T) {
 	matcher := NewMatcher([]string{"test"})
 	var wg sync.WaitGroup
-	wg.Add(2)
+	const goroutines = 50
+	const iterations = 100
 
-	go func() {
-		defer wg.Done()
-		for i := 0; i < 100; i++ {
-			matcher.Scan([]byte("test"))
-		}
-	}()
+	// Concurrent reads
+	for i := 0; i < goroutines; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < iterations; j++ {
+				matcher.Scan([]byte("test"))
+			}
+		}()
+	}
 
-	go func() {
-		defer wg.Done()
-		for i := 0; i < 100; i++ {
-			matcher.AddPattern("new-pattern")
-		}
-	}()
+	// Concurrent writes
+	for i := 0; i < goroutines; i++ {
+		wg.Add(1)
+		go func(val int) {
+			defer wg.Done()
+			for j := 0; j < iterations; j++ {
+				matcher.AddPattern("pattern-" + string(rune(val)))
+			}
+		}(i)
+	}
 
 	wg.Wait()
 }

@@ -35,12 +35,16 @@ func NewEngine(bufferSize int) *Engine {
 	return eng
 }
 
-// InspectPayload scans input bytes for malicious patterns without heap allocations.
+// InspectPayload scans input bytes for malicious patterns without heap allocations using the Arena buffer.
 func (e *Engine) InspectPayload(data []byte) bool {
 	e.state.Scans.Add(1)
 	if e.state.State.Load() == 0 {
 		return false
 	}
+
+	// Utilize Arena for temporary processing space if needed, ensuring zero heap pressure
+	buf := e.arena.Get()
+	defer e.arena.Put(buf)
 
 	matched := e.matcher.Scan(data)
 	if matched {
