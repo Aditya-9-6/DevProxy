@@ -1,6 +1,7 @@
 package waf
 
 import (
+	"sync"
 	"testing"
 )
 
@@ -45,4 +46,26 @@ func TestWAFEngineAndMatcher(t *testing.T) {
 	if matches != 2 {
 		t.Errorf("Expected 2 matches, got %d", matches)
 	}
+}
+
+func TestMatcherConcurrency(t *testing.T) {
+	matcher := NewMatcher([]string{"test"})
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 100; i++ {
+			matcher.Scan([]byte("test"))
+		}
+	}()
+
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 100; i++ {
+			matcher.AddPattern("new-pattern")
+		}
+	}()
+
+	wg.Wait()
 }

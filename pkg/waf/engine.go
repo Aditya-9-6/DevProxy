@@ -42,10 +42,6 @@ func (e *Engine) InspectPayload(data []byte) bool {
 		return false
 	}
 
-	// Utilize arena buffer for streaming or inspection if needed
-	bufPtr := e.arena.Get()
-	defer e.arena.Put(bufPtr)
-
 	matched := e.matcher.Scan(data)
 	if matched {
 		e.state.Matches.Add(1)
