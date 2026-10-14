@@ -10,10 +10,15 @@ const (
 	MaxFrames  = 100
 )
 
-type CacheLinePad [8]uint64
+type bucket struct {
+	count uint64
+	_     [56]byte // Pad to 64 bytes to prevent false sharing
+}
 
 type ContinuationDetector struct {
-	buckets [WindowSize]CacheLinePad
+	buckets    [WindowSize]bucket
+	totalCount atomic.Uint64
+	lastIdx    atomic.Int64
 }
 
 func NewContinuationDetector() *ContinuationDetector {
@@ -21,17 +26,36 @@ func NewContinuationDetector() *ContinuationDetector {
 }
 
 func (d *ContinuationDetector) RecordFrame() bool {
-	idx := (time.Now().Unix() % WindowSize)
-	atomic.AddUint64(&d.buckets[idx][0], 1)
+	now := time.Now().Unix()
+	idx := now % WindowSize
 
-	var total uint64
-	for i := 0; i < WindowSize; i++ {
-		total += atomic.LoadUint64(&d.buckets[i][0])
+	last := d.lastIdx.Load()
+	if now > last {
+		d.rotate(last, now)
+		d.lastIdx.Store(now)
 	}
-	return total > MaxFrames
+
+	atomic.AddUint64(&d.buckets[idx].count, 1)
+	return d.totalCount.Add(1) > MaxFrames
 }
 
-func (d *ContinuationDetector) ResetBucket(ts int64) {
-	idx := (ts % WindowSize)
-	atomic.StoreUint64(&d.buckets[idx][0], 0)
+func (d *ContinuationDetector) rotate(last, now int64) {
+	diff := now - last
+	if diff >= WindowSize {
+		for i := 0; i < WindowSize; i++ {
+			val := atomic.SwapUint64(&d.buckets[i].count, 0)
+			if val > 0 {
+				d.totalCount.Add(^uint64(val - 1))
+			}
+		}
+		return
+	}
+
+	for i := int64(1); i <= diff; i++ {
+		idx := (last + i) % WindowSize
+		val := atomic.SwapUint64(&d.buckets[idx].count, 0)
+		if val > 0 {
+			d.totalCount.Add(^uint64(val - 1))
+		}
+	}
 }
