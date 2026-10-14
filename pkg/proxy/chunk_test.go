@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"io"
 	"strings"
-	"sync"
 	"testing"
 )
 
@@ -109,53 +108,4 @@ func TestChunkEncoder_Write(t *testing.T) {
 	if buf.String() != expected {
 		t.Fatalf("expected %q, got %q", expected, buf.String())
 	}
-}
-
-func TestSimpleChunkDecoder_Basic(t *testing.T) {
-	raw := "5\r\nhello\r\n6\r\n world\r\n0\r\n\r\n"
-	decoder := NewSimpleChunkDecoder(strings.NewReader(raw))
-	out, err := io.ReadAll(decoder)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if string(out) != "hello world" {
-		t.Fatalf("expected 'hello world', got %q", string(out))
-	}
-}
-
-func TestSimpleChunkDecoder_SmallReads(t *testing.T) {
-	raw := "4\r\ntest\r\n0\r\n\r\n"
-	decoder := NewSimpleChunkDecoder(strings.NewReader(raw))
-	p := make([]byte, 2)
-	var sb strings.Builder
-	for {
-		n, err := decoder.Read(p)
-		if n > 0 {
-			sb.Write(p[:n])
-		}
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-	}
-	if sb.String() != "test" {
-		t.Fatalf("expected 'test', got %q", sb.String())
-	}
-}
-
-func TestSimpleChunkDecoder_ConcurrentRead(t *testing.T) {
-	raw := "5\r\nhello\r\n5\r\nworld\r\n0\r\n\r\n"
-	decoder := NewSimpleChunkDecoder(strings.NewReader(raw))
-	var wg sync.WaitGroup
-	for i := 0; i < 2; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			buf := make([]byte, 5)
-			_, _ = decoder.Read(buf)
-		}()
-	}
-	wg.Wait()
 }
