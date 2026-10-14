@@ -5,7 +5,7 @@ import (
 	"errors"
 )
 
-const MaxFrameSize = 10 * 1024 * 1024 // 10MB limit to prevent DoS
+const MaxFrameSize = 10 * 1024 * 1024
 
 type Frame struct {
 	Fin     bool
@@ -15,6 +15,9 @@ type Frame struct {
 }
 
 func Mask(payload []byte, maskKey []byte) {
+	if len(maskKey) < 4 {
+		return
+	}
 	for i := 0; i < len(payload); i++ {
 		payload[i] ^= maskKey[i%4]
 	}
@@ -56,7 +59,7 @@ func ParseFrame(data []byte) (*Frame, int, error) {
 	if len(data) < offset+payloadLen {
 		return nil, 0, errors.New("short payload")
 	}
-	payload := GetBuffer()[:payloadLen]
+	payload := GetBufferBySize(payloadLen)[:payloadLen]
 	copy(payload, data[offset:offset+payloadLen])
 	if masked {
 		Mask(payload, maskKey)

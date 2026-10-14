@@ -36,14 +36,15 @@ func TestAssembler(t *testing.T) {
 }
 
 func TestAssemblerConcurrent(t *testing.T) {
-	a := NewAssembler()
 	var wg sync.WaitGroup
 	for i := 0; i < 10; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			// Simulate fragmented stream
-			_, _ = a.Add(&Frame{Fin: false, Payload: GetBuffer()[:10]})
+			a := NewAssembler() // Each stream needs its own assembler
+			buf := GetBufferBySize(10)
+			_, _ = a.Add(&Frame{Fin: true, Payload: buf})
+			PutBuffer(buf)
 		}()
 	}
 	wg.Wait()

@@ -6,7 +6,7 @@ import (
 )
 
 // Assembler manages the reassembly of fragmented WebSocket frames.
-// It uses a mutex to protect state and a pooled buffer for zero-allocation reassembly.
+// It uses a mutex to protect state and a pooled buffer for reassembly.
 type Assembler struct {
 	mu        sync.Mutex
 	fragments [][]byte
@@ -26,7 +26,7 @@ func (a *Assembler) Add(f *Frame) ([]byte, error) {
 
 	if len(a.fragments) == 0 {
 		a.opcode = f.Opcode
-	} else if f.Opcode != 0 && f.Opcode != 0x00 {
+	} else if f.Opcode != 0x00 {
 		return nil, errors.New("invalid opcode in continuation frame")
 	}
 
@@ -34,7 +34,7 @@ func (a *Assembler) Add(f *Frame) ([]byte, error) {
 	a.totalLen += len(f.Payload)
 
 	if f.Fin {
-		full := GetBuffer()[:a.totalLen]
+		full := GetBufferBySize(a.totalLen)[:a.totalLen]
 		off := 0
 		for _, p := range a.fragments {
 			copy(full[off:], p)

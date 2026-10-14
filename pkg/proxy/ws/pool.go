@@ -2,18 +2,22 @@ package ws
 
 import "sync"
 
-var frameBufferPool = sync.Pool{
-	New: func() interface{} {
-		return make([]byte, 65536)
-	},
-}
+var (
+	smallPool = sync.Pool{New: func() interface{} { return make([]byte, 4096) }}
+	largePool = sync.Pool{New: func() interface{} { return make([]byte, 65536) }}
+)
 
-func GetBuffer() []byte {
-	return frameBufferPool.Get().([]byte)
+func GetBufferBySize(size int) []byte {
+	if size <= 4096 {
+		return smallPool.Get().([]byte)
+	}
+	return largePool.Get().([]byte)
 }
 
 func PutBuffer(b []byte) {
 	if cap(b) >= 65536 {
-		frameBufferPool.Put(b)
+		largePool.Put(b)
+	} else if cap(b) >= 4096 {
+		smallPool.Put(b)
 	}
 }
