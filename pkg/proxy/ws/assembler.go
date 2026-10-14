@@ -1,15 +1,13 @@
 package ws
 
 import (
-	"sync/atomic"
+	"sync"
 )
 
-type CacheLinePad [8]uint64
-
 type Assembler struct {
+	mu        sync.Mutex
 	fragments [][]byte
-	active    atomic.Uint64
-	padding   CacheLinePad
+	totalLen  int
 }
 
 func NewAssembler() *Assembler {
@@ -17,20 +15,21 @@ func NewAssembler() *Assembler {
 }
 
 func (a *Assembler) Add(f *Frame) []byte {
-	a.active.Add(1)
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
 	a.fragments = append(a.fragments, f.Payload)
+	a.totalLen += len(f.Payload)
+
 	if f.Fin {
-		var total int
-		for _, p := range a.fragments {
-			total += len(p)
-		}
-		full := make([]byte, total)
+		full := make([]byte, a.totalLen)
 		off := 0
 		for _, p := range a.fragments {
 			copy(full[off:], p)
 			off += len(p)
 		}
 		a.fragments = nil
+		a.totalLen = 0
 		return full
 	}
 	return nil

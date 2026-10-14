@@ -5,6 +5,8 @@ import (
 	"errors"
 )
 
+const MaxFrameSize = 10 * 1024 * 1024 // 10MB limit to prevent DoS
+
 type Frame struct {
 	Fin     bool
 	Opcode  byte
@@ -40,6 +42,9 @@ func ParseFrame(data []byte) (*Frame, int, error) {
 		payloadLen = int(binary.BigEndian.Uint64(data[2:10]))
 		offset = 10
 	}
+	if payloadLen > MaxFrameSize {
+		return nil, 0, errors.New("payload too large")
+	}
 	var maskKey []byte
 	if masked {
 		if len(data) < offset+4 {
@@ -51,7 +56,7 @@ func ParseFrame(data []byte) (*Frame, int, error) {
 	if len(data) < offset+payloadLen {
 		return nil, 0, errors.New("short payload")
 	}
-	payload := make([]byte, payloadLen)
+	payload := GetBuffer()[:payloadLen]
 	copy(payload, data[offset:offset+payloadLen])
 	if masked {
 		Mask(payload, maskKey)
