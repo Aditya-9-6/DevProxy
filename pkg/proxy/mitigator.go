@@ -5,13 +5,13 @@ import (
 	"time"
 )
 
-// CacheLinePad prevents false sharing by padding atomic counters to 64 bytes.
-type CacheLinePad [8]uint64
+// MitigatorPad prevents false sharing by padding atomic counters to 64 bytes.
+type MitigatorPad [8]uint64
 
 // Mitigator tracks socket states using lock-free atomic counters.
 type Mitigator struct {
-	ActiveConnections   CacheLinePad
-	SlowLorisViolations CacheLinePad
+	ActiveConnections   MitigatorPad
+	SlowLorisViolations MitigatorPad
 	ReadDeadline        atomic.Int64
 }
 
