@@ -1,6 +1,7 @@
 package ws
 
 import (
+	"bytes"
 	"sync"
 	"testing"
 )
@@ -9,9 +10,9 @@ func TestAssembler(t *testing.T) {
 	tests := []struct {
 		name     string
 		frames   []*Frame
-		expected string
+		expected []byte
 	}{
-		{"simple", []*Frame{{Fin: false, Payload: []byte("hello ")}, {Fin: true, Payload: []byte("world")}}, "hello world"},
+		{"simple", []*Frame{{Fin: false, Payload: []byte("hello ")}, {Fin: true, Payload: []byte("world")}}, []byte("hello world")},
 	}
 
 	for _, tt := range tests {
@@ -19,10 +20,16 @@ func TestAssembler(t *testing.T) {
 			a := NewAssembler()
 			var res []byte
 			for _, f := range tt.frames {
-				res = a.Add(f)
+				val, _ := a.Add(f)
+				if val != nil {
+					res = val
+				}
 			}
-			if string(res) != tt.expected {
+			if !bytes.Equal(res, tt.expected) {
 				t.Errorf("expected %s, got %s", tt.expected, string(res))
+			}
+			if res != nil {
+				PutBuffer(res)
 			}
 		})
 	}
@@ -35,7 +42,8 @@ func TestAssemblerConcurrent(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_ = a.Add(&Frame{Fin: false, Payload: []byte("a")})
+			// Simulate fragmented stream
+			_, _ = a.Add(&Frame{Fin: false, Payload: GetBuffer()[:10]})
 		}()
 	}
 	wg.Wait()
