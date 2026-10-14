@@ -1,18 +1,19 @@
 package waf
 
 import (
-	"sync"
+	"sync/atomic"
 	"time"
 )
 
-// TokenBucket implements a thread-safe rate limiter using a mutex.
-// It provides a standard token bucket algorithm for traffic shaping.
+// TokenBucket implements a lock-free, cache-aligned rate limiter using atomic CAS operations.
+// It provides a high-performance token bucket algorithm for traffic shaping.
 type TokenBucket struct {
-	mu       sync.Mutex
+	_        [56]byte // Padding for cache-line alignment
 	capacity uint64
 	refillNs uint64
 	tokens   uint64
 	last     uint64
+	_        [56]byte // Padding for cache-line alignment
 }
 
 // NewTokenBucket creates a new rate limiter. If ratePerSec is 0, it defaults to 1.
@@ -28,31 +29,39 @@ func NewTokenBucket(ratePerSec uint64, burst uint64) *TokenBucket {
 	}
 }
 
-// Allow attempts to consume a token. Returns true if allowed.
+// Allow attempts to consume a token using atomic CAS. Returns true if allowed.
 func (tb *TokenBucket) Allow() bool {
-	tb.mu.Lock()
-	defer tb.mu.Unlock()
+	for {
+		now := uint64(time.Now().UnixNano())
+		last := atomic.LoadUint64(&tb.last)
+		tokens := atomic.LoadUint64(&tb.tokens)
 
-	now := uint64(time.Now().UnixNano())
-	if now < tb.last {
-		now = tb.last // Handle clock drift
-	}
-
-	elapsed := now - tb.last
-	refill := elapsed / tb.refillNs
-
-	if refill > 0 {
-		tb.tokens += refill
-		if tb.tokens > tb.capacity {
-			tb.tokens = tb.capacity
+		if now < last {
+			now = last
 		}
-		tb.last = now - (elapsed % tb.refillNs)
-	}
 
-	if tb.tokens == 0 {
-		return false
-	}
+		elapsed := now - last
+		refill := elapsed / tb.refillNs
 
-	tb.tokens--
-	return true
+		newTokens := tokens
+		if refill > 0 {
+			newTokens += refill
+			if newTokens > tb.capacity {
+				newTokens = tb.capacity
+			}
+		}
+
+		if newTokens == 0 {
+			return false
+		}
+
+		newTokens--
+		newLast := now - (elapsed % tb.refillNs)
+
+		// Attempt atomic update
+		if atomic.CompareAndSwapUint64(&tb.tokens, tokens, newTokens) {
+			atomic.StoreUint64(&tb.last, newLast)
+			return true
+		}
+	}
 }
