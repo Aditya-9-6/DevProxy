@@ -6,17 +6,18 @@ import (
 
 const (
 	WindowSize = 1024
-	CacheLine  = 64
 )
 
-type CacheLinePad [8]uint64
-
 type WindowEstimator struct {
-	_          [CacheLine]byte
+	_          [64]byte
 	timestamps [WindowSize]atomic.Uint64
-	_          [CacheLine]byte
+	_          [64]byte
+	runningSum atomic.Uint64
+	_          [64]byte
+	count      atomic.Uint64
+	_          [64]byte
 	cursor     atomic.Uint64
-	_          [CacheLine]byte
+	_          [64]byte
 }
 
 func NewWindowEstimator() *WindowEstimator {
@@ -25,22 +26,22 @@ func NewWindowEstimator() *WindowEstimator {
 
 func (e *WindowEstimator) RecordRTT(rttNs uint64) {
 	idx := e.cursor.Add(1) % WindowSize
-	e.timestamps[idx].Store(rttNs)
+	old := e.timestamps[idx].Swap(rttNs)
+
+	if old == 0 {
+		e.count.Add(1)
+	} else {
+		e.runningSum.Add(^uint64(old - 1))
+	}
+	e.runningSum.Add(rttNs)
 }
 
 func (e *WindowEstimator) EstimateCWND() uint64 {
-	var total uint64
-	var count uint64
-	for i := 0; i < WindowSize; i++ {
-		val := e.timestamps[i].Load()
-		if val > 0 {
-			total += val
-			count++
-		}
-	}
+	count := e.count.Load()
 	if count == 0 {
 		return 10
 	}
-	avg := total / count
+	sum := e.runningSum.Load()
+	avg := sum / count
 	return 1000000 / (avg/1000 + 1)
 }
