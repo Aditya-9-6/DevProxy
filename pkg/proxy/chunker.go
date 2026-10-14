@@ -71,12 +71,13 @@ func (d *ChunkDecoder) Read(p []byte) (int, error) {
 			return 0, err
 		}
 
-		// Discard trailing \r\n
-		_, err = d.r.Discard(2)
-		if err != nil {
+		// Verify and discard trailing \r\n
+		cr, err := d.r.ReadByte()
+		lf, err2 := d.r.ReadByte()
+		if err != nil || err2 != nil || cr != '\r' || lf != '\n' {
 			chunkBufferPool.Put(buf)
-			d.err = err
-			return 0, err
+			d.err = io.ErrUnexpectedEOF
+			return 0, d.err
 		}
 
 		d.activeBuf = buf
