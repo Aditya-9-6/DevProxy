@@ -1,16 +1,16 @@
 package waf
 
 import (
-	"github.com/Aditya-9-6/DevProxy/pkg/common"
+	"github.com/Aditya-9-6/DevProxy/pkg/internal/align"
 	"math"
 	"sync/atomic"
 )
 
 // EntropyScanner computes Shannon entropy using a thread-safe histogram.
 type EntropyScanner struct {
-	_         common.CacheLinePad
+	_         align.CacheLinePad
 	histogram [256]atomic.Uint64
-	_         common.CacheLinePad
+	_         align.CacheLinePad
 }
 
 // Reset clears the histogram for a new scan.
@@ -46,4 +46,10 @@ func (s *EntropyScanner) Calculate() float64 {
 		}
 	}
 	return entropy
+}
+
+// IsPredictable checks if a cookie value has suspiciously low entropy.
+func IsPredictable(entropy float64) bool {
+	// Threshold for session token predictability
+	return entropy < 2.5
 }
