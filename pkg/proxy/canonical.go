@@ -1,12 +1,13 @@
 package proxy
 
 import (
+	"github.com/Aditya-9-6/DevProxy/pkg/internal/align"
 	"sync/atomic"
 	"unsafe"
 )
 
 // CacheLinePad prevents false sharing by padding structures to 64 bytes.
-type CacheLinePad [8]uint64
+type CacheLinePad = align.CacheLinePad
 
 // CanonicalHeaderRule defines a rule to rewrite or canonicalize response headers.
 type CanonicalHeaderRule struct {
