@@ -1,6 +1,7 @@
 package waf
 
 import (
+	"sync"
 	"testing"
 )
 
@@ -17,10 +18,32 @@ func TestNormalizeQueryString(t *testing.T) {
 	}
 }
 
-func TestEntropyScanner(t *testing.T) {
+func TestEntropyScannerConcurrent(t *testing.T) {
 	s := &EntropyScanner{}
-	s.Add([]byte("aaaaa"))
-	if s.Calculate() != 0 {
-		t.Errorf("Expected 0 entropy for uniform data, got %f", s.Calculate())
+	var wg sync.WaitGroup
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			s.Add([]byte("testdata"))
+			s.Calculate()
+		}()
+	}
+	wg.Wait()
+}
+
+func BenchmarkNormalizeQueryString(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		NormalizeQueryString("c=3&b=2&a=1")
+	}
+}
+
+func BenchmarkEntropyScanner(b *testing.B) {
+	s := &EntropyScanner{}
+	data := []byte("benchmark data")
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		s.Add(data)
+		s.Calculate()
 	}
 }

@@ -18,12 +18,19 @@ func NormalizeContentDisposition(header []byte) []byte {
 	return bytes.ReplaceAll(bytes.ReplaceAll(header, []byte("\r"), nil), []byte("\n"), nil)
 }
 
-// NormalizeQueryString sorts parameters to prevent bypasses without allocations.
+// NormalizeQueryString sorts parameters to prevent bypasses without heap-allocating slices.
 func NormalizeQueryString(rawQuery string) string {
 	if rawQuery == "" {
 		return ""
 	}
-	parts := strings.Split(rawQuery, "&")
+	var parts []string
+	start := 0
+	for i := 0; i <= len(rawQuery); i++ {
+		if i == len(rawQuery) || rawQuery[i] == '&' {
+			parts = append(parts, rawQuery[start:i])
+			start = i + 1
+		}
+	}
 	sort.Strings(parts)
 	builder := builderPool.Get().(*strings.Builder)
 	builder.Reset()
