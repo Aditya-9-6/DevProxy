@@ -14,9 +14,12 @@ type StreamWeight struct {
 
 // Scheduler manages fair-share bandwidth allocation for HTTP/2 streams using a Max-Heap.
 // This implementation uses a RWMutex for thread-safe access to the underlying heap.
+// Cache-line padding is included to prevent false sharing on the mutex.
 type Scheduler struct {
+	_       [56]byte
 	mu      sync.RWMutex
 	streams streamHeap
+	_       [56]byte
 }
 
 type streamHeap []*StreamWeight
