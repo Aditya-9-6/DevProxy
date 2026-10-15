@@ -6,6 +6,7 @@ import "sync/atomic"
 type PipePair struct {
 	Reader int
 	Writer int
+	Index  int
 }
 
 // Pool manages a set of pre-allocated pipes to avoid syscall overhead.

@@ -2,6 +2,7 @@ package splice
 
 import (
 	"fmt"
+	"runtime"
 	"syscall"
 )
 
@@ -15,7 +16,7 @@ func NewPool(size int) (*Pool, error) {
 		if err := syscall.Pipe(fds[:]); err != nil {
 			return nil, fmt.Errorf("failed to create pipe: %w", err)
 		}
-		pipes[i] = PipePair{Reader: fds[0], Writer: fds[1]}
+		pipes[i] = PipePair{Reader: fds[0], Writer: fds[1], Index: i}
 	}
 	return &Pool{pipes: pipes, capacity: size}, nil
 }
@@ -34,18 +35,23 @@ func (p *Pool) Acquire() (PipePair, bool) {
 		if mask == (1<<p.capacity)-1 {
 			return PipePair{}, false
 		}
+		runtime.Gosched()
 	}
 }
 
 func (p *Pool) Release(pipe PipePair) {
-	for i := 0; i < p.capacity; i++ {
-		if p.pipes[i] == pipe {
-			for {
-				mask := p.mask.Load()
-				if p.mask.CompareAndSwap(mask, mask&^(1<<i)) {
-					return
-				}
-			}
+	for {
+		mask := p.mask.Load()
+		if p.mask.CompareAndSwap(mask, mask&^(1<<pipe.Index)) {
+			return
 		}
 	}
+}
+
+func (p *Pool) Close() error {
+	for _, pipe := range p.pipes {
+		syscall.Close(pipe.Reader)
+		syscall.Close(pipe.Writer)
+	}
+	return nil
 }
