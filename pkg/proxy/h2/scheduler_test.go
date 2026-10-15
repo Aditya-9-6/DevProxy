@@ -20,3 +20,10 @@ func TestScheduler_FairShare(t *testing.T) {
 		t.Errorf("Expected stream 0 (weight 50) to be selected after update, got %d", idx)
 	}
 }
+
+func TestScheduler_Empty(t *testing.T) {
+	s := NewScheduler()
+	if idx := s.SelectStream(); idx != -1 {
+		t.Errorf("Expected -1 for empty scheduler, got %d", idx)
+	}
+}
