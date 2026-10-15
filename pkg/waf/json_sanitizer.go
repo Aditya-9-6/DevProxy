@@ -2,6 +2,7 @@ package waf
 
 import (
 	"bytes"
+	"io"
 	"sync/atomic"
 )
 
@@ -16,42 +17,40 @@ func NewSanitizer() *Sanitizer {
 }
 
 // SanitizeStream processes a JSON stream, redacting sensitive fields defined in paths.
-// It uses a zero-allocation streaming approach to avoid heap pressure.
-func (s *Sanitizer) SanitizeStream(input []byte, sensitiveFields [][]byte) []byte {
-	buf := GetBuffer()
-	defer PutBuffer(buf)
-
-	// Simple streaming scanner for key-value pairs
-	// This avoids full unmarshaling and heap allocations
-	output := make([]byte, 0, len(input))
-
+// It uses an io.Writer to stream output directly, avoiding heap allocations.
+func (s *Sanitizer) SanitizeStream(w io.Writer, input []byte, sensitiveFields [][]byte) error {
+	// Use a simple state machine to track if we are inside a key
+	// This is a simplified tokenizer for JSON key-value pairs
 	for i := 0; i < len(input); i++ {
 		found := false
 		for _, field := range sensitiveFields {
 			if bytes.HasPrefix(input[i:], field) {
-				// Found sensitive key, skip to value and redact
+				// Write key
+				w.Write(field)
 				i += len(field)
-				output = append(output, field...)
 
-				// Find value start
+				// Skip whitespace and find colon
 				for i < len(input) && input[i] != ':' {
 					i++
 				}
-				output = append(output, ':')
+				w.Write([]byte(":"))
 
 				// Redact value
-				output = append(output, " \"REDACTED\""...)
+				w.Write([]byte(" \"REDACTED\""))
+
+				// Skip original value
 				for i < len(input) && input[i] != ',' && input[i] != '}' {
 					i++
 				}
+				i-- // Adjust for loop increment
 				s.RedactionCount.Add(1)
 				found = true
 				break
 			}
 		}
 		if !found {
-			output = append(output, input[i])
+			w.Write(input[i : i+1])
 		}
 	}
-	return output
+	return nil
 }
