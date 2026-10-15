@@ -49,6 +49,7 @@ func (s *Sequencer) PopReady() *SegmentBuffer {
 					s.expectedSeq.Add(1)
 					return curr
 				}
+				break
 			}
 			prev = curr
 			curr = curr.Next
