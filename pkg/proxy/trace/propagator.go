@@ -42,7 +42,8 @@ func (p *Propagator) WriteTraceParent(w io.Writer, traceID [16]byte) error {
 
 	var spanBytes [8]byte
 	for i := 0; i < 8; i++ {
-		spanBytes[i] = byte(spanID >> (56 - i*8))
+		shift := uint(56 - i*8)
+		spanBytes[i] = uint8((spanID >> shift) & 0xFF)
 	}
 	hex.Encode(buf[36:52], spanBytes[:])
 	buf[52] = '-'
