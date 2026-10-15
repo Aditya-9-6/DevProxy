@@ -24,8 +24,9 @@ func TestGenerateTraceParent(t *testing.T) {
 				t.Fatalf("unexpected error: %v", err)
 			}
 			val := buf.String()
-			if len(val) != 55 {
-				t.Errorf("expected length 55, got %d", len(val))
+			guidLen := len(val)
+			if guidLen != 55 {
+				t.Errorf("expected length 55, got %d", guidLen)
 			}
 		})
 	}
