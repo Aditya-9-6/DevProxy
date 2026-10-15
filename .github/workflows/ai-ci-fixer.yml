@@ -130,14 +130,19 @@ jobs:
           git config --global user.name "Aditya Dahale"
           git config --global user.email "aditya-9-6@users.noreply.github.com"
           
-          if git diff --quiet && git diff --staged --quiet; then
+          ORIGIN_SHA=$(git rev-parse "origin/$HEAD_REF" 2>/dev/null || echo "")
+          CURRENT_SHA=$(git rev-parse HEAD)
+
+          if git diff --quiet && git diff --staged --quiet && [ "$CURRENT_SHA" = "$ORIGIN_SHA" ]; then
             echo "No changes needed or produced."
             echo "has_changes=false" >> $GITHUB_ENV
           else
-            git rm --cached -f ai_pr_*.md ai_review_*.json ci_fix_*.md 2>/dev/null || true
-            git add -A
-            git reset -- ai_pr_*.md ai_review_*.json ci_fix_*.md 2>/dev/null || true
-            git commit -m "fix(ci): autonomous repair & conflict resolution for PR #${PR_NUM}" -m "Co-authored-by: Aditya Dahale <aditya-9-6@users.noreply.github.com>"
+            if ! git diff --quiet || ! git diff --staged --quiet; then
+              git rm --cached -f ai_pr_*.md ai_review_*.json ci_fix_*.md 2>/dev/null || true
+              git add -A
+              git reset -- ai_pr_*.md ai_review_*.json ci_fix_*.md 2>/dev/null || true
+              git commit -m "fix(ci): autonomous repair & conflict resolution for PR #${PR_NUM}" -m "Co-authored-by: Aditya Dahale <aditya-9-6@users.noreply.github.com>" || true
+            fi
             git remote set-url origin "https://x-access-token:${AUTH_TOKEN}@github.com/${{ github.repository }}.git"
             git push origin "$HEAD_REF" || {
               echo "App push failed (possibly due to workflow permissions). Falling back to GITHUB_TOKEN..."
