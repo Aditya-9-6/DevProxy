@@ -1,17 +1,10 @@
 package proxy
 
 import (
-	"github.com/Aditya-9-6/DevProxy/pkg/common"
 	"sync/atomic"
 	"time"
 )
 
-<<<<<<< HEAD
-// Mitigator tracks socket states using lock-free atomic counters.
-type Mitigator struct {
-	ActiveConnections   common.CacheLinePad
-	SlowLorisViolations common.CacheLinePad
-=======
 // MitigationPad prevents false sharing by padding atomic counters to 64 bytes.
 type MitigationPad [8]uint64
 
@@ -19,7 +12,6 @@ type MitigationPad [8]uint64
 type Mitigator struct {
 	ActiveConnections   MitigationPad
 	SlowLorisViolations MitigationPad
->>>>>>> origin/main
 	ReadDeadline        atomic.Int64
 }
 
