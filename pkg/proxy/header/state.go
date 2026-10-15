@@ -1,46 +1,53 @@
 package header
 
 import (
+	"sync"
 	"sync/atomic"
 )
 
-const CacheLineSize = 64
+const ShardCount = 32
 
 type HeaderBlob struct {
 	Data []byte
 	Refs atomic.Int64
 }
 
+var blobPool = sync.Pool{
+	New: func() interface{} {
+		return &HeaderBlob{}
+	},
+}
+
 type StateMachine struct {
-	_        [CacheLineSize]byte
-	registry atomic.Pointer[map[uint64]*HeaderBlob]
-	_        [CacheLineSize]byte
+	shards [ShardCount]*sync.Map
 }
 
 func NewStateMachine() *StateMachine {
 	s := &StateMachine{}
-	s.registry.Store(&map[uint64]*HeaderBlob{})
+	for i := 0; i < ShardCount; i++ {
+		s.shards[i] = &sync.Map{}
+	}
 	return s
 }
 
+func (s *StateMachine) getShard(hash uint64) *sync.Map {
+	return s.shards[hash%ShardCount]
+}
+
 func (s *StateMachine) GetOrStore(hash uint64, data []byte) *HeaderBlob {
-	for {
-		reg := s.registry.Load()
-		if blob, ok := (*reg)[hash]; ok {
-			return blob
-		}
-
-		newBlob := &HeaderBlob{Data: data}
-		newBlob.Refs.Store(1)
-
-		newReg := make(map[uint64]*HeaderBlob, len(*reg)+1)
-		for k, v := range *reg {
-			newReg[k] = v
-		}
-		newReg[hash] = newBlob
-
-		if s.registry.CompareAndSwap(reg, &newReg) {
-			return newBlob
-		}
+	shard := s.getShard(hash)
+	if val, ok := shard.Load(hash); ok {
+		return val.(*HeaderBlob)
 	}
+
+	newBlob := blobPool.Get().(*HeaderBlob)
+	newBlob.Data = data
+	newBlob.Refs.Store(1)
+
+	actual, loaded := shard.LoadOrStore(hash, newBlob)
+	if loaded {
+		blobPool.Put(newBlob)
+		return actual.(*HeaderBlob)
+	}
+	return newBlob
 }
