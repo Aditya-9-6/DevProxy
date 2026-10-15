@@ -5,20 +5,20 @@ import (
 	"time"
 )
 
-// TokenBucket implements a thread-safe, lock-free token bucket using atomic fields.
+// TokenBucketV2 implements a thread-safe, lock-free token bucket using atomic fields.
 // Padding is used to prevent false sharing on cache lines.
-type TokenBucket struct {
-	_          [8]uint64
+type TokenBucketV2 struct {
+	_          CacheLinePad
 	capacity   uint64
 	refillRate uint64
-	_          [8]uint64
+	_          CacheLinePad
 	tokens     atomic.Uint64
 	lastRefill atomic.Int64
-	_          [8]uint64
+	_          CacheLinePad
 }
 
-func NewTokenBucket(capacity, refillRate uint64) *TokenBucket {
-	b := &TokenBucket{
+func NewTokenBucketV2(capacity, refillRate uint64) *TokenBucketV2 {
+	b := &TokenBucketV2{
 		capacity:   capacity,
 		refillRate: refillRate,
 	}
@@ -27,7 +27,7 @@ func NewTokenBucket(capacity, refillRate uint64) *TokenBucket {
 	return b
 }
 
-func (b *TokenBucket) Allow() bool {
+func (b *TokenBucketV2) Allow() bool {
 	for {
 		now := time.Now().UnixNano()
 		last := b.lastRefill.Load()

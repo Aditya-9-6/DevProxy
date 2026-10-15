@@ -5,8 +5,8 @@ import (
 	"testing"
 )
 
-func TestTokenBucket(t *testing.T) {
-	b := NewTokenBucket(10, 1000)
+func TestTokenBucket_Basic(t *testing.T) {
+	b := NewTokenBucketV2(10, 1000)
 	for i := 0; i < 10; i++ {
 		if !b.Allow() {
 			t.Errorf("expected allow at index %d", i)
@@ -18,7 +18,7 @@ func TestTokenBucket(t *testing.T) {
 }
 
 func TestTokenBucketConcurrent(t *testing.T) {
-	b := NewTokenBucket(1000, 10000)
+	b := NewTokenBucketV2(1000, 10000)
 	var wg sync.WaitGroup
 	wg.Add(10)
 	for i := 0; i < 10; i++ {
