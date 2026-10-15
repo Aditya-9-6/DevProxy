@@ -8,7 +8,7 @@ var BufferPool = sync.Pool{
 	},
 }
 
-// Renamed internal buffer pool or consolidated to avoid redeclaration with json_sanitizer.go
+// wafAltBufferPool is used for smaller operations to reduce memory overhead.
 var wafAltBufferPool = sync.Pool{
 	New: func() interface{} {
 		return make([]byte, 4096)

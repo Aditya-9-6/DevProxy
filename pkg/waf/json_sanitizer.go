@@ -2,15 +2,8 @@ package waf
 
 import (
 	"bytes"
-	"sync"
 	"sync/atomic"
 )
-
-var bufferPool = sync.Pool{
-	New: func() interface{} {
-		return make([]byte, 64*1024)
-	},
-}
 
 // Sanitizer tracks redaction state using cache-line padded atomic counters.
 type Sanitizer struct {
@@ -25,8 +18,8 @@ func NewSanitizer() *Sanitizer {
 // SanitizeStream processes a JSON stream, redacting sensitive fields defined in paths.
 // It uses a zero-allocation streaming approach to avoid heap pressure.
 func (s *Sanitizer) SanitizeStream(input []byte, sensitiveFields [][]byte) []byte {
-	buf := bufferPool.Get().([]byte)
-	defer bufferPool.Put(buf)
+	buf := GetBuffer()
+	defer PutBuffer(buf)
 
 	// Simple streaming scanner for key-value pairs
 	// This avoids full unmarshaling and heap allocations
