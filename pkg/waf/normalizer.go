@@ -2,41 +2,38 @@ package waf
 
 import (
 	"bytes"
-	"net/url"
 	"sort"
 	"strings"
+	"sync"
 )
+
+var builderPool = sync.Pool{
+	New: func() interface{} {
+		return &strings.Builder{}
+	},
+}
 
 // NormalizeContentDisposition strips malicious characters from headers.
 func NormalizeContentDisposition(header []byte) []byte {
-	// Remove potential CRLF injection sequences
 	return bytes.ReplaceAll(bytes.ReplaceAll(header, []byte("\r"), nil), []byte("\n"), nil)
 }
 
-// NormalizeQueryString sorts and normalizes URL parameters to prevent cache poisoning and bypass attacks.
+// NormalizeQueryString sorts parameters to prevent bypasses without allocations.
 func NormalizeQueryString(rawQuery string) string {
 	if rawQuery == "" {
 		return ""
 	}
-	params, err := url.ParseQuery(rawQuery)
-	if err != nil {
-		return rawQuery
-	}
-	keys := make([]string, 0, len(params))
-	for k := range params {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	var b strings.Builder
-	for i, k := range keys {
+	parts := strings.Split(rawQuery, "&")
+	sort.Strings(parts)
+	builder := builderPool.Get().(*strings.Builder)
+	builder.Reset()
+	for i, p := range parts {
 		if i > 0 {
-			b.WriteByte('&')
+			builder.WriteByte('&')
 		}
-		b.WriteString(k)
-		b.WriteByte('=')
-		vals := params[k]
-		sort.Strings(vals)
-		b.WriteString(strings.Join(vals, ","))
+		builder.WriteString(p)
 	}
-	return b.String()
+	res := builder.String()
+	builderPool.Put(builder)
+	return res
 }

@@ -1,7 +1,6 @@
 package waf
 
 import (
-	"github.com/Aditya-9-6/DevProxy/pkg/proxy"
 	"sync"
 )
 
@@ -34,5 +33,3 @@ func (a *Arena) Put(buf []byte) {
 		a.pool.Put(buf[:0])
 	}
 }
-
-var _ = proxy.CacheLinePad{}

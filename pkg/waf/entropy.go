@@ -1,14 +1,16 @@
 package waf
 
 import (
-	"github.com/Aditya-9-6/DevProxy/pkg/proxy"
+	"github.com/Aditya-9-6/DevProxy/pkg/common"
 	"math"
 	"sync/atomic"
 )
 
 // EntropyScanner computes Shannon entropy using a lock-free atomic histogram.
 type EntropyScanner struct {
+	_         common.CacheLinePad
 	histogram [256]atomic.Uint64
+	_         common.CacheLinePad
 }
 
 // Reset clears the histogram for a new scan.
@@ -44,5 +46,3 @@ func (s *EntropyScanner) Calculate() float64 {
 	}
 	return entropy
 }
-
-var _ = proxy.CacheLinePad{}
