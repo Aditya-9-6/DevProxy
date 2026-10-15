@@ -1,6 +1,8 @@
 package upstream
 
 import (
+	"context"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -16,21 +18,45 @@ type LatencyWindow struct {
 	cachedAvg   atomic.Uint64
 	cachedCount atomic.Uint64
 	_           [56]byte // Padding
+	cancel      context.CancelFunc
+	wg          sync.WaitGroup
 }
 
 // NewLatencyWindow creates and initializes a LatencyWindow, starting a background stats updater.
-func NewLatencyWindow() *LatencyWindow {
-	lw := &LatencyWindow{}
-	// Initialize background stats refresh
-	go lw.backgroundStatsLoop()
+func NewLatencyWindow(ctx context.Context, interval time.Duration) *LatencyWindow {
+	ctx, cancel := context.WithCancel(ctx)
+	lw := &LatencyWindow{
+		cancel: cancel,
+	}
+
+	if interval <= 0 {
+		interval = 50 * time.Millisecond
+	}
+
+	lw.wg.Add(1)
+	go lw.backgroundStatsLoop(ctx, interval)
 	return lw
 }
 
-func (lw *LatencyWindow) backgroundStatsLoop() {
-	ticker := time.NewTicker(50 * time.Millisecond)
+// Close terminates the background stats loop and waits for it to exit.
+func (lw *LatencyWindow) Close() {
+	if lw.cancel != nil {
+		lw.cancel()
+	}
+	lw.wg.Wait()
+}
+
+func (lw *LatencyWindow) backgroundStatsLoop(ctx context.Context, interval time.Duration) {
+	defer lw.wg.Done()
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
-	for range ticker.C {
-		lw.RefreshStats()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			lw.RefreshStats()
+		}
 	}
 }
 

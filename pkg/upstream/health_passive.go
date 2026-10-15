@@ -1,6 +1,7 @@
 package upstream
 
 import (
+	"context"
 	"sync/atomic"
 	"time"
 )
@@ -21,9 +22,19 @@ type PassiveMonitor struct {
 }
 
 func NewPassiveMonitor(thresholdMs uint64) *PassiveMonitor {
+	return NewPassiveMonitorWithContext(context.Background(), thresholdMs, 50*time.Millisecond)
+}
+
+func NewPassiveMonitorWithContext(ctx context.Context, thresholdMs uint64, interval time.Duration) *PassiveMonitor {
 	return &PassiveMonitor{
-		window:      NewLatencyWindow(),
+		window:      NewLatencyWindow(ctx, interval),
 		thresholdMs: thresholdMs,
+	}
+}
+
+func (pm *PassiveMonitor) Close() {
+	if pm.window != nil {
+		pm.window.Close()
 	}
 }
 

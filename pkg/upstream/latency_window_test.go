@@ -1,13 +1,19 @@
 package upstream
 
 import (
+	"context"
 	"sync"
 	"testing"
 	"time"
 )
 
 func TestLatencyWindow(t *testing.T) {
-	lw := NewLatencyWindow()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	lw := NewLatencyWindow(ctx, 10*time.Millisecond)
+	defer lw.Close()
+
 	lw.Record(10)
 	lw.Record(20)
 
@@ -26,7 +32,12 @@ func TestLatencyWindow(t *testing.T) {
 }
 
 func TestLatencyWindow_Concurrent(t *testing.T) {
-	lw := NewLatencyWindow()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	lw := NewLatencyWindow(ctx, 10*time.Millisecond)
+	defer lw.Close()
+
 	var wg sync.WaitGroup
 	for i := 0; i < 10; i++ {
 		wg.Add(1)
@@ -41,8 +52,23 @@ func TestLatencyWindow_Concurrent(t *testing.T) {
 	wg.Wait()
 }
 
+func TestLatencyWindow_LifecycleShutdown(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	lw := NewLatencyWindow(ctx, 5*time.Millisecond)
+
+	// Record some values
+	lw.Record(50)
+
+	// Close via context and explicit Close method
+	cancel()
+	lw.Close()
+
+	// Verify no goroutine leak (test passing without hanging is proof)
+}
+
 func TestPassiveMonitor_HealthStateTransition(t *testing.T) {
 	pm := NewPassiveMonitor(50) // threshold 50ms
+	defer pm.Close()
 
 	// Initially healthy
 	if !pm.IsHealthy() {
