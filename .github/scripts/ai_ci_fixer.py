@@ -300,7 +300,7 @@ def call_ai_model(prompt: str, system_prompt: str = SYSTEM_PROMPT) -> dict:
 
     raise RuntimeError("All AI model providers (Gemini, NVIDIA NIM, OpenRouter) exhausted without successful response.")
 
-def detect_and_resolve_conflicts(workspace: Path) -> list[str]:
+def detect_and_resolve_conflicts(workspace: Path, user_instructions: str = "") -> list[str]:
     """Detects Git conflict markers and uses AI to resolve them cleanly."""
     conflicted_files = set()
     try:
@@ -341,6 +341,7 @@ def detect_and_resolve_conflicts(workspace: Path) -> list[str]:
             continue
 
         print(f"[*] Resolving Git merge conflicts in {rel_path} via AI...", flush=True)
+        user_inst_block = f"\n=== USER SPECIFIC INSTRUCTIONS ===\n{user_instructions}\nYou MUST follow these instructions while resolving the conflict.\n" if user_instructions else ""
         prompt = f"""Resolve the Git merge conflicts in `{rel_path}`.
 
 CRITICAL INSTRUCTIONS:
@@ -349,7 +350,7 @@ CRITICAL INSTRUCTIONS:
 3. Completely remove all conflict markers (`<<<<<<< HEAD`, `=======`, `>>>>>>> ...`).
 4. Ensure the resulting file is 100% syntactically valid Go.
 5. Return the COMPLETE, entire resolved file content in the JSON schema.
-
+{user_inst_block}
 === CONFLICTED FILE: {rel_path} ===
 {conflicted_text}
 """
@@ -454,14 +455,16 @@ def run_diagnostics(workspace: Path, pr_number: str = "") -> tuple[int, str]:
         combined = (test_res.stdout + "\n" + test_res.stderr).strip()
         out_lines.append(combined)
 
-    # Check remote GitHub CI failures if available
-    if pr_number:
+    local_errors = bool(out_lines)
+
+    # Check remote GitHub CI failures as extra diagnostic context only if local tests failed
+    if pr_number and local_errors:
         remote_ci = fetch_remote_ci_errors(pr_number, workspace)
         if remote_ci:
             out_lines.append(remote_ci)
 
     combined_output = "\n".join(out_lines).strip()
-    total_exit = 0 if not combined_output else 1
+    total_exit = 1 if local_errors else 0
     return total_exit, combined_output
 
 def extract_referenced_files(error_log: str, workspace: Path) -> list[str]:
@@ -508,20 +511,53 @@ def get_pr_diff(workspace: Path) -> str:
         pass
     return "No git diff available."
 
+def extract_instructions_from_pr(pr_number: str, workspace: Path) -> str:
+    """Extracts custom user instructions from the latest /fix comment on the PR."""
+    try:
+        res = subprocess.run([
+            "gh", "pr", "view", pr_number, "--json", "comments"
+        ], cwd=workspace, capture_output=True, text=True, encoding="utf-8")
+        if res.returncode == 0 and res.stdout:
+            data = json.loads(res.stdout)
+            comments = data.get("comments", [])
+            for c in reversed(comments):
+                body = c.get("body", "")
+                if "/fix" in body:
+                    m = re.search(r'/fix[:\s-]*(.*)', body, re.DOTALL | re.IGNORECASE)
+                    if m and m.group(1).strip():
+                        return m.group(1).strip()
+    except Exception as e:
+        print(f"[*] Warning: Could not extract comments from PR #{pr_number}: {e}", file=sys.stderr)
+    return ""
+
 def main():
     parser = argparse.ArgumentParser(description="DevProxy Autonomous CI Auto-Fixer & Merge Conflict Resolver")
     parser.add_argument("--pr-number", required=True, help="GitHub Pull Request Number")
     parser.add_argument("--workspace", default=".", help="Workspace root directory")
     parser.add_argument("--error-log-file", default="", help="Optional pre-captured error log file")
     parser.add_argument("--review-feedback-file", default="", help="Optional reviewer feedback markdown file")
+    parser.add_argument("--user-instructions", default="", help="Optional user instructions from comment or workflow dispatch")
+    parser.add_argument("--user-instructions-file", default="", help="Optional file containing user instructions")
     parser.add_argument("--max-iterations", type=int, default=6, help="Maximum self-healing loop passes (default: 6)")
     args = parser.parse_args()
 
     workspace = Path(args.workspace).resolve()
     print(f"[*] Starting Autonomous CI Fixer & Conflict Resolver for PR #{args.pr_number} in {workspace}...")
 
+    # Load any user instructions (CLI, file, or automatically from PR comments)
+    user_instructions = args.user_instructions.strip()
+    if args.user_instructions_file and Path(args.user_instructions_file).is_file():
+        file_inst = Path(args.user_instructions_file).read_text(encoding="utf-8").strip()
+        if file_inst:
+            user_instructions = f"{user_instructions}\n{file_inst}".strip() if user_instructions else file_inst
+    if not user_instructions:
+        user_instructions = extract_instructions_from_pr(args.pr_number, workspace)
+
+    if user_instructions:
+        print(f"[*] 🗣️ User Instructions detected & applied:\n{user_instructions}", flush=True)
+
     # Phase 0: Resolve any merge conflicts first
-    conflicts_resolved = detect_and_resolve_conflicts(workspace)
+    conflicts_resolved = detect_and_resolve_conflicts(workspace, user_instructions=user_instructions)
     if conflicts_resolved:
         print(f"[OK] Automatically resolved merge conflicts in: {conflicts_resolved}", flush=True)
 
@@ -581,11 +617,13 @@ Your goal: Refactor the code to resolve all architectural review action items wh
             prompt_header = f"""Pull Request #{args.pr_number} has failing Go tests or compiler errors (Pass {iteration}/{max_iterations}).
 Your goal: Fix all compiler errors and broken tests so that 'go test -v ./...' passes 100% GREEN."""
 
+        user_inst_block = f"\n=== USER GUIDANCE & SPECIFIC INSTRUCTIONS ===\n{user_instructions}\nStrictly adhere to and implement these instructions.\n" if user_instructions else ""
+
         prompt = f"""{prompt_header}
 
 === CI DIAGNOSTIC ERROR LOG ===
 {error_log[:15000] if error_log else "None (compilation clean). Focus on architectural review feedback."}
-
+{user_inst_block}
 {f"=== ARCHITECTURAL REVIEW FEEDBACK ==={chr(10)}{review_feedback[:10000]}" if review_feedback else ""}
 
 === CURRENT GIT DIFF ===
@@ -651,12 +689,13 @@ Instructions:
     else:
         status_label = "⚠️ **CHECKS STILL REPORTING ERRORS**"
 
+    user_inst_section = f"\n### 🗣️ User Instructions Addressed\n> {user_instructions}\n" if user_instructions else ""
     summary_file = workspace / "ci_fix_summary.md"
     summary_content = f"""## 🛠️ Autonomous CI Test Fixer Report (DevProxy Go)
 
 **Target**: Pull Request #{args.pr_number}
 **Status**: {status_label}
-
+{user_inst_section}
 ### 📋 Resolution Summary
 {latest_summary or "CI diagnostics analyzed."}
 
