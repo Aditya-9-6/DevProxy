@@ -399,33 +399,88 @@ CRITICAL INSTRUCTIONS:
     return resolved
 
 def fetch_remote_ci_errors(pr_number: str, workspace: Path) -> str:
-    """Fetches failed GitHub Actions logs for this PR if available."""
+    """Fetches failed GitHub Actions logs and check annotations for this PR if available."""
+    ci_reports = []
     try:
-        head_ref = ""
-        pr_view = subprocess.run(["gh", "pr", "view", pr_number, "--json", "headRefName"], cwd=workspace, capture_output=True, text=True)
+        # 1. Inspect statusCheckRollup to find all failing checks, security scans, and matrix jobs
+        pr_view = subprocess.run(
+            ["gh", "pr", "view", pr_number, "--json", "headRefName,statusCheckRollup"],
+            cwd=workspace, capture_output=True, text=True
+        )
         if pr_view.returncode == 0:
-            head_ref = json.loads(pr_view.stdout).get("headRefName", "")
+            pr_data = json.loads(pr_view.stdout)
+            checks = pr_data.get("statusCheckRollup", [])
+            for c in checks:
+                name = c.get("name", "Unknown Check")
+                conclusion = (c.get("conclusion") or c.get("state") or "").upper()
+                if conclusion in ("FAILURE", "TIMED_OUT", "STARTUP_FAILURE"):
+                    url = c.get("detailsUrl", "")
+                    print(f"[*] Identified failing CI check: {name} (URL: {url})", flush=True)
 
-        cmd = ["gh", "run", "list", "--limit", "10", "--json", "databaseId,conclusion,name,headBranch"]
-        if head_ref:
-            cmd.extend(["-b", head_ref])
+                    # Extract check run ID (e.g., https://github.com/owner/repo/runs/123456)
+                    match_cr = re.search(r'/runs/(\d+)$', url)
+                    if match_cr:
+                        cr_id = match_cr.group(1)
+                        ann_res = subprocess.run(
+                            ["gh", "api", f"/repos/:owner/:repo/check-runs/{cr_id}/annotations"],
+                            cwd=workspace, capture_output=True, text=True
+                        )
+                        if ann_res.returncode == 0 and ann_res.stdout.strip():
+                            try:
+                                anns = json.loads(ann_res.stdout)
+                                for a in anns:
+                                    ci_reports.append(
+                                        f"=== SECURITY / LINT ALERT: {name} ===\n"
+                                        f"File: {a.get('path')}:{a.get('start_line')}\n"
+                                        f"Title: {a.get('title')}\n"
+                                        f"Message: {a.get('message')}\n"
+                                    )
+                            except Exception:
+                                pass
 
-        res = subprocess.run(cmd, cwd=workspace, capture_output=True, text=True)
-        if res.returncode == 0:
-            data = json.loads(res.stdout)
-            for run in data:
-                if run.get("conclusion") in ("failure", "timed_out", "startup_failure"):
-                    run_id = str(run.get("databaseId"))
-                    print(f"[*] Found failed GitHub Actions run {run_id} ({run.get('name')}). Fetching failed logs...", flush=True)
-                    log_res = subprocess.run(
-                        ["gh", "run", "view", "--log-failed", run_id],
-                        cwd=workspace, capture_output=True, text=True
-                    )
-                    if log_res.stdout.strip():
-                        return f"=== GITHUB ACTIONS FAILED RUN ({run.get('name')} #{run_id}) ===\n" + log_res.stdout.strip()[:15000]
+                    # Extract job ID (e.g., /actions/runs/123/job/456)
+                    match_job = re.search(r'/job/(\d+)', url)
+                    if match_job:
+                        job_id = match_job.group(1)
+                        job_log = subprocess.run(
+                            ["gh", "run", "view", "--job", job_id, "--log-failed"],
+                            cwd=workspace, capture_output=True, text=True
+                        )
+                        if job_log.stdout.strip():
+                            ci_reports.append(
+                                f"=== FAILED CI JOB ({name} [Job #{job_id}]) ===\n"
+                                + job_log.stdout.strip()[:8000]
+                            )
+
+        # 2. Fallback: check recent workflow runs for this branch if no specific job logs captured
+        if not ci_reports:
+            head_ref = ""
+            if pr_view.returncode == 0:
+                head_ref = json.loads(pr_view.stdout).get("headRefName", "")
+            cmd = ["gh", "run", "list", "--limit", "10", "--json", "databaseId,conclusion,name,headBranch"]
+            if head_ref:
+                cmd.extend(["-b", head_ref])
+            res = subprocess.run(cmd, cwd=workspace, capture_output=True, text=True)
+            if res.returncode == 0:
+                data = json.loads(res.stdout)
+                for run in data:
+                    if run.get("conclusion") in ("failure", "timed_out", "startup_failure"):
+                        run_id = str(run.get("databaseId"))
+                        print(f"[*] Found failed GitHub Actions run {run_id} ({run.get('name')}). Fetching failed logs...", flush=True)
+                        log_res = subprocess.run(
+                            ["gh", "run", "view", "--log-failed", run_id],
+                            cwd=workspace, capture_output=True, text=True
+                        )
+                        if log_res.stdout.strip():
+                            ci_reports.append(
+                                f"=== GITHUB ACTIONS FAILED RUN ({run.get('name')} #{run_id}) ===\n"
+                                + log_res.stdout.strip()[:10000]
+                            )
+                            break
     except Exception as e:
         print(f"[*] Note: Could not fetch remote CI logs via gh CLI: {e}", flush=True)
-    return ""
+
+    return "\n\n".join(ci_reports).strip()
 
 def run_diagnostics(workspace: Path, pr_number: str = "") -> tuple[int, str]:
     """Runs compiler and test suite, returning exit code and combined error output."""
@@ -464,14 +519,15 @@ def run_diagnostics(workspace: Path, pr_number: str = "") -> tuple[int, str]:
 
     local_errors = bool(out_lines)
 
-    # Check remote GitHub CI failures as extra diagnostic context only if local tests failed
-    if pr_number and local_errors:
+    # Always fetch remote GitHub CI failures and security alerts if pr_number is provided
+    remote_ci = ""
+    if pr_number:
         remote_ci = fetch_remote_ci_errors(pr_number, workspace)
         if remote_ci:
             out_lines.append(remote_ci)
 
     combined_output = "\n".join(out_lines).strip()
-    total_exit = 1 if local_errors else 0
+    total_exit = 1 if (local_errors or bool(remote_ci)) else 0
     return total_exit, combined_output
 
 def extract_referenced_files(error_log: str, workspace: Path) -> list[str]:
