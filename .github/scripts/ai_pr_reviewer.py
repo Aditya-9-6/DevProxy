@@ -25,7 +25,7 @@ FALLBACK_MODELS = [
     "gemini-3.5-flash",
     "gemini-3.7-flash",
     "gemini-3-flash-preview",
-    "gemini-2.5-pro",
+    "gemini-3.1-pro-preview",
 ]
 
 DEFAULT_KEYS = []
@@ -180,6 +180,121 @@ def call_gemini(api_key: str, prompt: str, fallback_key: str = "", model: str = 
 
     raise RuntimeError(f"Failed to obtain PR review from Gemini API. Last error: {last_err}")
 
+def extract_json_response(raw_text: str) -> dict:
+    """Extracts JSON object from model response, stripping markdown code blocks if present."""
+    raw_text = raw_text.strip()
+    try:
+        return json.loads(raw_text, strict=False)
+    except json.JSONDecodeError:
+        pass
+    if raw_text.startswith("```"):
+        lines = raw_text.splitlines()
+        if lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].startswith("```"):
+            lines = lines[:-1]
+        raw_text = "\n".join(lines).strip()
+        try:
+            return json.loads(raw_text, strict=False)
+        except json.JSONDecodeError:
+            pass
+    first_brace = raw_text.find("{")
+    last_brace = raw_text.rfind("}")
+    if first_brace != -1 and last_brace != -1 and last_brace > first_brace:
+        return json.loads(raw_text[first_brace:last_brace + 1], strict=False)
+    raise ValueError(f"Could not parse valid JSON from model response: {raw_text[:200]}")
+
+def call_openrouter(api_key: str, prompt: str) -> dict:
+    if not api_key:
+        raise ValueError("Missing OPENROUTER_API_KEY")
+    url = "https://openrouter.ai/api/v1/chat/completions"
+    models = ["deepseek/deepseek-chat", "meta-llama/llama-3.3-70b-instruct", "google/gemini-2.5-flash"]
+    last_err = None
+    for model in models:
+        print(f"[*] [OpenRouter] Reviewing with {model}...", flush=True)
+        payload = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": REVIEWER_SYSTEM_PROMPT},
+                {"role": "user", "content": prompt}
+            ],
+            "temperature": 0.2,
+            "response_format": {"type": "json_object"}
+        }
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            method="POST"
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                return extract_json_response(data["choices"][0]["message"]["content"])
+        except Exception as e:
+            print(f"[!] [OpenRouter] Model {model} failed: {e}", file=sys.stderr)
+            last_err = str(e)
+            continue
+    raise RuntimeError(f"OpenRouter calls failed: {last_err}")
+
+def call_nvidia_nim(api_key: str, prompt: str) -> dict:
+    if not api_key:
+        raise ValueError("Missing NVIDIA_API_KEY")
+    url = "https://integrate.api.nvidia.com/v1/chat/completions"
+    models = ["meta/llama-3.3-70b-instruct", "meta/llama-3.1-70b-instruct"]
+    last_err = None
+    for model in models:
+        print(f"[*] [NVIDIA NIM] Reviewing with {model}...", flush=True)
+        payload = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": REVIEWER_SYSTEM_PROMPT},
+                {"role": "user", "content": prompt}
+            ],
+            "temperature": 0.2,
+            "response_format": {"type": "json_object"}
+        }
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            method="POST"
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                return extract_json_response(data["choices"][0]["message"]["content"])
+        except Exception as e:
+            print(f"[!] [NVIDIA NIM] Model {model} failed: {e}", file=sys.stderr)
+            last_err = str(e)
+            continue
+    raise RuntimeError(f"NVIDIA NIM calls failed: {last_err}")
+
+def call_ai_reviewer(primary_key: str, prompt: str, fallback_key: str = "") -> dict:
+    # 1. Try Gemini
+    try:
+        return call_gemini(primary_key, prompt, fallback_key=fallback_key)
+    except Exception as e:
+        print(f"[!] Gemini reviewer attempt failed: {e}. Trying secondary providers...", file=sys.stderr)
+
+    # 2. Try NVIDIA NIM
+    for nv_key in [os.environ.get("NVIDIA_API_KEY", "").strip(), os.environ.get("NVIDIA_API_KEY_2", "").strip()]:
+        if nv_key:
+            try:
+                return call_nvidia_nim(nv_key, prompt)
+            except Exception as e:
+                print(f"[!] NVIDIA NIM reviewer failed: {e}", file=sys.stderr)
+
+    # 3. Try OpenRouter
+    openrouter_key = os.environ.get("OPENROUTER_API_KEY", "").strip()
+    if openrouter_key:
+        try:
+            return call_openrouter(openrouter_key, prompt)
+        except Exception as e:
+            print(f"[!] OpenRouter reviewer failed: {e}", file=sys.stderr)
+
+    raise RuntimeError("All AI model providers (Gemini, NVIDIA NIM, OpenRouter) exhausted for PR review.")
+
 def get_pr_diff(workspace: Path) -> str:
     """Gets git diff against origin/main."""
     try:
@@ -281,7 +396,7 @@ Audit the code against all anti-spaghetti, concurrency, performance, and securit
 """
 
     try:
-        audit = call_gemini(primary_key, prompt, fallback_key=fallback_key)
+        audit = call_ai_reviewer(primary_key, prompt, fallback_key=fallback_key)
     except Exception as e:
         print(f"[Warning] Gemini API review call failed: {e}", file=sys.stderr)
         review_md = f"""## ⏳ Autonomous Architectural Review: Temporarily Rate-Limited
