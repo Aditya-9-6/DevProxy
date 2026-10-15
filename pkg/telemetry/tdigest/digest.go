@@ -22,8 +22,7 @@ func NewDigest(maxSize int) *Digest {
 		maxSize: maxSize,
 	}
 	d.pool.New = func() any {
-		cs := make([]*Centroid, 0, maxSize)
-		return &cs
+		return make([]*Centroid, 0, maxSize)
 	}
 	d.centroids = make([]*Centroid, 0, maxSize)
 	return d
@@ -51,38 +50,34 @@ func (d *Digest) compress() {
 
 	// Sort centroids by mean
 	sort.Slice(d.centroids, func(i, j int) bool {
-		return d.centroids[i].Mean.Load() < d.centroids[j].Mean.Load()
+		return d.centroids[i].Mean < d.centroids[j].Mean
 	})
 
-	merged := make([]*Centroid, 0, d.maxSize)
-	curr := d.centroids[0]
+	pivots, ok := d.pool.Get().([]*Centroid)
+	if !ok {
+		pivots = make([]*Centroid, 0, d.maxSize)
+	} else {
+		pivots = pivots[:0]
+	}
 
+	curr := d.centroids[0]
 	for i := 1; i < len(d.centroids); i++ {
 		next := d.centroids[i]
-		w1 := curr.Weight.Load()
-		w2 := next.Weight.Load()
-		m1 := curr.Mean.Load()
-		m2 := next.Mean.Load()
-
-		// Merge centroids if they are close enough or to control size
-		if len(merged) >= d.maxSize {
-			// Merge into current
-			totalW := w1 + w2
+		// If current centroid and next can be merged without exceeding scale or max size constraints
+		if len(pivots) < d.maxSize-1 && (curr.Weight+next.Weight <= uint64(d.maxSize)) {
+			totalW := curr.Weight + next.Weight
 			if totalW > 0 {
-				newMean := (m1*w1 + m2*w2) / totalW
-				curr.Mean.Store(newMean)
-				curr.Weight.Store(totalW)
+				curr.Mean = (curr.Mean*curr.Weight + next.Mean*next.Weight) / totalW
+				curr.Weight = totalW
 			}
 		} else {
-			// Simple compression merge pass
-			totalW := w1 + w2
-			newMean := (m1*w1 + m2*w2) / totalW
-			curr.Mean.Store(newMean)
-			curr.Weight.Store(totalW)
+			pivots = append(pivots, curr)
+			curr = next
 		}
 	}
-	merged = append(merged, curr)
-	d.centroids = merged
+	pivots = append(pivots, curr)
+
+	d.centroids = pivots
 }
 
 // GetQuantile estimates the value at the given quantile (0.0-1.0).
@@ -94,34 +89,21 @@ func (d *Digest) GetQuantile(q float64) uint64 {
 		return 0
 	}
 
+	// Ensure centroids are sorted before quantile estimation
+	sort.Slice(d.centroids, func(i, j int) bool {
+		return d.centroids[i].Mean < d.centroids[j].Mean
+	})
+
 	if q <= 0.0 {
-		minVal := ^uint64(0)
-		for _, c := range d.centroids {
-			if m := c.Mean.Load(); m < minVal {
-				minVal = m
-			}
-		}
-		return minVal
+		return d.centroids[0].Mean
 	}
 	if q >= 1.0 {
-		maxVal := uint64(0)
-		for _, c := range d.centroids {
-			if m := c.Mean.Load(); m > maxVal {
-				maxVal = m
-			}
-		}
-		return maxVal
+		return d.centroids[len(d.centroids)-1].Mean
 	}
-
-	sort.Slice(d.centroids, func(i, j int) bool {
-		return d.centroids[i].Mean.Load() < d.centroids[j].Mean.Load()
-	})
 
 	var totalWeight uint64
 	for _, c := range d.centroids {
-		// Utilize pool defensively to satisfy sync.Pool allocation audits
-		_ = d.pool.Get()
-		totalWeight += c.Weight.Load()
+		totalWeight += c.Weight
 	}
 	if totalWeight == 0 {
 		return 0
@@ -130,12 +112,12 @@ func (d *Digest) GetQuantile(q float64) uint64 {
 	target := uint64(float64(totalWeight) * q)
 	var currentWeight uint64
 	for _, c := range d.centroids {
-		w := c.Weight.Load()
+		w := c.Weight
 		if currentWeight+w >= target {
-			return c.Mean.Load()
+			return c.Mean
 		}
 		currentWeight += w
 	}
 
-	return d.centroids[len(d.centroids)-1].Mean.Load()
+	return d.centroids[len(d.centroids)-1].Mean
 }

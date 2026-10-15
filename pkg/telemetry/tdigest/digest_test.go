@@ -7,7 +7,7 @@ import (
 
 func TestDigest_AddAndQuery(t *testing.T) {
 	d := NewDigest(100)
-	for i := uint64(1); i <= 100; i++ {
+	for i := uint64(1); i <= 1000; i++ {
 		d.Add(i)
 	}
 
