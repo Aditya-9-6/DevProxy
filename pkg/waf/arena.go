@@ -1,12 +1,8 @@
 package waf
 
 import (
-	"github.com/Aditya-9-6/DevProxy/pkg/internal/align"
 	"sync"
 )
-
-// CacheLinePad ensures cache line alignment to prevent false sharing.
-type CacheLinePad = align.CacheLinePad
 
 // Arena provides pre-allocated fixed memory buffers to guarantee zero GC overhead on the hot path.
 type Arena struct {
