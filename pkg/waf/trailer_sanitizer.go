@@ -1,46 +1,34 @@
 package waf
 
-import (
-	"bytes"
-	"sync"
-	"sync/atomic"
-)
+import "strings"
 
-// TrailerSanitizer inspects HTTP streams for smuggling and malformed chunks.
+// TrailerSanitizer inspects HTTP trailers for smuggling or injection attempts.
 type TrailerSanitizer struct {
-	AnomalyCount CacheLinePad
-	bufferPool   sync.Pool
+	anomalies int
 }
 
 func NewTrailerSanitizer() *TrailerSanitizer {
-	return &TrailerSanitizer{
-		bufferPool: sync.Pool{
-			New: func() interface{} {
-				return make([]byte, 32*1024)
-			},
-		},
-	}
+	return &TrailerSanitizer{}
 }
 
-// SanitizeChunk inspects a chunk for smuggling patterns or invalid boundaries.
 func (s *TrailerSanitizer) SanitizeChunk(chunk []byte) bool {
-	// Check for trailer-header smuggling: CRLF followed by header-like patterns
-	if bytes.Contains(chunk, []byte("\r\n\r\n")) || bytes.Contains(chunk, []byte("\r\nTransfer-Encoding:")) {
-		atomic.AddUint64(&s.AnomalyCount[0], 1)
+	content := string(chunk)
+	if strings.Contains(content, "Transfer-Encoding:") || strings.Contains(content, "Content-Length:") {
+		s.anomalies++
 		return false
 	}
 	return true
 }
 
-// ValidateTrailer inspects trailer headers for illegal characters or smuggling.
 func (s *TrailerSanitizer) ValidateTrailer(trailer []byte) bool {
-	if bytes.ContainsAny(trailer, "\r\n") {
-		atomic.AddUint64(&s.AnomalyCount[0], 1)
+	// Basic validation: trailers should not contain control characters or specific headers
+	content := string(trailer)
+	if strings.Contains(content, "\r\n\r\n") {
 		return false
 	}
 	return true
 }
 
-func (s *TrailerSanitizer) GetAnomalyCount() uint64 {
-	return atomic.LoadUint64(&s.AnomalyCount[0])
+func (s *TrailerSanitizer) GetAnomalyCount() int {
+	return s.anomalies
 }
