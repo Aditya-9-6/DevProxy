@@ -17,12 +17,12 @@ type StreamState struct {
 
 func NewStreamState(id uint32) *StreamState {
 	s := &StreamState{ID: id}
-	s.LastActivity[0] = uint64(time.Now().UnixNano())
+	atomic.StoreUint64(&s.LastActivity[0], uint64(time.Now().UnixNano()))
 	return s
 }
 
 func (s *StreamState) UpdateActivity() {
-	s.LastActivity[0] = uint64(time.Now().UnixNano())
+	atomic.StoreUint64(&s.LastActivity[0], uint64(time.Now().UnixNano()))
 }
 
 func (s *StreamState) GetIdleDuration() time.Duration {

@@ -18,6 +18,9 @@ func (b *LatencyBuckets) GetPercentile(p float64) uint64 {
 	for i := 0; i < 1000; i++ {
 		total += b.buckets[i].Load()
 	}
+	if total == 0 {
+		return 0
+	}
 	var count uint64
 	target := uint64(float64(total) * p)
 	for i := 0; i < 1000; i++ {
