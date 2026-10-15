@@ -4,9 +4,6 @@ import (
 	"sync"
 )
 
-// CacheLinePad ensures cache line alignment to prevent false sharing.
-type CacheLinePad [8]uint64
-
 // Arena provides pre-allocated fixed memory buffers to guarantee zero GC overhead on the hot path.
 type Arena struct {
 	pool       sync.Pool
