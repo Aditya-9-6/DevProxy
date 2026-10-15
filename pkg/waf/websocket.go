@@ -92,10 +92,8 @@ func DeframeAndScan(data []byte, scanner *SignatureScanner, state *FrameState) (
 }
 
 func applyMask(payload, mask []byte) {
-	if len(mask) < 4 {
-		return
-	}
-	for i := 0; i < len(payload); i++ {
+	dataLen := len(payload)
+	for i := 0; i < dataLen; i++ {
 		payload[i] ^= mask[i%4]
 	}
 }
