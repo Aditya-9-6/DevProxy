@@ -36,32 +36,36 @@ func (e *CookieEngine) Validate(cookieValue []byte) ([]byte, error) {
 	payloadPart := cookieValue[:idx]
 	sigPart := cookieValue[idx+1:]
 
-	payload := make([]byte, base64.RawURLEncoding.DecodedLen(len(payloadPart)))
-	n, err := base64.RawURLEncoding.Decode(payload, payloadPart)
-	if err != nil {
-		e.incrementFailures()
-		return nil, err
-	}
-	payload = payload[:n]
+	buf := GetBuffer()
+	defer PutBuffer(buf)
 
-	sig := make([]byte, hex.DecodedLen(len(sigPart)))
-	n, err = hex.Decode(sig, sigPart)
+	n, err := base64.RawURLEncoding.Decode(buf, payloadPart)
 	if err != nil {
 		e.incrementFailures()
 		return nil, err
 	}
-	sig = sig[:n]
+	payload := buf[:n]
+
+	sigBuf := GetBuffer()
+	defer PutBuffer(sigBuf)
+	n, err = hex.Decode(sigBuf, sigPart)
+	if err != nil {
+		e.incrementFailures()
+		return nil, err
+	}
 
 	mac := hmac.New(sha256.New, e.secretKey)
 	mac.Write(payload)
 	expectedSig := mac.Sum(nil)
 
-	if !hmac.Equal(sig, expectedSig) {
+	if !hmac.Equal(sigBuf[:n], expectedSig) {
 		e.incrementFailures()
 		return nil, ErrInvalidSignature
 	}
 
-	return payload, nil
+	result := make([]byte, len(payload))
+	copy(result, payload)
+	return result, nil
 }
 
 func (e *CookieEngine) incrementFailures() {

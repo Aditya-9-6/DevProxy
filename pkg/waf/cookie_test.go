@@ -58,3 +58,19 @@ func TestCookieEngine_Concurrency(t *testing.T) {
 		t.Errorf("Expected 100 failures, got %d", engine.GetFailureCount())
 	}
 }
+
+func BenchmarkCookieValidate(b *testing.B) {
+	secret := "super-secret-key"
+	engine := NewCookieEngine(secret)
+	payload := []byte("user_id=123")
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write(payload)
+	sig := hex.EncodeToString(mac.Sum(nil))
+	cookie := []byte(base64.RawURLEncoding.EncodeToString(payload) + "." + sig)
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = engine.Validate(cookie)
+	}
+}
