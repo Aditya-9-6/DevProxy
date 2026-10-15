@@ -26,17 +26,6 @@ func TestRangeValidator(t *testing.T) {
 	}
 }
 
-func TestRangeValidator_Persistence(t *testing.T) {
-	v := NewRangeValidator()
-	if !v.ValidateRangeHeader("bytes=0-10") {
-		t.Fatal("First request failed")
-	}
-	v.Reset()
-	if !v.ValidateRangeHeader("bytes=0-10") {
-		t.Fatal("Second request failed after reset")
-	}
-}
-
 func TestRangeValidator_Concurrency(t *testing.T) {
 	v := NewRangeValidator()
 	var wg sync.WaitGroup

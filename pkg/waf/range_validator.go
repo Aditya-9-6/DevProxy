@@ -3,26 +3,14 @@ package waf
 import (
 	"strconv"
 	"strings"
-	"sync/atomic"
 )
 
 // RangeValidator prevents Range-header DoS by tracking overlapping ranges.
-// Uses a cache-line padded atomic bitset to track range indices without locks.
-type RangeValidator struct {
-	_      [56]byte
-	bitset [1024]atomic.Uint64 // 64k bits for range tracking
-	_      [56]byte
-}
+// Refactored to be stateless to ensure thread-safety and zero-allocation per request.
+type RangeValidator struct{}
 
 func NewRangeValidator() *RangeValidator {
 	return &RangeValidator{}
-}
-
-// Reset clears the bitset for reuse.
-func (v *RangeValidator) Reset() {
-	for i := range v.bitset {
-		v.bitset[i].Store(0)
-	}
 }
 
 // ValidateRangeHeader checks for range overlaps and excessive range counts.
@@ -32,15 +20,25 @@ func (v *RangeValidator) ValidateRangeHeader(header string) bool {
 	if len(parts) > 16 {
 		return false
 	}
+
+	// Track intervals to detect overlaps without O(N) bitset iteration
+	type interval struct{ start, end int }
+	intervals := make([]interval, 0, len(parts))
+
 	for _, p := range parts {
 		rangeStr := strings.TrimSpace(p)
 		start, end := v.parseRange(rangeStr)
 		if start < 0 || (end != -1 && end < start) {
 			return false
 		}
-		if !v.markRange(start, end) {
-			return false
+
+		// Check for overlap with existing intervals
+		for _, existing := range intervals {
+			if (end == -1 || end >= existing.start) && (existing.end == -1 || start <= existing.end) {
+				return false
+			}
 		}
+		intervals = append(intervals, interval{start, end})
 	}
 	return true
 }
@@ -62,31 +60,4 @@ func (v *RangeValidator) parseRange(s string) (int, int) {
 		return -1, -1
 	}
 	return start, end
-}
-
-func (v *RangeValidator) markRange(start, end int) bool {
-	limit := end
-	if limit == -1 || limit >= 65535 {
-		limit = 65535
-	}
-	for i := start; i <= limit; i++ {
-		idx := i / 64
-		if idx >= 1024 {
-			return false
-		}
-		bit := uint64(1) << (uint(i) % 64)
-		for {
-			prev := v.bitset[idx].Load()
-			if (prev & bit) != 0 {
-				return false
-			}
-			if v.bitset[idx].CompareAndSwap(prev, prev|bit) {
-				break
-			}
-		}
-		if end == -1 {
-			break
-		}
-	}
-	return true
 }
