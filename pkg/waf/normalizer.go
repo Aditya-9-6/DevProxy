@@ -118,15 +118,17 @@ func resolvePathSegments(path []byte) []byte {
 		return []byte("/")
 	}
 
-	var buf bytes.Buffer
+	buf := GetBuffer()
+	defer PutBuffer(buf)
+	buf = buf[:0]
 	for _, s := range stack {
-		buf.WriteByte('/')
-		buf.Write(s)
+		buf = append(buf, '/')
+		buf = append(buf, s...)
 	}
 	if len(path) > 0 && path[len(path)-1] == '/' {
-		buf.WriteByte('/')
+		buf = append(buf, '/')
 	}
-	return buf.Bytes()
+	return append([]byte(nil), buf...)
 }
 
 // NormalizeQueryString sorts parameters to prevent bypasses without heap-allocating slices.

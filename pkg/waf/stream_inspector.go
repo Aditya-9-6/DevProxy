@@ -3,8 +3,13 @@ package waf
 import (
 	"context"
 	"io"
+	"sync"
 	"sync/atomic"
 )
+
+var BufferPool = sync.Pool{
+	New: func() interface{} { return make([]byte, 4096) },
+}
 
 type StreamInspector struct {
 	BlockedCount atomic.Uint64
