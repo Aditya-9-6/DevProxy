@@ -6,10 +6,20 @@ import (
 	"time"
 )
 
+<<<<<<< HEAD
 // Mitigator tracks socket states using lock-free atomic counters.
 type Mitigator struct {
 	ActiveConnections   align.CacheLinePad
 	SlowLorisViolations align.CacheLinePad
+=======
+// MitigationPad prevents false sharing by padding atomic counters to 64 bytes.
+type MitigationPad [8]uint64
+
+// Mitigator tracks socket states using lock-free atomic counters.
+type Mitigator struct {
+	ActiveConnections   MitigationPad
+	SlowLorisViolations MitigationPad
+>>>>>>> origin/main
 	ReadDeadline        atomic.Int64
 }
 
