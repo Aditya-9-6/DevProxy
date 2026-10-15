@@ -43,8 +43,10 @@ func TestAssemblerConcurrent(t *testing.T) {
 			defer wg.Done()
 			a := NewAssembler() // Each stream needs its own assembler
 			buf := GetBufferBySize(10)
-			_, _ = a.Add(&Frame{Fin: true, Payload: buf})
-			PutBuffer(buf)
+			res, _ := a.Add(&Frame{Fin: true, Payload: buf})
+			if res != nil {
+				PutBuffer(res)
+			}
 		}()
 	}
 	wg.Wait()
