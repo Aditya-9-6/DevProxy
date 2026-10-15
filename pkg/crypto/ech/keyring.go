@@ -7,7 +7,13 @@ type KeyRing struct {
 }
 
 func (k *KeyRing) Rotate(newKey []byte) {
-	k.activeKey.Store(&newKey)
+	if newKey == nil {
+		k.activeKey.Store(nil)
+		return
+	}
+	keyCopy := make([]byte, len(newKey))
+	copy(keyCopy, newKey)
+	k.activeKey.Store(&keyCopy)
 }
 
 func (k *KeyRing) Get() []byte {

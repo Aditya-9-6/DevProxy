@@ -6,10 +6,15 @@ import (
 
 type ECHHandler struct {
 	decryptor *ech.HPKEDecryptor
+	keyRing   *ech.KeyRing
 }
 
 func NewECHHandler() *ECHHandler {
-	return &ECHHandler{decryptor: ech.NewHPKEDecryptor()}
+	kr := &ech.KeyRing{}
+	return &ECHHandler{
+		keyRing:   kr,
+		decryptor: ech.NewHPKEDecryptor(kr),
+	}
 }
 
 func (h *ECHHandler) Handle(clientHello []byte) (string, error) {
@@ -17,6 +22,10 @@ func (h *ECHHandler) Handle(clientHello []byte) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	_, err = h.decryptor.Decrypt(ext)
-	return "decrypted-sni.example.com", err
+	plaintext, err := h.decryptor.Decrypt(ext)
+	if err != nil {
+		return "", err
+	}
+	// Return the decrypted plaintext (Inner ClientHello)
+	return string(plaintext), nil
 }
