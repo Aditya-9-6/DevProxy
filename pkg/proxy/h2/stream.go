@@ -10,9 +10,11 @@ type CacheLinePad [8]uint64
 
 // StreamState tracks the lifecycle of an HTTP/2 stream.
 type StreamState struct {
-	ID           uint32
-	LastActivity CacheLinePad
-	State        atomic.Uint32 // 0: Idle, 1: Open, 2: HalfClosed, 3: Closed
+	ID                uint32
+	LastActivity      CacheLinePad
+	State             atomic.Uint32 // 0: Idle, 1: Open, 2: HalfClosed, 3: Closed
+	HeaderBlockSize   atomic.Uint64
+	ContinuationCount atomic.Uint64
 }
 
 func NewStreamState(id uint32) *StreamState {
