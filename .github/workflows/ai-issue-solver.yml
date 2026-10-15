@@ -81,6 +81,7 @@ jobs:
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_SOLVER_KEY || secrets.GEMINI_API_KEY }}
           GEMINI_FALLBACK_KEY: ${{ secrets.GEMINI_REVIEWER_KEY || secrets.GEMINI_ISSUE_KEY }}
+          GEMINI_KEY_POOL: ${{ secrets.GEMINI_KEY_POOL || '' }}
           ISSUE_NUM: ${{ steps.meta.outputs.num }}
           ISSUE_TITLE: ${{ steps.meta.outputs.title }}
           GH_TOKEN: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}

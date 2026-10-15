@@ -4,9 +4,6 @@ import (
 	"sync/atomic"
 )
 
-// CacheLinePad prevents false sharing by padding atomic counters to 64 bytes.
-type CacheLinePad [8]uint64
-
 // WindowManager manages flow-control credits for QUIC streams.
 // It uses atomic operations to ensure lock-free updates to window sizes.
 type WindowManager struct {
