@@ -2,6 +2,7 @@ package waf
 
 import (
 	"sync"
+	"sync/atomic"
 	"testing"
 )
 
@@ -25,24 +26,60 @@ func TestParameterPollution(t *testing.T) {
 			t.Error("Expected case-insensitive pollution to fail")
 		}
 	})
+
+	t.Run("URLEncodedKeys", func(t *testing.T) {
+		if validator.ValidateQuery("%69d=123&id=456") {
+			t.Error("Expected URL-encoded key pollution to fail")
+		}
+	})
+
+	t.Run("MalformedAndSemicolonDelimiters", func(t *testing.T) {
+		if !validator.ValidateQuery("a=1;b=2") {
+			t.Error("Expected semicolon delimiter query to pass")
+		}
+		if validator.ValidateQuery("a=1;a=2") {
+			t.Error("Expected semicolon delimiter duplicate query to fail")
+		}
+	})
+
+	t.Run("EmptyAndSingleValues", func(t *testing.T) {
+		if !validator.ValidateQuery("") {
+			t.Error("Expected empty query to pass")
+		}
+		if !validator.ValidateQuery("solo") {
+			t.Error("Expected solo parameter key to pass")
+		}
+	})
 }
 
 func TestRecordParamUsageConcurrency(t *testing.T) {
 	validator := NewParameterValidator()
 	var wg sync.WaitGroup
-	for i := 0; i < 100; i++ {
+	routines := 50
+	iter := 100
+
+	for i := 0; i < routines; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			validator.RecordParamUsage("test")
+			for j := 0; j < iter; j++ {
+				validator.RecordParamUsage("test")
+			}
 		}()
 	}
 	wg.Wait()
+
+	idx := hashParam("test")
+	count := atomic.LoadUint64(&validator.Counters[idx][0])
+	expected := uint64(routines * iter)
+	if count != expected {
+		t.Errorf("Expected atomic counter to be %d, got %d", expected, count)
+	}
 }
 
 func BenchmarkParameterValidation(b *testing.B) {
 	validator := NewParameterValidator()
-	query := "id=123&name=test"
+	query := "id=123&name=test&user=admin"
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
