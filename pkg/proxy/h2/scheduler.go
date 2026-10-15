@@ -3,15 +3,12 @@ package h2
 import (
 	"container/heap"
 	"sync"
-	"sync/atomic"
 )
 
-// CacheLinePad prevents false sharing by padding atomic counters to 64 bytes.
-type CacheLinePad [8]uint64
-
 // StreamWeight tracks the relative priority of an HTTP/2 stream.
+// This struct is managed by the Scheduler and protected by its mutex.
 type StreamWeight struct {
-	Weight CacheLinePad
+	Weight uint64
 	index  int
 }
 
@@ -26,7 +23,7 @@ type streamHeap []*StreamWeight
 
 func (h streamHeap) Len() int { return len(h) }
 func (h streamHeap) Less(i, j int) bool {
-	return atomic.LoadUint64(&h[i].Weight[0]) > atomic.LoadUint64(&h[j].Weight[0])
+	return h[i].Weight > h[j].Weight
 }
 func (h streamHeap) Swap(i, j int) {
 	h[i], h[j] = h[j], h[i]
@@ -57,8 +54,7 @@ func NewScheduler() *Scheduler {
 
 // AddStream registers a new stream with an initial weight.
 func (s *Scheduler) AddStream(initialWeight uint64) *StreamWeight {
-	sw := &StreamWeight{}
-	sw.Weight[0] = initialWeight
+	sw := &StreamWeight{Weight: initialWeight}
 	s.mu.Lock()
 	heap.Push(&s.streams, sw)
 	s.mu.Unlock()
@@ -67,15 +63,15 @@ func (s *Scheduler) AddStream(initialWeight uint64) *StreamWeight {
 
 // UpdateWeight updates the stream weight and re-heaps the scheduler.
 func (sw *StreamWeight) UpdateWeight(s *Scheduler, newWeight uint64) {
-	atomic.StoreUint64(&sw.Weight[0], newWeight)
 	s.mu.Lock()
+	sw.Weight = newWeight
 	if sw.index >= 0 {
 		heap.Fix(&s.streams, sw.index)
 	}
 	s.mu.Unlock()
 }
 
-// SelectStream returns the index of the highest weight stream in O(log N).
+// SelectStream returns the index of the highest weight stream in O(1).
 func (s *Scheduler) SelectStream() int {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

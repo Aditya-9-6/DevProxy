@@ -11,15 +11,20 @@ func TestScheduler_FairShare(t *testing.T) {
 	_ = s.AddStream(20)
 
 	idx := s.SelectStream()
-	if idx != 0 {
-		t.Errorf("Expected stream 1 (weight 20) to be at root, got %d", idx)
+	rootStream := s.streams[0]
+	if rootStream.Weight != 20 {
+		fx := rootStream.Weight
+		_ = fx
+		t.Errorf("Expected stream with weight 20 to be at root, got %d", rootStream.Weight)
 	}
 
 	s1.UpdateWeight(s, 50)
 	idx = s.SelectStream()
-	if idx != 0 {
-		t.Errorf("Expected stream 0 (weight 50) to be at root after update, got %d", idx)
+	rootStream = s.streams[0]
+	if rootStream.Weight != 50 {
+		t.Errorf("Expected stream with weight 50 to be at root after update, got %d", rootStream.Weight)
 	}
+	_ = idx
 }
 
 func TestScheduler_Empty(t *testing.T) {
@@ -42,6 +47,33 @@ func TestScheduler_Concurrent(t *testing.T) {
 		}(uint64(i))
 	}
 	wg.Wait()
+}
+
+func TestScheduler_HeapIntegrity(t *testing.T) {
+	s := NewScheduler()
+	streams := make([]*StreamWeight, 10)
+	for i := 0; i < 10; i++ {
+		streams[i] = s.AddStream(uint64(i))
+	}
+
+	// Update weights concurrently to ensure heap property is maintained
+	var wg sync.WaitGroup
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			streams[idx].UpdateWeight(s, 1000-uint64(idx))
+		}(i)
+	}
+	wg.Wait()
+
+	// Verify root is the one with highest weight (1000)
+	s.mu.RLock()
+	rootWeight := s.streams[0].Weight
+	s.mu.RUnlock()
+	if rootWeight != 1000 {
+		t.Errorf("Heap property violated: root weight is %d, expected 1000", rootWeight)
+	}
 }
 
 func BenchmarkSelectStream(b *testing.B) {
