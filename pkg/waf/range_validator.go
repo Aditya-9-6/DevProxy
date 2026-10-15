@@ -27,7 +27,6 @@ func (v *RangeValidator) Reset() {
 
 // ValidateRangeHeader checks for range overlaps and excessive range counts.
 func (v *RangeValidator) ValidateRangeHeader(header string) bool {
-	// Strip prefix if present
 	header = strings.TrimPrefix(header, "bytes=")
 	parts := strings.Split(header, ",")
 	if len(parts) > 16 {
@@ -52,12 +51,14 @@ func (v *RangeValidator) parseRange(s string) (int, int) {
 		return -1, -1
 	}
 	start, err1 := strconv.Atoi(parts[0])
-	end := -1
-	var err2 error
-	if parts[1] != "" {
-		end, err2 = strconv.Atoi(parts[1])
+	if err1 != nil {
+		return -1, -1
 	}
-	if err1 != nil || (parts[1] != "" && err2 != nil) {
+	if parts[1] == "" {
+		return start, -1
+	}
+	end, err2 := strconv.Atoi(parts[1])
+	if err2 != nil {
 		return -1, -1
 	}
 	return start, end
