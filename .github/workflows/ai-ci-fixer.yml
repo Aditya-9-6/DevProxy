@@ -9,6 +9,11 @@ on:
         description: "Pull Request number to fix"
         required: true
         type: string
+      instructions:
+        description: "Optional custom instructions for the fixer agent"
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: write
@@ -41,6 +46,9 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
+          EVENT_NAME: ${{ github.event_name }}
+          COMMENT_BODY: ${{ github.event.comment.body || '' }}
+          DISPATCH_INSTRUCTIONS: ${{ github.event.inputs.instructions || '' }}
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             PR_NUM="${{ github.event.inputs.pr_number }}"
@@ -57,7 +65,31 @@ jobs:
           echo "head_ref=$HEAD_REF" >> $GITHUB_OUTPUT
           echo "title=$TITLE" >> $GITHUB_OUTPUT
 
-          gh pr comment "$PR_NUM" --body "🤖 **DevProxy CI Auto-Fixer & Conflict Resolver** is analyzing branch \`$HEAD_REF\` against latest \`main\`..."
+          python3 - << 'EOF'
+          import os, re
+          event_name = os.environ.get("EVENT_NAME", "")
+          comment_body = os.environ.get("COMMENT_BODY", "")
+          dispatch_inst = os.environ.get("DISPATCH_INSTRUCTIONS", "")
+          inst = ""
+          if event_name == "workflow_dispatch":
+              inst = dispatch_inst.strip()
+          else:
+              m = re.search(r'/fix[:\s-]*(.*)', comment_body, re.DOTALL | re.IGNORECASE)
+              if m:
+                  inst = m.group(1).strip()
+          temp_dir = os.environ.get("RUNNER_TEMP", "/tmp")
+          out_path = os.path.join(temp_dir, "user_instructions.txt")
+          with open(out_path, "w", encoding="utf-8") as f:
+              f.write(inst)
+          EOF
+
+          if [ -s "${{ runner.temp }}/user_instructions.txt" ]; then
+            USER_INST=$(cat "${{ runner.temp }}/user_instructions.txt")
+            gh pr comment "$PR_NUM" --body "🤖 **DevProxy CI Auto-Fixer & Conflict Resolver** is analyzing branch \`$HEAD_REF\` against latest \`main\` with user instructions:
+> $USER_INST"
+          else
+            gh pr comment "$PR_NUM" --body "🤖 **DevProxy CI Auto-Fixer & Conflict Resolver** is analyzing branch \`$HEAD_REF\` against latest \`main\`..."
+          fi
 
       - name: Checkout PR Branch
         uses: actions/checkout@v4
@@ -113,6 +145,7 @@ jobs:
           python3 .github/scripts/ai_ci_fixer.py \
             --pr-number "$PR_NUM" \
             --workspace . \
+            --user-instructions-file "${{ runner.temp }}/user_instructions.txt" \
             --max-iterations 10
 
       - name: Verify Go Compilation & Format
@@ -186,3 +219,13 @@ jobs:
           elif [ "$has_changes" = "true" ]; then
             gh pr comment "$PR_NUM" --body "✅ **CI Fix Applied!** Pushed commit \`$commit_sha\` to \`$HEAD_REF\` and re-triggered CI validation."
           fi
+
+      - name: Evaluate PR Auto-Merge Gate
+        if: always()
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUM: ${{ steps.meta.outputs.pr_num }}
+        run: |
+          echo "Evaluating if PR #$PR_NUM can be auto-merged immediately..."
+          python3 .github/scripts/auto_merge_pr.py --pr-number "$PR_NUM" || true
