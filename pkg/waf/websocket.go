@@ -30,15 +30,24 @@ func DeframeAndScan(data []byte, scanner *SignatureScanner, state *FrameState) (
 
 	offset := 2
 	if payloadLen == 126 {
+		if len(data) < offset+2 {
+			return nil, false
+		}
 		payloadLen = uint64(binary.BigEndian.Uint16(data[offset : offset+2]))
 		offset += 2
 	} else if payloadLen == 127 {
+		if len(data) < offset+8 {
+			return nil, false
+		}
 		payloadLen = binary.BigEndian.Uint64(data[offset : offset+8])
 		offset += 8
 	}
 
 	var maskKey []byte
 	if masked {
+		if len(data) < offset+4 {
+			return nil, false
+		}
 		maskKey = data[offset : offset+4]
 		offset += 4
 	}
@@ -51,7 +60,12 @@ func DeframeAndScan(data []byte, scanner *SignatureScanner, state *FrameState) (
 	var unmasked []byte
 
 	if masked {
-		unmasked = wsBufferPool.Get().([]byte)[:payloadLen]
+		buf := wsBufferPool.Get().([]byte)
+		if int(payloadLen) > len(buf) {
+			unmasked = make([]byte, payloadLen)
+		} else {
+			unmasked = buf[:payloadLen]
+		}
 		copy(unmasked, payload)
 		applyMask(unmasked, maskKey)
 	} else {
@@ -70,7 +84,10 @@ func DeframeAndScan(data []byte, scanner *SignatureScanner, state *FrameState) (
 }
 
 func applyMask(payload, mask []byte) {
-	maskUint32 := binary.LittleEndian.Uint32(mask)
+	if len(mask) < 4 {
+		return
+	}
+	maskUint32 := binary.BigEndian.Uint32(mask)
 	i := 0
 	for ; i+8 <= len(payload); i += 8 {
 		val := binary.LittleEndian.Uint64(payload[i:])
