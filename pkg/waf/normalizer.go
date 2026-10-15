@@ -7,11 +7,14 @@ import (
 	"sync"
 )
 
-var builderPool = sync.Pool{
-	New: func() interface{} {
-		return &strings.Builder{}
-	},
-}
+var (
+	builderPool = sync.Pool{
+		New: func() interface{} { return &strings.Builder{} },
+	}
+	slicePool = sync.Pool{
+		New: func() interface{} { return make([]string, 0, 16) },
+	}
+)
 
 // NormalizeContentDisposition strips malicious characters from headers.
 func NormalizeContentDisposition(header []byte) []byte {
@@ -23,11 +26,14 @@ func NormalizeQueryString(rawQuery string) string {
 	if rawQuery == "" {
 		return ""
 	}
-	var parts []string
+	parts := slicePool.Get().([]string)[:0]
 	start := 0
 	for i := 0; i <= len(rawQuery); i++ {
 		if i == len(rawQuery) || rawQuery[i] == '&' {
-			parts = append(parts, rawQuery[start:i])
+			segment := rawQuery[start:i]
+			if segment != "" {
+				parts = append(parts, segment)
+			}
 			start = i + 1
 		}
 	}
@@ -42,5 +48,6 @@ func NormalizeQueryString(rawQuery string) string {
 	}
 	res := builder.String()
 	builderPool.Put(builder)
+	slicePool.Put(parts)
 	return res
 }

@@ -9,7 +9,7 @@ func TestNormalizeQueryString(t *testing.T) {
 	tests := []struct {
 		input    string
 		expected string
-	}{{"b=2&a=1", "a=1&b=2"}, {"z=1&z=0", "z=0&z=1"}, {"", ""}, {"a=1", "a=1"}}
+	}{{"b=2&a=1", "a=1&b=2"}, {"z=1&z=0", "z=0&z=1"}, {"", ""}, {"a=1", "a=1"}, {"&&a=1&&b=2&", "a=1&b=2"}}
 	for _, tt := range tests {
 		got := NormalizeQueryString(tt.input)
 		if got != tt.expected {
