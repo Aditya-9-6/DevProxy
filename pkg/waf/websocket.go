@@ -87,14 +87,7 @@ func applyMask(payload, mask []byte) {
 	if len(mask) < 4 {
 		return
 	}
-	maskUint32 := binary.BigEndian.Uint32(mask)
-	i := 0
-	for ; i+8 <= len(payload); i += 8 {
-		val := binary.LittleEndian.Uint64(payload[i:])
-		mask8 := uint64(maskUint32) | (uint64(maskUint32) << 32)
-		binary.LittleEndian.PutUint64(payload[i:], val^mask8)
-	}
-	for ; i < len(payload); i++ {
+	for i := 0; i < len(payload); i++ {
 		payload[i] ^= mask[i%4]
 	}
 }
