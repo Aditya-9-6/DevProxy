@@ -164,6 +164,7 @@ jobs:
 
       - name: Commit and Push Fix
         if: steps.meta.outputs.skip != 'true'
+        id: push
         env:
           HEAD_REF: ${{ steps.meta.outputs.head_ref }}
           PR_NUM: ${{ steps.meta.outputs.pr_num }}
@@ -177,7 +178,8 @@ jobs:
 
           if git diff --quiet && git diff --staged --quiet && [ "$CURRENT_SHA" = "$ORIGIN_SHA" ]; then
             echo "No changes needed or produced."
-            echo "has_changes=false" >> $GITHUB_ENV
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+            echo "pushed=false" >> $GITHUB_OUTPUT
           else
             if ! git diff --quiet || ! git diff --staged --quiet; then
               git rm --cached -f ai_pr_*.md ai_review_*.json ci_fix_*.md 2>/dev/null || true
@@ -191,20 +193,21 @@ jobs:
               echo "App push failed. Falling back to GITHUB_TOKEN (with workflows: write)..."
               git remote set-url origin "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
               if ! git push origin "$HEAD_REF"; then
-                echo "push_failed=true" >> $GITHUB_ENV
-                echo "has_changes=false" >> $GITHUB_ENV
+                echo "push_failed=true" >> $GITHUB_OUTPUT
+                echo "has_changes=false" >> $GITHUB_OUTPUT
+                echo "pushed=false" >> $GITHUB_OUTPUT
                 echo "Error: Both push attempts were rejected."
                 exit 1
               fi
             fi
             COMMIT_SHA=$(git rev-parse --short HEAD)
-            echo "has_changes=true" >> $GITHUB_ENV
-            echo "pushed=true" >> $GITHUB_ENV
-            echo "commit_sha=$COMMIT_SHA" >> $GITHUB_ENV
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+            echo "pushed=true" >> $GITHUB_OUTPUT
+            echo "commit_sha=$COMMIT_SHA" >> $GITHUB_OUTPUT
           fi
 
       - name: Re-trigger CI Checks
-        if: always() && steps.meta.outputs.skip != 'true' && env.pushed == 'true'
+        if: always() && steps.meta.outputs.skip != 'true' && steps.push.outputs.pushed == 'true'
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
@@ -229,14 +232,18 @@ jobs:
           GH_REPO: ${{ github.repository }}
           PR_NUM: ${{ steps.meta.outputs.pr_num }}
           HEAD_REF: ${{ steps.meta.outputs.head_ref }}
+          HAS_CHANGES: ${{ steps.push.outputs.has_changes }}
+          PUSHED: ${{ steps.push.outputs.pushed }}
+          PUSH_FAILED: ${{ steps.push.outputs.push_failed }}
+          COMMIT_SHA: ${{ steps.push.outputs.commit_sha }}
         run: |
-          if [ "$has_changes" = "true" ] && [ "$pushed" = "true" ]; then
+          if [ "$HAS_CHANGES" = "true" ] && [ "$PUSHED" = "true" ]; then
             if [ -f "ci_fix_summary.md" ]; then
               gh pr comment "$PR_NUM" --body-file "ci_fix_summary.md"
             else
-              gh pr comment "$PR_NUM" --body "✅ **CI Fix Applied!** Pushed commit \`$commit_sha\` to \`$HEAD_REF\` and re-triggered CI validation."
+              gh pr comment "$PR_NUM" --body "✅ **CI Fix Applied!** Pushed commit \`$COMMIT_SHA\` to \`$HEAD_REF\` and re-triggered CI validation."
             fi
-          elif [ "$push_failed" = "true" ]; then
+          elif [ "$PUSH_FAILED" = "true" ]; then
             gh pr comment "$PR_NUM" --body "⚠️ **CI Auto-Fixer Warning**: Fix was generated locally, but git push to \`$HEAD_REF\` was rejected by GitHub (check workflow/branch permissions)."
           fi
 
