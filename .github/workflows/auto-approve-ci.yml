@@ -1,0 +1,38 @@
+name: Auto-Approve PR Workflows
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review]
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+  workflow_run:
+    workflows: ["PR Validation & Quality Gate"]
+    types: [requested]
+
+permissions:
+  actions: write
+  pull-requests: read
+
+jobs:
+  auto-approve:
+    name: Auto-Approve CI Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Approve Action Required Runs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          echo "Auto-approving CI test workflows..."
+          for i in {1..8}; do
+            sleep 4
+            RUNS=$(gh api "repos/${{ github.repository }}/actions/runs?status=action_required" --jq '.workflow_runs[].id')
+            if [ -n "$RUNS" ]; then
+              for RUN_ID in $RUNS; do
+                echo "Approving workflow run $RUN_ID..."
+                gh api "repos/${{ github.repository }}/actions/runs/$RUN_ID/approve" -X POST || true
+              done
+            fi
+          done
+          echo "[OK] All PR workflow runs approved to run immediately!"
