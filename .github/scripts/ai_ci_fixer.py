@@ -327,9 +327,17 @@ def detect_and_resolve_conflicts(workspace: Path) -> list[str]:
     for rel_path in sorted(list(conflicted_files)):
         target_file = workspace / rel_path
         if not target_file.is_file():
+            print(f"[*] Handling deleted/missing conflicted file {rel_path} by restoring from origin/main...", flush=True)
+            subprocess.run(["git", "checkout", "origin/main", "--", rel_path], cwd=workspace)
+            subprocess.run(["git", "add", rel_path], cwd=workspace)
+            resolved.append(rel_path)
             continue
         conflicted_text = target_file.read_text(encoding="utf-8", errors="replace")
         if "<<<<<<<" not in conflicted_text and ">>>>>>>" not in conflicted_text:
+            print(f"[*] Resolving non-marker conflict in {rel_path} by restoring from origin/main...", flush=True)
+            subprocess.run(["git", "checkout", "origin/main", "--", rel_path], cwd=workspace)
+            subprocess.run(["git", "add", rel_path], cwd=workspace)
+            resolved.append(rel_path)
             continue
 
         print(f"[*] Resolving Git merge conflicts in {rel_path} via AI...", flush=True)
@@ -350,11 +358,25 @@ CRITICAL INSTRUCTIONS:
             files = res.get("files", [])
             for f in files:
                 if f.get("content"):
-                    (workspace / f["path"].replace("\\", "/")).write_text(f["content"], encoding="utf-8")
+                    dest = workspace / f["path"].replace("\\", "/")
+                    dest.write_text(f["content"], encoding="utf-8")
+                    subprocess.run(["git", "add", f["path"].replace("\\", "/")], cwd=workspace)
                     resolved.append(rel_path)
                     print(f"    [+] Successfully resolved conflict in {rel_path}", flush=True)
         except Exception as e:
             print(f"[!] Conflict resolution failed for {rel_path}: {e}", file=sys.stderr)
+
+    # Resolve any remaining unmerged paths
+    try:
+        remaining_res = subprocess.run(["git", "diff", "--name-only", "--diff-filter=U"], cwd=workspace, capture_output=True, text=True)
+        remaining = [l.strip() for l in remaining_res.stdout.splitlines() if l.strip()]
+        for rem in remaining:
+            print(f"[*] Fallback: resolving remaining unmerged file {rem} using origin/main...", flush=True)
+            subprocess.run(["git", "checkout", "origin/main", "--", rem], cwd=workspace)
+            subprocess.run(["git", "add", rem], cwd=workspace)
+            resolved.append(rem)
+    except Exception:
+        pass
 
     if resolved:
         subprocess.run(["git", "add", "-A"], cwd=workspace)
@@ -371,10 +393,16 @@ CRITICAL INSTRUCTIONS:
 def fetch_remote_ci_errors(pr_number: str, workspace: Path) -> str:
     """Fetches failed GitHub Actions logs for this PR if available."""
     try:
-        res = subprocess.run(
-            ["gh", "run", "list", "--pr", pr_number, "--limit", "5", "--json", "databaseId,conclusion,name"],
-            cwd=workspace, capture_output=True, text=True
-        )
+        head_ref = ""
+        pr_view = subprocess.run(["gh", "pr", "view", pr_number, "--json", "headRefName"], cwd=workspace, capture_output=True, text=True)
+        if pr_view.returncode == 0:
+            head_ref = json.loads(pr_view.stdout).get("headRefName", "")
+
+        cmd = ["gh", "run", "list", "--limit", "10", "--json", "databaseId,conclusion,name,headBranch"]
+        if head_ref:
+            cmd.extend(["-b", head_ref])
+
+        res = subprocess.run(cmd, cwd=workspace, capture_output=True, text=True)
         if res.returncode == 0:
             data = json.loads(res.stdout)
             for run in data:
