@@ -22,7 +22,7 @@ type PassiveMonitor struct {
 
 func NewPassiveMonitor(thresholdMs uint64) *PassiveMonitor {
 	return &PassiveMonitor{
-		window:      &LatencyWindow{},
+		window:      NewLatencyWindow(),
 		thresholdMs: thresholdMs,
 	}
 }
@@ -31,8 +31,9 @@ func (pm *PassiveMonitor) Observe(start time.Time) {
 	duration := uint64(time.Since(start).Milliseconds())
 	pm.window.Record(duration)
 
-	avg, count := pm.window.GetStats()
-	if count > 10 && avg > pm.thresholdMs {
+	// Force refresh stats for immediate evaluation in tests/observers if needed
+	avg, count := pm.window.RefreshStats()
+	if count > 0 && avg > pm.thresholdMs {
 		pm.status.Store(int32(Degraded))
 	} else {
 		pm.status.Store(int32(Healthy))
