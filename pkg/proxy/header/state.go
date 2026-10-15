@@ -41,11 +41,14 @@ func (s *StateMachine) GetOrStore(hash uint64, data []byte) *HeaderBlob {
 	}
 
 	newBlob := blobPool.Get().(*HeaderBlob)
-	newBlob.Data = data
+	buf := make([]byte, len(data))
+	copy(buf, data)
+	newBlob.Data = buf
 	newBlob.Refs.Store(1)
 
 	actual, loaded := shard.LoadOrStore(hash, newBlob)
 	if loaded {
+		newBlob.Data = nil
 		blobPool.Put(newBlob)
 		return actual.(*HeaderBlob)
 	}
