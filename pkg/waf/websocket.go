@@ -68,8 +68,16 @@ func DeframeAndScan(data []byte, scanner *SignatureScanner, state *FrameState) (
 		}
 		copy(unmasked, payload)
 		applyMask(unmasked, maskKey)
+
+		// Make a safe persistent copy since pool buffer is reused
+		result := make([]byte, payloadLen)
+		copy(result, unmasked)
+		wsBufferPool.Put(buf)
+		unmasked = result
 	} else {
-		unmasked = payload
+		result := make([]byte, len(payload))
+		copy(result, payload)
+		unmasked = result
 	}
 
 	if opcode != 0x00 {
