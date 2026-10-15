@@ -1,8 +1,8 @@
 package balancer
 
 import (
-	"sync/atomic"
 	"github.com/Aditya-9-6/DevProxy/pkg/proxy/congestion"
+	"sync/atomic"
 )
 
 // UpstreamTarget represents a backend server with atomic health tracking.
