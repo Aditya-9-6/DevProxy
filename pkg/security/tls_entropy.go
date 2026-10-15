@@ -5,6 +5,7 @@ import (
 	"sync/atomic"
 )
 
+// CacheLinePad is used to prevent false sharing in high-concurrency structures.
 type CacheLinePad [8]uint64
 
 type EntropyScore struct {

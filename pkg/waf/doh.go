@@ -5,7 +5,6 @@ import (
 	"sync/atomic"
 )
 
-// DoHMetrics tracks DoH traffic statistics using lock-free atomic counters.
 type DoHMetrics struct {
 	MalformedQueries CacheLinePad
 	Amplification    CacheLinePad

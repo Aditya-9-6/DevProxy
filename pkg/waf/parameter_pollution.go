@@ -7,24 +7,19 @@ import (
 	"sync/atomic"
 )
 
-// ParameterValidator tracks parameter multiplicity using atomic counters.
 type ParameterValidator struct {
 	Counters [256]CacheLinePad
 }
 
-// NewParameterValidator initializes a new validator.
 func NewParameterValidator() *ParameterValidator {
 	return &ParameterValidator{}
 }
 
-// ValidateQuery inspects raw query strings for duplicate keys (pollution).
-// This avoids net/url.Values heap allocations by utilizing a stack-allocated bitset.
 func (v *ParameterValidator) ValidateQuery(query string) bool {
 	if query == "" {
 		return true
 	}
 
-	// Increased bitset to 1024 bits (16 * 64) to reduce collision probability.
 	var seenBits [16]uint64
 
 	start := 0
@@ -57,7 +52,6 @@ func (v *ParameterValidator) ValidateQuery(query string) bool {
 	return true
 }
 
-// RecordParamUsage increments the usage count for a parameter name using FNV-1a.
 func (v *ParameterValidator) RecordParamUsage(paramName string) {
 	idx := hashParam(paramName)
 	atomic.AddUint64(&v.Counters[idx][0], 1)

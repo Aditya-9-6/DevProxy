@@ -1,4 +1,5 @@
 package waf
 
-// CacheLinePad prevents false sharing.
-type CacheLinePad [8]uint64
+import "github.com/Aditya-9-6/DevProxy/pkg/security"
+
+type CacheLinePad = security.CacheLinePad
