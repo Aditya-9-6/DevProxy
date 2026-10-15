@@ -35,7 +35,8 @@ func (d *ChunkDecoder) Read(p []byte) (int, error) {
 	if d.err != nil {
 		return 0, d.err
 	}
-	if d.pos >= len(d.curr) {
+
+	for d.pos >= len(d.curr) {
 		if d.activeBuf != nil {
 			chunkBufferPool.Put(d.activeBuf)
 			d.activeBuf = nil
@@ -46,7 +47,11 @@ func (d *ChunkDecoder) Read(p []byte) (int, error) {
 			d.err = err
 			return 0, err
 		}
-		size, err := strconv.ParseInt(strings.TrimSpace(line), 16, 64)
+		sizeStr := strings.TrimSpace(line)
+		if idx := strings.IndexByte(sizeStr, ';'); idx != -1 {
+			sizeStr = sizeStr[:idx]
+		}
+		size, err := strconv.ParseInt(sizeStr, 16, 64)
 		if err != nil || size < 0 || size > MaxChunkSize {
 			d.err = io.ErrUnexpectedEOF
 			return 0, d.err
@@ -66,19 +71,31 @@ func (d *ChunkDecoder) Read(p []byte) (int, error) {
 			return 0, err
 		}
 
-		if _, err := d.r.Discard(2); err != nil { // Discard \r\n
+		// Verify and discard trailing \r\n
+		cr, err := d.r.ReadByte()
+		lf, err2 := d.r.ReadByte()
+		if err != nil || err2 != nil || cr != '\r' || lf != '\n' {
 			chunkBufferPool.Put(buf)
-			d.err = err
-			return 0, err
+			d.err = io.ErrUnexpectedEOF
+			return 0, d.err
 		}
 
 		d.activeBuf = buf
 		d.curr = buf.Bytes()
 		d.pos = 0
 	}
+
 	n := copy(p, d.curr[d.pos:])
 	d.pos += n
 	return n, nil
+}
+
+func (d *ChunkDecoder) Close() error {
+	if d.activeBuf != nil {
+		chunkBufferPool.Put(d.activeBuf)
+		d.activeBuf = nil
+	}
+	return nil
 }
 
 // ChunkEncoder implements io.Writer to encode data into HTTP chunked format.
@@ -104,4 +121,9 @@ func (e *ChunkEncoder) Write(p []byte) (int, error) {
 	}
 	_, err = e.w.Write([]byte("\r\n"))
 	return len(p), err
+}
+
+func (e *ChunkEncoder) Close() error {
+	_, err := e.w.Write([]byte("0\r\n\r\n"))
+	return err
 }
