@@ -36,7 +36,16 @@ func (h *HyperLogLogEstimator) Add(data []byte) {
 	regIdx := uint(hash >> (64 - HLLPrecision))
 	// Remaining bits for leading zeros count
 	valBits := (hash << HLLPrecision) | (1 << (HLLPrecision - 1))
-	zeros := uint8(bitsLeadingZeros64(valBits)) + 1
+
+	lz := bitsLeadingZeros64(valBits)
+	var zeros uint8
+	if lz >= 255 {
+		zeros = 255
+	} else if lz < 0 {
+		zeros = 0
+	} else {
+		zeros = uint8(lz) + 1
+	}
 
 	// Lock-free atomic max update
 	reg := &h.registers[regIdx]
