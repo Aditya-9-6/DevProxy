@@ -1,4 +1,4 @@
 package waf
 
-// CacheLinePad provides padding to prevent false sharing in high-contention atomic counters.
+// CacheLinePad prevents false sharing by padding atomic counters to 64 bytes.
 type CacheLinePad [8]uint64
