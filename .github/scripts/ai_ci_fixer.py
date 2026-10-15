@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
 Autonomous CI Test & Build Auto-Fixer for DevProxy
-Analyzes failing compiler, test, or lint errors, queries Google Gemini AI,
-applies the fix, and verifies that tests pass before pushing.
-Also accepts AI Reviewer feedback to refactor spaghetti code and add missing tests.
+Analyzes failing compiler, test, or lint errors, queries AI models (Gemini, NVIDIA NIM, OpenRouter, Cohere),
+resolves Git merge conflicts, applies the fix, and verifies that tests pass before pushing.
+Also accepts AI Reviewer feedback to refactor code and add missing tests.
 """
 
 import os
@@ -81,8 +81,56 @@ Respond ONLY with a single valid JSON object and nothing else (no conversational
 }
 """
 
-def call_gemini(api_key: str, prompt: str, fallback_key: str = "", model: str = DEFAULT_MODEL) -> dict:
-    """Calls Gemini REST API with fallback models and fallback API key."""
+CONFLICT_SYSTEM_PROMPT = """You are an expert Git merge conflict resolver and Go systems architect for DevProxy.
+Your mission is to resolve Git merge conflicts between `origin/main` and a feature pull request branch.
+
+CRITICAL RULES:
+1. PRESERVE INTENT FROM BOTH BRANCHES: Keep the enhancements, bug fixes, and additions introduced in main while preserving the new feature logic from the PR branch.
+2. REMOVE ALL CONFLICT MARKERS: Completely remove <<<<<<< HEAD, =======, >>>>>>> markers.
+3. COMPILE-READY GO CODE: Ensure imports, types, methods, and syntax are 100% valid Go code.
+4. COMPLETE FILE CONTENT: Return the COMPLETE, entire resolved file content.
+
+OUTPUT FORMAT:
+Respond ONLY with a single valid JSON object:
+{
+  "summary": "Explanation of how conflicts were resolved.",
+  "files": [
+    {
+      "path": "relative/path/to/file.go",
+      "content": "full resolved file content"
+    }
+  ]
+}
+"""
+
+def extract_json_response(raw_text: str) -> dict:
+    """Extracts JSON object from model response, stripping markdown code blocks if present."""
+    raw_text = raw_text.strip()
+    try:
+        return json.loads(raw_text, strict=False)
+    except json.JSONDecodeError:
+        pass
+    if raw_text.startswith("```"):
+        lines = raw_text.splitlines()
+        if lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].startswith("```"):
+            lines = lines[:-1]
+        raw_text = "\n".join(lines).strip()
+        try:
+            return json.loads(raw_text, strict=False)
+        except json.JSONDecodeError:
+            pass
+    # Try finding the first '{' and last '}'
+    first_brace = raw_text.find("{")
+    last_brace = raw_text.rfind("}")
+    if first_brace != -1 and last_brace != -1 and last_brace > first_brace:
+        candidate = raw_text[first_brace:last_brace + 1]
+        return json.loads(candidate, strict=False)
+    raise ValueError(f"Could not parse valid JSON from model response: {raw_text[:200]}")
+
+def call_gemini(api_key: str, prompt: str, system_prompt: str = SYSTEM_PROMPT, fallback_key: str = "", model: str = DEFAULT_MODEL) -> dict:
+    """Calls Gemini REST API with fallback models and fallback API keys."""
     ordered = [model] + [m for m in FALLBACK_MODELS if m != model]
     models_to_try = []
     for m in ordered:
@@ -102,7 +150,7 @@ def call_gemini(api_key: str, prompt: str, fallback_key: str = "", model: str = 
                 "contents": [
                     {
                         "parts": [
-                            {"text": SYSTEM_PROMPT},
+                            {"text": system_prompt},
                             {"text": prompt}
                         ]
                     }
@@ -113,8 +161,8 @@ def call_gemini(api_key: str, prompt: str, fallback_key: str = "", model: str = 
                 }
             }
 
-            print(f"[*] Querying model {current_model} for CI fix / refactoring...", flush=True)
-            max_attempts = 5
+            print(f"[*] [Gemini] Querying {current_model}...", flush=True)
+            max_attempts = 3
             for attempt in range(1, max_attempts + 1):
                 req = urllib.request.Request(
                     url,
@@ -123,46 +171,257 @@ def call_gemini(api_key: str, prompt: str, fallback_key: str = "", model: str = 
                     method="POST"
                 )
                 try:
-                    with urllib.request.urlopen(req, timeout=180) as resp:
+                    with urllib.request.urlopen(req, timeout=120) as resp:
                         data = json.loads(resp.read().decode("utf-8"))
                         text_response = data["candidates"][0]["content"]["parts"][0]["text"].strip()
-                        try:
-                            return json.loads(text_response, strict=False)
-                        except json.JSONDecodeError:
-                            if text_response.startswith("```"):
-                                lines = text_response.splitlines()
-                                if lines[0].startswith("```"):
-                                    lines = lines[1:]
-                                if lines and lines[-1].startswith("```"):
-                                    lines = lines[:-1]
-                                text_response = "\n".join(lines).strip()
-                            return json.loads(text_response, strict=False)
+                        return extract_json_response(text_response)
                 except urllib.error.HTTPError as e:
                     err_msg = e.read().decode("utf-8", errors="replace")
-                    print(f"[Warning] HTTP {e.code} (attempt {attempt}/{max_attempts}) with model {current_model}: {err_msg[:160]}", file=sys.stderr)
                     last_err = err_msg
                     if e.code == 404:
                         break
                     if e.code == 429:
-                        print(f"[*] Key rate-limited (429). Fast failover to next key in pool...", flush=True)
+                        print(f"[*] [Gemini] Rate limited (429) on {current_model}. Fast failover...", flush=True)
                         break
                     if e.code in (500, 502, 503, 504) and attempt < max_attempts:
                         time.sleep(2)
                         continue
                     break
                 except Exception as e:
-                    print(f"[Warning] Error (attempt {attempt}/{max_attempts}) with model {current_model}: {e}", file=sys.stderr)
                     last_err = str(e)
                     if attempt < max_attempts:
-                        time.sleep(3 * attempt)
+                        time.sleep(2 * attempt)
                         continue
                     break
 
-    raise RuntimeError(f"Failed to obtain CI fix from Gemini API. Last error: {last_err}")
+    raise RuntimeError(f"Gemini API exhausted. Last error: {last_err}")
 
-def run_diagnostics(workspace: Path) -> tuple[int, str]:
+def call_openrouter(api_key: str, prompt: str, system_prompt: str = SYSTEM_PROMPT) -> dict:
+    """Calls OpenRouter API as fallback."""
+    if not api_key:
+        raise ValueError("Missing OPENROUTER_API_KEY")
+    url = "https://openrouter.ai/api/v1/chat/completions"
+    models = ["deepseek/deepseek-chat", "meta-llama/llama-3.3-70b-instruct", "google/gemini-2.5-flash", "mistralai/mistral-large-2411"]
+    last_err = None
+    for model in models:
+        print(f"[*] [OpenRouter] Querying {model}...", flush=True)
+        payload = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": prompt}
+            ],
+            "temperature": 0.1,
+            "response_format": {"type": "json_object"}
+        }
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            method="POST"
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                text = data["choices"][0]["message"]["content"]
+                return extract_json_response(text)
+        except Exception as e:
+            print(f"[!] [OpenRouter] Model {model} failed: {e}", file=sys.stderr)
+            last_err = str(e)
+            continue
+    raise RuntimeError(f"OpenRouter calls failed. Last error: {last_err}")
+
+def call_nvidia_nim(api_key: str, prompt: str, system_prompt: str = SYSTEM_PROMPT) -> dict:
+    """Calls NVIDIA NIM API as fallback."""
+    if not api_key:
+        raise ValueError("Missing NVIDIA_API_KEY")
+    url = "https://integrate.api.nvidia.com/v1/chat/completions"
+    models = ["meta/llama-3.3-70b-instruct", "meta/llama-3.1-70b-instruct", "mistralai/mistral-large-2407"]
+    last_err = None
+    for model in models:
+        print(f"[*] [NVIDIA NIM] Querying {model}...", flush=True)
+        payload = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": prompt}
+            ],
+            "temperature": 0.1,
+            "response_format": {"type": "json_object"}
+        }
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            method="POST"
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                text = data["choices"][0]["message"]["content"]
+                return extract_json_response(text)
+        except Exception as e:
+            print(f"[!] [NVIDIA NIM] Model {model} failed: {e}", file=sys.stderr)
+            last_err = str(e)
+            continue
+    raise RuntimeError(f"NVIDIA NIM calls failed. Last error: {last_err}")
+
+def call_ai_model(prompt: str, system_prompt: str = SYSTEM_PROMPT) -> dict:
+    """Universal multi-provider AI dispatcher with seamless failover."""
+    # 1. Try Gemini
+    primary_gemini = os.environ.get("GEMINI_SOLVER_KEY", "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
+    fallback_gemini = os.environ.get("GEMINI_REVIEWER_KEY", "").strip() or os.environ.get("GEMINI_ISSUE_KEY", "").strip()
+    try:
+        return call_gemini(primary_gemini, prompt, system_prompt=system_prompt, fallback_key=fallback_gemini)
+    except Exception as e:
+        print(f"[!] Gemini attempt failed: {e}. Switching to secondary providers...", file=sys.stderr)
+
+    # 2. Try NVIDIA NIM
+    for nv_key in [os.environ.get("NVIDIA_API_KEY", "").strip(), os.environ.get("NVIDIA_API_KEY_2", "").strip()]:
+        if nv_key:
+            try:
+                return call_nvidia_nim(nv_key, prompt, system_prompt=system_prompt)
+            except Exception as e:
+                print(f"[!] NVIDIA NIM key failed: {e}. Trying next provider...", file=sys.stderr)
+
+    # 3. Try OpenRouter
+    openrouter_key = os.environ.get("OPENROUTER_API_KEY", "").strip()
+    if openrouter_key:
+        try:
+            return call_openrouter(openrouter_key, prompt, system_prompt=system_prompt)
+        except Exception as e:
+            print(f"[!] OpenRouter failed: {e}. Trying next provider...", file=sys.stderr)
+
+    raise RuntimeError("All AI model providers (Gemini, NVIDIA NIM, OpenRouter) exhausted without successful response.")
+
+def detect_and_resolve_conflicts(workspace: Path) -> list[str]:
+    """Detects Git conflict markers and uses AI to resolve them cleanly."""
+    conflicted_files = set()
+    try:
+        status_res = subprocess.run(["git", "status", "--porcelain"], cwd=workspace, capture_output=True, text=True)
+        for line in status_res.stdout.splitlines():
+            if line and line[:2] in ("UU", "AA", "UD", "DU", "AU", "UA", "DD"):
+                conflicted_files.add(line[3:].strip().replace("\\", "/"))
+    except Exception:
+        pass
+
+    for p in workspace.rglob("*.go"):
+        try:
+            content = p.read_text(encoding="utf-8", errors="ignore")
+            if "<<<<<<< HEAD" in content or ("=======" in content and ">>>>>>>" in content):
+                conflicted_files.add(str(p.relative_to(workspace)).replace("\\", "/"))
+        except Exception:
+            pass
+
+    resolved = []
+    if not conflicted_files:
+        return resolved
+
+    print(f"[*] ⚠️ Detected {len(conflicted_files)} conflicted file(s): {sorted(list(conflicted_files))}", flush=True)
+    for rel_path in sorted(list(conflicted_files)):
+        target_file = workspace / rel_path
+        if not target_file.is_file():
+            print(f"[*] Handling deleted/missing conflicted file {rel_path} by restoring from origin/main...", flush=True)
+            subprocess.run(["git", "checkout", "origin/main", "--", rel_path], cwd=workspace)
+            subprocess.run(["git", "add", rel_path], cwd=workspace)
+            resolved.append(rel_path)
+            continue
+        conflicted_text = target_file.read_text(encoding="utf-8", errors="replace")
+        if "<<<<<<<" not in conflicted_text and ">>>>>>>" not in conflicted_text:
+            print(f"[*] Resolving non-marker conflict in {rel_path} by restoring from origin/main...", flush=True)
+            subprocess.run(["git", "checkout", "origin/main", "--", rel_path], cwd=workspace)
+            subprocess.run(["git", "add", rel_path], cwd=workspace)
+            resolved.append(rel_path)
+            continue
+
+        print(f"[*] Resolving Git merge conflicts in {rel_path} via AI...", flush=True)
+        prompt = f"""Resolve the Git merge conflicts in `{rel_path}`.
+
+CRITICAL INSTRUCTIONS:
+1. Merge the changes from HEAD (the PR branch) and the incoming base branch (origin/main).
+2. Retain all functionality, imports, struct fields, and methods from BOTH branches.
+3. Completely remove all conflict markers (`<<<<<<< HEAD`, `=======`, `>>>>>>> ...`).
+4. Ensure the resulting file is 100% syntactically valid Go.
+5. Return the COMPLETE, entire resolved file content in the JSON schema.
+
+=== CONFLICTED FILE: {rel_path} ===
+{conflicted_text}
+"""
+        try:
+            res = call_ai_model(prompt, system_prompt=CONFLICT_SYSTEM_PROMPT)
+            files = res.get("files", [])
+            for f in files:
+                if f.get("content"):
+                    dest = workspace / f["path"].replace("\\", "/")
+                    dest.write_text(f["content"], encoding="utf-8")
+                    subprocess.run(["git", "add", f["path"].replace("\\", "/")], cwd=workspace)
+                    resolved.append(rel_path)
+                    print(f"    [+] Successfully resolved conflict in {rel_path}", flush=True)
+        except Exception as e:
+            print(f"[!] Conflict resolution failed for {rel_path}: {e}", file=sys.stderr)
+
+    # Resolve any remaining unmerged paths
+    try:
+        remaining_res = subprocess.run(["git", "diff", "--name-only", "--diff-filter=U"], cwd=workspace, capture_output=True, text=True)
+        remaining = [l.strip() for l in remaining_res.stdout.splitlines() if l.strip()]
+        for rem in remaining:
+            print(f"[*] Fallback: resolving remaining unmerged file {rem} using origin/main...", flush=True)
+            subprocess.run(["git", "checkout", "origin/main", "--", rem], cwd=workspace)
+            subprocess.run(["git", "add", rem], cwd=workspace)
+            resolved.append(rem)
+    except Exception:
+        pass
+
+    if resolved:
+        subprocess.run(["git", "add", "-A"], cwd=workspace)
+        merge_head = workspace / ".git" / "MERGE_HEAD"
+        if merge_head.exists():
+            subprocess.run([
+                "git", "commit", "-m", "fix(merge): resolve merge conflicts with origin/main",
+                "-m", "Co-authored-by: Aditya Dahale <aditya-9-6@users.noreply.github.com>"
+            ], cwd=workspace)
+            print("[*] Completed merge commit after conflict resolution.", flush=True)
+
+    return resolved
+
+def fetch_remote_ci_errors(pr_number: str, workspace: Path) -> str:
+    """Fetches failed GitHub Actions logs for this PR if available."""
+    try:
+        head_ref = ""
+        pr_view = subprocess.run(["gh", "pr", "view", pr_number, "--json", "headRefName"], cwd=workspace, capture_output=True, text=True)
+        if pr_view.returncode == 0:
+            head_ref = json.loads(pr_view.stdout).get("headRefName", "")
+
+        cmd = ["gh", "run", "list", "--limit", "10", "--json", "databaseId,conclusion,name,headBranch"]
+        if head_ref:
+            cmd.extend(["-b", head_ref])
+
+        res = subprocess.run(cmd, cwd=workspace, capture_output=True, text=True)
+        if res.returncode == 0:
+            data = json.loads(res.stdout)
+            for run in data:
+                if run.get("conclusion") in ("failure", "timed_out", "startup_failure"):
+                    run_id = str(run.get("databaseId"))
+                    print(f"[*] Found failed GitHub Actions run {run_id} ({run.get('name')}). Fetching failed logs...", flush=True)
+                    log_res = subprocess.run(
+                        ["gh", "run", "view", "--log-failed", run_id],
+                        cwd=workspace, capture_output=True, text=True
+                    )
+                    if log_res.stdout.strip():
+                        return f"=== GITHUB ACTIONS FAILED RUN ({run.get('name')} #{run_id}) ===\n" + log_res.stdout.strip()[:15000]
+    except Exception as e:
+        print(f"[*] Note: Could not fetch remote CI logs via gh CLI: {e}", flush=True)
+    return ""
+
+def run_diagnostics(workspace: Path, pr_number: str = "") -> tuple[int, str]:
     """Runs compiler and test suite, returning exit code and combined error output."""
-    print("[*] Running local diagnostic checks (go mod tidy, gofmt, go vet, go test)...", flush=True)
+    print("[*] Running local diagnostic checks (go mod tidy, gofmt, go vet, go build, go test)...", flush=True)
     out_lines = []
 
     # Run go mod tidy
@@ -181,6 +440,13 @@ def run_diagnostics(workspace: Path) -> tuple[int, str]:
         out_lines.append(vet_res.stderr.strip() or vet_res.stdout.strip())
         out_lines.append("")
 
+    # Check go build
+    build_res = subprocess.run(["go", "build", "./..."], cwd=workspace, capture_output=True, text=True)
+    if build_res.returncode != 0:
+        out_lines.append("=== GO BUILD COMPILATION ERRORS ===")
+        out_lines.append(build_res.stderr.strip() or build_res.stdout.strip())
+        out_lines.append("")
+
     # Check go test
     test_res = subprocess.run(["go", "test", "-v", "./..."], cwd=workspace, capture_output=True, text=True)
     if test_res.returncode != 0:
@@ -188,8 +454,16 @@ def run_diagnostics(workspace: Path) -> tuple[int, str]:
         combined = (test_res.stdout + "\n" + test_res.stderr).strip()
         out_lines.append(combined)
 
+    local_errors = bool(out_lines)
+
+    # Check remote GitHub CI failures as extra diagnostic context only if local tests failed
+    if pr_number and local_errors:
+        remote_ci = fetch_remote_ci_errors(pr_number, workspace)
+        if remote_ci:
+            out_lines.append(remote_ci)
+
     combined_output = "\n".join(out_lines).strip()
-    total_exit = 0 if not combined_output else 1
+    total_exit = 1 if local_errors else 0
     return total_exit, combined_output
 
 def extract_referenced_files(error_log: str, workspace: Path) -> list[str]:
@@ -209,7 +483,6 @@ def extract_referenced_files(error_log: str, workspace: Path) -> list[str]:
                     except ValueError:
                         pass
 
-    # Also include modified files in git status/diff
     try:
         diff_names = subprocess.run(["git", "diff", "--name-only", "origin/main...HEAD"], cwd=workspace, capture_output=True, text=True)
         for line in diff_names.stdout.splitlines():
@@ -238,7 +511,7 @@ def get_pr_diff(workspace: Path) -> str:
     return "No git diff available."
 
 def main():
-    parser = argparse.ArgumentParser(description="DevProxy Autonomous CI Auto-Fixer & Architectural Refactorer")
+    parser = argparse.ArgumentParser(description="DevProxy Autonomous CI Auto-Fixer & Merge Conflict Resolver")
     parser.add_argument("--pr-number", required=True, help="GitHub Pull Request Number")
     parser.add_argument("--workspace", default=".", help="Workspace root directory")
     parser.add_argument("--error-log-file", default="", help="Optional pre-captured error log file")
@@ -246,25 +519,23 @@ def main():
     parser.add_argument("--max-iterations", type=int, default=6, help="Maximum self-healing loop passes (default: 6)")
     args = parser.parse_args()
 
-    primary_key = os.environ.get("GEMINI_SOLVER_KEY", "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
-    fallback_key = os.environ.get("GEMINI_REVIEWER_KEY", "").strip() or os.environ.get("GEMINI_ISSUE_KEY", "").strip()
-
-    if not primary_key:
-        print("MISSING_API_KEY: Environment variable GEMINI_SOLVER_KEY or GEMINI_API_KEY is not set.", file=sys.stderr)
-        sys.exit(2)
-
     workspace = Path(args.workspace).resolve()
-    print(f"[*] Starting Autonomous CI Fixer for PR #{args.pr_number} in {workspace}...")
+    print(f"[*] Starting Autonomous CI Fixer & Conflict Resolver for PR #{args.pr_number} in {workspace}...")
+
+    # Phase 0: Resolve any merge conflicts first
+    conflicts_resolved = detect_and_resolve_conflicts(workspace)
+    if conflicts_resolved:
+        print(f"[OK] Automatically resolved merge conflicts in: {conflicts_resolved}", flush=True)
 
     review_feedback = ""
     if args.review_feedback_file and Path(args.review_feedback_file).is_file():
         review_feedback = Path(args.review_feedback_file).read_text(encoding="utf-8")
         print(f"[*] Loaded Reviewer Feedback ({len(review_feedback)} chars).")
 
-    all_repaired_files = set()
-    latest_summary = ""
+    all_repaired_files = set(conflicts_resolved)
+    latest_summary = "Resolved Git merge conflicts." if conflicts_resolved else ""
     post_code = 1
-    post_errors = ""
+    initial_had_errors = False
 
     max_iterations = args.max_iterations
     for iteration in range(1, max_iterations + 1):
@@ -273,12 +544,14 @@ def main():
         print(f"=======================================================", flush=True)
 
         # Step 1: Run diagnostics
-        code, error_log = run_diagnostics(workspace)
+        code, error_log = run_diagnostics(workspace, pr_number=args.pr_number)
+        if code != 0 or error_log:
+            initial_had_errors = True
+
         if code == 0 and not error_log:
             if not review_feedback or iteration > 1:
                 print(f"\n[🎉 SUCCESS] All checks passed 100% GREEN at pass {iteration}! 0 errors, 0 test failures.", flush=True)
                 post_code = 0
-                post_errors = ""
                 break
             else:
                 print(f"[*] Diagnostics green, but architectural review feedback must be resolved on Pass 1...", flush=True)
@@ -302,7 +575,7 @@ def main():
 
         pr_diff = get_pr_diff(workspace)
 
-        # Step 3: Construct prompt for Gemini
+        # Step 3: Construct prompt
         if not error_log and review_feedback:
             prompt_header = f"""Pull Request #{args.pr_number} compiles and tests pass, but the Architectural Reviewer flagged anti-patterns / action items (Pass {iteration}/{max_iterations}).
 Your goal: Refactor the code to resolve all architectural review action items while keeping all tests 100% GREEN."""
@@ -331,11 +604,11 @@ Instructions:
 5. Output valid JSON adhering to the specified schema.
 """
 
-        # Step 4: Request fix from Gemini
+        # Step 4: Request fix from multi-provider AI engine
         try:
-            result = call_gemini(primary_key, prompt, fallback_key=fallback_key)
+            result = call_ai_model(prompt, system_prompt=SYSTEM_PROMPT)
         except Exception as e:
-            print(f"[!] Gemini call failed on pass {iteration}: {e}", file=sys.stderr)
+            print(f"[!] AI call failed on pass {iteration}: {e}", file=sys.stderr)
             time.sleep(5)
             continue
 
@@ -369,18 +642,25 @@ Instructions:
         subprocess.run(["go", "mod", "tidy"], cwd=workspace)
         subprocess.run(["gofmt", "-w", "."], cwd=workspace)
 
-    final_code, final_log = run_diagnostics(workspace)
+    final_code, final_log = run_diagnostics(workspace, pr_number=args.pr_number)
     post_code = final_code
 
+    # Prevent false "100% GREEN" if no repairs were produced while initial errors were present
+    if initial_had_errors and not all_repaired_files and post_code != 0:
+        status_label = "⚠️ **CHECKS STILL REPORTING ERRORS (No Auto-Fix Produced)**"
+    elif post_code == 0:
+        status_label = "✅ **ALL TESTS 100% GREEN (Passed)**"
+    else:
+        status_label = "⚠️ **CHECKS STILL REPORTING ERRORS**"
+
     summary_file = workspace / "ci_fix_summary.md"
-    status_label = "✅ **ALL TESTS 100% GREEN (Passed)**" if post_code == 0 else "⚠️ **CHECKS STILL REPORTING ERRORS**"
     summary_content = f"""## 🛠️ Autonomous CI Test Fixer Report (DevProxy Go)
 
 **Target**: Pull Request #{args.pr_number}
 **Status**: {status_label}
 
 ### 📋 Resolution Summary
-{latest_summary}
+{latest_summary or "CI diagnostics analyzed."}
 
 ### 📂 Files Modified
 {chr(10).join(f"- `{f}`" for f in sorted(list(all_repaired_files))) if all_repaired_files else "None"}
@@ -393,10 +673,10 @@ Instructions:
     print(f"\n[OK] Fix cycle completed. Final verification status: exit code {post_code}")
 
     if post_code == 0:
-        print("[🎉 100% GREEN] CI suite passed cleanly. PR is ready for merge.")
+        print("[🎉 100% GREEN] CI suite passed cleanly.")
         sys.exit(0)
     else:
-        print(f"[!] Tests still failing after {max_iterations} passes.")
+        print(f"[!] Tests still failing after repair passes.")
         sys.exit(1)
 
 if __name__ == "__main__":
