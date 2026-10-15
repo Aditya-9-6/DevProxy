@@ -25,6 +25,7 @@ permissions:
   pull-requests: write
   issues: write
   actions: write
+  workflows: write
 
 concurrency:
   group: ai-fixer-${{ github.event.issue.number || github.event.inputs.pr_number || github.event.workflow_run.head_branch }}
@@ -184,19 +185,26 @@ jobs:
               git reset -- ai_pr_*.md ai_review_*.json ci_fix_*.md 2>/dev/null || true
               git commit -m "fix(ci): autonomous repair & conflict resolution for PR #${PR_NUM}" -m "Co-authored-by: Aditya Dahale <aditya-9-6@users.noreply.github.com>" || true
             fi
+            # Push with App token first, fallback to GITHUB_TOKEN (with workflows: write)
             git remote set-url origin "https://x-access-token:${AUTH_TOKEN}@github.com/${{ github.repository }}.git"
-            git push origin "$HEAD_REF" || {
-              echo "App push failed (possibly due to workflow permissions). Falling back to GITHUB_TOKEN..."
+            if ! git push origin "$HEAD_REF"; then
+              echo "App push failed. Falling back to GITHUB_TOKEN (with workflows: write)..."
               git remote set-url origin "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
-              git push origin "$HEAD_REF"
-            }
+              if ! git push origin "$HEAD_REF"; then
+                echo "push_failed=true" >> $GITHUB_ENV
+                echo "has_changes=false" >> $GITHUB_ENV
+                echo "Error: Both push attempts were rejected."
+                exit 1
+              fi
+            fi
             COMMIT_SHA=$(git rev-parse --short HEAD)
             echo "has_changes=true" >> $GITHUB_ENV
+            echo "pushed=true" >> $GITHUB_ENV
             echo "commit_sha=$COMMIT_SHA" >> $GITHUB_ENV
           fi
 
       - name: Re-trigger CI Checks
-        if: always() && steps.meta.outputs.skip != 'true'
+        if: always() && steps.meta.outputs.skip != 'true' && env.pushed == 'true'
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
@@ -222,10 +230,14 @@ jobs:
           PR_NUM: ${{ steps.meta.outputs.pr_num }}
           HEAD_REF: ${{ steps.meta.outputs.head_ref }}
         run: |
-          if [ -f "ci_fix_summary.md" ]; then
-            gh pr comment "$PR_NUM" --body-file "ci_fix_summary.md"
-          elif [ "$has_changes" = "true" ]; then
-            gh pr comment "$PR_NUM" --body "✅ **CI Fix Applied!** Pushed commit \`$commit_sha\` to \`$HEAD_REF\` and re-triggered CI validation."
+          if [ "$has_changes" = "true" ] && [ "$pushed" = "true" ]; then
+            if [ -f "ci_fix_summary.md" ]; then
+              gh pr comment "$PR_NUM" --body-file "ci_fix_summary.md"
+            else
+              gh pr comment "$PR_NUM" --body "✅ **CI Fix Applied!** Pushed commit \`$commit_sha\` to \`$HEAD_REF\` and re-triggered CI validation."
+            fi
+          elif [ "$push_failed" = "true" ]; then
+            gh pr comment "$PR_NUM" --body "⚠️ **CI Auto-Fixer Warning**: Fix was generated locally, but git push to \`$HEAD_REF\` was rejected by GitHub (check workflow/branch permissions)."
           fi
 
       - name: Evaluate PR Auto-Merge Gate
