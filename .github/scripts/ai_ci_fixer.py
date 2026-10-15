@@ -511,6 +511,25 @@ def get_pr_diff(workspace: Path) -> str:
         pass
     return "No git diff available."
 
+def extract_instructions_from_pr(pr_number: str, workspace: Path) -> str:
+    """Extracts custom user instructions from the latest /fix comment on the PR."""
+    try:
+        res = subprocess.run([
+            "gh", "pr", "view", pr_number, "--json", "comments"
+        ], cwd=workspace, capture_output=True, text=True, encoding="utf-8")
+        if res.returncode == 0 and res.stdout:
+            data = json.loads(res.stdout)
+            comments = data.get("comments", [])
+            for c in reversed(comments):
+                body = c.get("body", "")
+                if "/fix" in body:
+                    m = re.search(r'/fix[:\s-]*(.*)', body, re.DOTALL | re.IGNORECASE)
+                    if m and m.group(1).strip():
+                        return m.group(1).strip()
+    except Exception as e:
+        print(f"[*] Warning: Could not extract comments from PR #{pr_number}: {e}", file=sys.stderr)
+    return ""
+
 def main():
     parser = argparse.ArgumentParser(description="DevProxy Autonomous CI Auto-Fixer & Merge Conflict Resolver")
     parser.add_argument("--pr-number", required=True, help="GitHub Pull Request Number")
@@ -525,14 +544,17 @@ def main():
     workspace = Path(args.workspace).resolve()
     print(f"[*] Starting Autonomous CI Fixer & Conflict Resolver for PR #{args.pr_number} in {workspace}...")
 
-    # Load any user instructions
+    # Load any user instructions (CLI, file, or automatically from PR comments)
     user_instructions = args.user_instructions.strip()
     if args.user_instructions_file and Path(args.user_instructions_file).is_file():
         file_inst = Path(args.user_instructions_file).read_text(encoding="utf-8").strip()
         if file_inst:
             user_instructions = f"{user_instructions}\n{file_inst}".strip() if user_instructions else file_inst
+    if not user_instructions:
+        user_instructions = extract_instructions_from_pr(args.pr_number, workspace)
+
     if user_instructions:
-        print(f"[*] 🗣️ User Instructions provided:\n{user_instructions}", flush=True)
+        print(f"[*] 🗣️ User Instructions detected & applied:\n{user_instructions}", flush=True)
 
     # Phase 0: Resolve any merge conflicts first
     conflicts_resolved = detect_and_resolve_conflicts(workspace, user_instructions=user_instructions)
