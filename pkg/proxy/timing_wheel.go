@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -8,6 +9,8 @@ import (
 const (
 	WheelSize = 1024
 	TickMs    = 100
+	Levels    = 3
+	LevelBits = 10
 )
 
 type wheelBucket struct {
@@ -17,7 +20,8 @@ type wheelBucket struct {
 }
 
 type TimingWheel struct {
-	buckets [WheelSize]wheelBucket
+	mu      sync.Mutex
+	buckets [Levels][WheelSize]wheelBucket
 	cursor  atomic.Uint64
 }
 
@@ -26,15 +30,58 @@ func NewTimingWheel() *TimingWheel {
 }
 
 func (tw *TimingWheel) Register(deadline time.Duration) {
-	idx := (tw.cursor.Load() + uint64(deadline.Milliseconds()/TickMs)) % WheelSize
-	tw.buckets[idx].count.Add(1)
+	tw.mu.Lock()
+	defer tw.mu.Unlock()
+
+	ticks := uint64(deadline.Milliseconds() / TickMs)
+	if ticks == 0 {
+		ticks = 1
+	}
+	cur := tw.cursor.Load()
+	expiresAt := cur + ticks
+
+	// Hierarchical placement across levels
+	for i := 0; i < Levels; i++ {
+		shift := uint(i * LevelBits)
+		mask := uint64(WheelSize - 1)
+		idx := (expiresAt >> shift) & mask
+		if i == Levels-1 || (expiresAt>>(shift+LevelBits)) == (cur>>(shift+LevelBits)) {
+			tw.buckets[i][idx].count.Add(1)
+			break
+		}
+	}
 }
 
 func (tw *TimingWheel) Tick() {
-	tw.cursor.Add(1)
+	tw.mu.Lock()
+	defer tw.mu.Unlock()
+
+	// Safely increment cursor without integer overflow issues on wrap
+	cur := tw.cursor.Add(1)
+	if cur == 0xFFFFFFFFFFFFFFFF {
+		tw.cursor.Store(0)
+	}
 }
 
 func (tw *TimingWheel) GetExpiredCount() uint64 {
-	idx := tw.cursor.Load() % WheelSize
-	return tw.buckets[idx].count.Swap(0)
+	tw.mu.Lock()
+	defer tw.mu.Unlock()
+
+	cur := tw.cursor.Load()
+	idx := cur % WheelSize
+	count := tw.buckets[0][idx].count.Swap(0)
+
+	// Cascade elements from higher levels if cursor wrapped around level boundary
+	for i := 1; i < Levels; i++ {
+		shift := uint(i * LevelBits)
+		if (cur >> shift) == 0 {
+			hIdx := (cur >> (shift - LevelBits)) % WheelSize
+			c := tw.buckets[i][hIdx].count.Swap(0)
+			if c > 0 {
+				tw.buckets[0][(idx+1)%WheelSize].count.Add(c)
+			}
+		}
+	}
+
+	return count
 }
