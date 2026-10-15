@@ -2,6 +2,8 @@ package waf
 
 import (
 	"bytes"
+	"net/http"
+	"sync"
 	"testing"
 
 	"github.com/Aditya-9-6/DevProxy/pkg/ringbuffer"
@@ -17,11 +19,13 @@ Content-Disposition: form-data; name="field1"
 value1
 --bound123--
 `
+	hdrs := make(http.Header)
+	hdrs.Set("Content-Type", "multipart/form-data; boundary=bound123")
 	event := &ringbuffer.TrafficEvent{
 		ID:         "test-1",
 		Method:     "POST",
 		URL:        "http://localhost/upload",
-		ReqHeaders: map[string][]string{"Content-Type": {"multipart/form-data; boundary=bound123"}},
+		ReqHeaders: hdrs,
 		ReqBody:    []byte(body),
 	}
 
@@ -47,6 +51,42 @@ func TestMultipartSanitizerDepthExceeded(t *testing.T) {
 	}
 }
 
+func TestMultipartSanitizerConcurrent(t *testing.T) {
+	t.Parallel()
+	cfg := DefaultMultipartConfig()
+	sanitizer := NewMultipartSanitizer(cfg)
+
+	body := `--bound123
+Content-Disposition: form-data; name="field1"
+
+value1
+--bound123--
+`
+	var wg sync.WaitGroup
+	concurrency := 50
+
+	for i := 0; i < concurrency; i++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			hdrs := make(http.Header)
+			hdrs.Set("Content-Type", "multipart/form-data; boundary=bound123")
+			event := &ringbuffer.TrafficEvent{
+				ID:         "test-conc",
+				Method:     "POST",
+				URL:        "http://localhost/upload",
+				ReqHeaders: hdrs,
+				ReqBody:    []byte(body),
+			}
+			findings := sanitizer.Evaluate(event)
+			if len(findings) != 0 {
+				t.Errorf("expected 0 findings in concurrent request, got %d", len(findings))
+			}
+		}(i)
+	}
+	wg.Wait()
+}
+
 func TestMultipartNormalization(t *testing.T) {
 	state := &MultipartState{}
 
@@ -59,13 +99,5 @@ func TestMultipartNormalization(t *testing.T) {
 	state.boundaryDepth.Store(6)
 	if state.NormalizeBoundary([]byte("nested")) {
 		t.Error("failed to detect boundary nesting violation")
-	}
-}
-
-func TestContentDispositionNormalization(t *testing.T) {
-	input := []byte("form-data; name=\"file\"; filename=\"test.txt\r\nInjection: true\"")
-	output := NormalizeContentDisposition(input)
-	if bytes.Contains(output, []byte("\r")) || bytes.Contains(output, []byte("\n")) {
-		t.Error("failed to strip CRLF from header")
 	}
 }

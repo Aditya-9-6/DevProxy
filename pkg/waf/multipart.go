@@ -49,10 +49,13 @@ func DefaultMultipartConfig() MultipartSanitizerConfig {
 }
 
 type MultipartSanitizer struct {
-	config      MultipartSanitizerConfig
-	activeFiles CacheLinePaddedCounter
-	activeDepth CacheLinePaddedCounter
-	totalBytes  CacheLinePaddedCounter
+	config MultipartSanitizerConfig
+}
+
+type multipartState struct {
+	activeFiles int
+	activeDepth int
+	totalBytes  int64
 }
 
 func NewMultipartSanitizer(cfg MultipartSanitizerConfig) *MultipartSanitizer {
@@ -82,7 +85,8 @@ func (s *MultipartSanitizer) Evaluate(event *ringbuffer.TrafficEvent) []*analysi
 	}
 
 	reader := bytes.NewReader(event.ReqBody)
-	err = s.SanitizeStream(reader, boundary, 0)
+	state := &multipartState{}
+	err = s.SanitizeStreamWithState(reader, boundary, 0, state)
 
 	var findings []*analysis.Finding
 	if err != nil {
@@ -112,18 +116,15 @@ func (s *MultipartSanitizer) Evaluate(event *ringbuffer.TrafficEvent) []*analysi
 }
 
 func (s *MultipartSanitizer) SanitizeStream(r io.Reader, boundary string, currentDepth int) error {
+	return s.SanitizeStreamWithState(r, boundary, currentDepth, &multipartState{})
+}
+
+func (s *MultipartSanitizer) SanitizeStreamWithState(r io.Reader, boundary string, currentDepth int, state *multipartState) error {
 	if currentDepth > s.config.MaxDepth {
 		return ErrMultipartDepthExceeded
 	}
 
-	s.activeDepth.val.Store(uint64(currentDepth))
-	defer func() {
-		if currentDepth > 0 && currentDepth-1 >= 0 {
-			s.activeDepth.val.Store(uint64(currentDepth - 1))
-		} else {
-			s.activeDepth.val.Store(0)
-		}
-	}()
+	state.activeDepth = currentDepth
 
 	buf := multipartBufferPool.Get().([]byte)
 	defer multipartBufferPool.Put(buf)
@@ -136,8 +137,8 @@ func (s *MultipartSanitizer) SanitizeStream(r io.Reader, boundary string, curren
 		line := scanner.Bytes()
 		lineLen := int64(len(line) + 1)
 
-		currTotal := s.totalBytes.val.Add(uint64(lineLen))
-		if s.config.MaxTotalBytes > 0 && int64(currTotal) > s.config.MaxTotalBytes {
+		state.totalBytes += lineLen
+		if s.config.MaxTotalBytes > 0 && state.totalBytes > s.config.MaxTotalBytes {
 			return ErrMultipartSizeExceeded
 		}
 
@@ -162,8 +163,8 @@ func (s *MultipartSanitizer) SanitizeStream(r io.Reader, boundary string, curren
 			}
 
 			if bytes.Contains(line, []byte("Content-Type: multipart/")) {
-				files := s.activeFiles.val.Add(1)
-				if s.config.MaxFiles > 0 && int(files) > s.config.MaxFiles {
+				state.activeFiles++
+				if s.config.MaxFiles > 0 && state.activeFiles > s.config.MaxFiles {
 					return ErrMultipartFileLimitExceeded
 				}
 			}
