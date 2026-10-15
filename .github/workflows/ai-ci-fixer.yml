@@ -14,6 +14,7 @@ permissions:
   contents: write
   pull-requests: write
   issues: write
+  actions: write
 
 concurrency:
   group: ai-fixer-${{ github.event.issue.number || github.event.inputs.pr_number }}
@@ -21,7 +22,7 @@ concurrency:
 
 jobs:
   fix-ci:
-    name: Autonomous CI Fixer
+    name: Autonomous CI Fixer & Conflict Resolver
     if: >
       github.event_name == 'workflow_dispatch' ||
       (github.event.issue.pull_request && contains(github.event.comment.body, '/fix'))
@@ -56,13 +57,27 @@ jobs:
           echo "head_ref=$HEAD_REF" >> $GITHUB_OUTPUT
           echo "title=$TITLE" >> $GITHUB_OUTPUT
 
-          gh pr comment "$PR_NUM" --body "🤖 **DevProxy CI Auto-Fixer** is analyzing test and compiler diagnostics on branch \`$HEAD_REF\`..."
+          gh pr comment "$PR_NUM" --body "🤖 **DevProxy CI Auto-Fixer & Conflict Resolver** is analyzing branch \`$HEAD_REF\` against latest \`main\`..."
 
       - name: Checkout PR Branch
         uses: actions/checkout@v4
         with:
           ref: ${{ steps.meta.outputs.head_ref }}
           fetch-depth: 0
+
+      - name: Fetch and Merge Base Branch (Conflict Detection)
+        env:
+          HEAD_REF: ${{ steps.meta.outputs.head_ref }}
+        run: |
+          git config --global user.name "Aditya Dahale"
+          git config --global user.email "aditya-9-6@users.noreply.github.com"
+          git fetch origin main
+          echo "Attempting merge with origin/main to test for conflicts..."
+          if ! git merge origin/main --no-edit; then
+            echo "⚠️ Merge conflicts detected with origin/main. AI Fixer will resolve conflict markers."
+          else
+            echo "Clean merge with origin/main completed."
+          fi
 
       - name: Ensure Latest AI Fixer Script Present
         run: |
@@ -79,12 +94,18 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Run Autonomous CI Repair Agent
+      - name: Run Autonomous CI Repair & Conflict Agent
         id: repair
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_SOLVER_KEY || secrets.GEMINI_API_KEY }}
-          GEMINI_FALLBACK_KEY: ${{ secrets.GEMINI_REVIEWER_KEY || secrets.GEMINI_ISSUE_KEY }}
+          GEMINI_SOLVER_KEY: ${{ secrets.GEMINI_SOLVER_KEY || secrets.GEMINI_API_KEY }}
+          GEMINI_REVIEWER_KEY: ${{ secrets.GEMINI_REVIEWER_KEY || secrets.GEMINI_ISSUE_KEY }}
           GEMINI_KEY_POOL: ${{ secrets.GEMINI_KEY_POOL || '' }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY || '' }}
+          HUGGINGFACE_API_KEY: ${{ secrets.HUGGINGFACE_API_KEY || '' }}
+          COHERE_API_KEY: ${{ secrets.COHERE_API_KEY || '' }}
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY || '' }}
+          NVIDIA_API_KEY_2: ${{ secrets.NVIDIA_API_KEY_2 || '' }}
           PR_NUM: ${{ steps.meta.outputs.pr_num }}
           GH_TOKEN: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
@@ -109,20 +130,48 @@ jobs:
           git config --global user.name "Aditya Dahale"
           git config --global user.email "aditya-9-6@users.noreply.github.com"
           
-          if git diff --quiet && git diff --staged --quiet; then
+          ORIGIN_SHA=$(git rev-parse "origin/$HEAD_REF" 2>/dev/null || echo "")
+          CURRENT_SHA=$(git rev-parse HEAD)
+
+          if git diff --quiet && git diff --staged --quiet && [ "$CURRENT_SHA" = "$ORIGIN_SHA" ]; then
             echo "No changes needed or produced."
             echo "has_changes=false" >> $GITHUB_ENV
           else
-            git rm --cached -f ai_pr_*.md ai_review_*.json ci_fix_*.md 2>/dev/null || true
-            git add -A
-            git reset -- ai_pr_*.md ai_review_*.json ci_fix_*.md 2>/dev/null || true
-            git commit -m "fix(ci): autonomous repair for failing CI tests on PR #${PR_NUM}" -m "Co-authored-by: Aditya Dahale <aditya-9-6@users.noreply.github.com>"
+            if ! git diff --quiet || ! git diff --staged --quiet; then
+              git rm --cached -f ai_pr_*.md ai_review_*.json ci_fix_*.md 2>/dev/null || true
+              git add -A
+              git reset -- ai_pr_*.md ai_review_*.json ci_fix_*.md 2>/dev/null || true
+              git commit -m "fix(ci): autonomous repair & conflict resolution for PR #${PR_NUM}" -m "Co-authored-by: Aditya Dahale <aditya-9-6@users.noreply.github.com>" || true
+            fi
             git remote set-url origin "https://x-access-token:${AUTH_TOKEN}@github.com/${{ github.repository }}.git"
-            git push origin "$HEAD_REF"
+            git push origin "$HEAD_REF" || {
+              echo "App push failed (possibly due to workflow permissions). Falling back to GITHUB_TOKEN..."
+              git remote set-url origin "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
+              git push origin "$HEAD_REF"
+            }
             COMMIT_SHA=$(git rev-parse --short HEAD)
             echo "has_changes=true" >> $GITHUB_ENV
             echo "commit_sha=$COMMIT_SHA" >> $GITHUB_ENV
           fi
+
+      - name: Re-trigger CI Checks
+        if: always()
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUM: ${{ steps.meta.outputs.pr_num }}
+          HEAD_REF: ${{ steps.meta.outputs.head_ref }}
+        run: |
+          echo "Re-triggering failed CI runs for PR #$PR_NUM on $HEAD_REF..."
+          FAILED_RUNS=$(gh run list -b "$HEAD_REF" --limit 5 --json databaseId,conclusion --jq '.[] | select(.conclusion=="failure") | .databaseId')
+          if [ -n "$FAILED_RUNS" ]; then
+            for r in $FAILED_RUNS; do
+              echo "Re-running failed workflow run $r..."
+              gh run rerun "$r" --failed || true
+            done
+          fi
+          # Also dispatch pr-validation.yml if available
+          gh workflow run pr-validation.yml --ref "$HEAD_REF" 2>/dev/null || true
 
       - name: Comment Resolution on PR
         if: always()
@@ -135,5 +184,5 @@ jobs:
           if [ -f "ci_fix_summary.md" ]; then
             gh pr comment "$PR_NUM" --body-file "ci_fix_summary.md"
           elif [ "$has_changes" = "true" ]; then
-            gh pr comment "$PR_NUM" --body "✅ **CI Fix Applied!** Pushed commit \`$commit_sha\` to \`$HEAD_REF\`."
+            gh pr comment "$PR_NUM" --body "✅ **CI Fix Applied!** Pushed commit \`$commit_sha\` to \`$HEAD_REF\` and re-triggered CI validation."
           fi
