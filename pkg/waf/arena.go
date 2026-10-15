@@ -1,11 +1,9 @@
 package waf
 
 import (
+	"github.com/Aditya-9-6/DevProxy/pkg/proxy"
 	"sync"
 )
-
-// CacheLinePad ensures cache line alignment to prevent false sharing.
-type CacheLinePad [8]uint64
 
 // Arena provides pre-allocated fixed memory buffers to guarantee zero GC overhead on the hot path.
 type Arena struct {
@@ -36,3 +34,5 @@ func (a *Arena) Put(buf []byte) {
 		a.pool.Put(buf[:0])
 	}
 }
+
+var _ = proxy.CacheLinePad{}
