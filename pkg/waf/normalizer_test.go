@@ -1,7 +1,7 @@
 package waf
 
 import (
-	"sync"
+	sync "sync"
 	"testing"
 )
 
