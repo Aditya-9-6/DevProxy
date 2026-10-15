@@ -1,12 +1,12 @@
 package waf
 
 import (
+	"bytes"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
-	"strings"
 	"sync/atomic"
 )
 
@@ -26,24 +26,31 @@ func NewCookieEngine(secretKey string) *CookieEngine {
 	}
 }
 
-func (e *CookieEngine) Validate(cookieValue string) (string, error) {
-	parts := strings.Split(cookieValue, ".")
-	if len(parts) != 2 {
+func (e *CookieEngine) Validate(cookieValue []byte) ([]byte, error) {
+	idx := bytes.IndexByte(cookieValue, '.')
+	if idx == -1 {
 		e.incrementFailures()
-		return "", ErrInvalidCookieFormat
+		return nil, ErrInvalidCookieFormat
 	}
 
-	payload, err := base64.RawURLEncoding.DecodeString(parts[0])
-	if err != nil {
-		e.incrementFailures()
-		return "", err
-	}
+	payloadPart := cookieValue[:idx]
+	sigPart := cookieValue[idx+1:]
 
-	sig, err := hex.DecodeString(parts[1])
+	payload := make([]byte, base64.RawURLEncoding.DecodedLen(len(payloadPart)))
+	n, err := base64.RawURLEncoding.Decode(payload, payloadPart)
 	if err != nil {
 		e.incrementFailures()
-		return "", err
+		return nil, err
 	}
+	payload = payload[:n]
+
+	sig := make([]byte, hex.DecodedLen(len(sigPart)))
+	n, err = hex.Decode(sig, sigPart)
+	if err != nil {
+		e.incrementFailures()
+		return nil, err
+	}
+	sig = sig[:n]
 
 	mac := hmac.New(sha256.New, e.secretKey)
 	mac.Write(payload)
@@ -51,10 +58,10 @@ func (e *CookieEngine) Validate(cookieValue string) (string, error) {
 
 	if !hmac.Equal(sig, expectedSig) {
 		e.incrementFailures()
-		return "", ErrInvalidSignature
+		return nil, ErrInvalidSignature
 	}
 
-	return string(payload), nil
+	return payload, nil
 }
 
 func (e *CookieEngine) incrementFailures() {
