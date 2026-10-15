@@ -7,9 +7,6 @@ import (
 	"sync/atomic"
 )
 
-// CacheLinePad prevents false sharing on hot atomic counters.
-type CacheLinePad [8]uint64
-
 // CookieFilter implements a lock-free probabilistic signature verification filter.
 // It uses a bit-array of size 2^20 (1M bits) for low collision probability.
 type CookieFilter struct {
