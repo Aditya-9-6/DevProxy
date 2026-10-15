@@ -15,7 +15,6 @@ func TestFlightRecorder(t *testing.T) {
 		t.Errorf("expected 2 events, got %d", len(flushed))
 	}
 
-	// Ensure flushed buffers are safely recycled (return them manually or via pool helper if needed)
 	for _, buf := range flushed {
 		BufferPool.Put(buf)
 	}
@@ -30,7 +29,7 @@ func TestFlightRecorder_ConcurrentLoad(t *testing.T) {
 	wg.Add(goroutines)
 
 	for i := 0; i < goroutines; i++ {
-		go func(id int) {
+		go func() {
 			defer wg.Done()
 			for j := 0; j < iterations; j++ {
 				recorder.Record([]byte("concurrent-event"))
@@ -41,12 +40,11 @@ func TestFlightRecorder_ConcurrentLoad(t *testing.T) {
 					}
 				}
 			}
-		}(i)
+		}()
 	}
 
 	wg.Wait()
 
-	// Final flush to clear remaining items
 	flushed := recorder.Flush()
 	for _, buf := range flushed {
 		BufferPool.Put(buf)
