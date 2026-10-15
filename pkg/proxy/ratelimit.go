@@ -3,14 +3,12 @@ package proxy
 import (
 	"sync/atomic"
 	"time"
+	// CacheLinePad is defined in canonical.go to avoid redeclaration conflicts.
 )
 
-// CacheLinePad prevents false sharing by padding structures to 64 bytes.
-type CacheLinePad [8]uint64
-
-// TokenBucketV2 implements a thread-safe, lock-free token bucket using atomic fields.
+// TokenBucket implements a thread-safe, lock-free token bucket using atomic fields.
 // Padding is used to prevent false sharing on cache lines.
-type TokenBucketV2 struct {
+type TokenBucket struct {
 	_          CacheLinePad
 	capacity   uint64
 	refillRate uint64
@@ -20,17 +18,19 @@ type TokenBucketV2 struct {
 	_          CacheLinePad
 }
 
-func NewTokenBucketV2(capacity, refillRate uint64) *TokenBucketV2 {
-	b := &TokenBucketV2{
+// NewTokenBucket creates a new token bucket with specified capacity and refill rate per second.
+func NewTokenBucket(capacity, refillRate uint64) *TokenBucket {
+	bp := &TokenBucket{
 		capacity:   capacity,
 		refillRate: refillRate,
 	}
-	b.tokens.Store(capacity)
-	b.lastRefill.Store(time.Now().UnixNano())
-	return b
+	bp.tokens.Store(capacity)
+	bp.lastRefill.Store(time.Now().UnixNano())
+	return bp
 }
 
-func (b *TokenBucketV2) Allow() bool {
+// Allow checks if a token can be consumed concurrently in a lock-free manner.
+func (b *TokenBucket) Allow() bool {
 	for {
 		now := time.Now().UnixNano()
 		last := b.lastRefill.Load()
@@ -52,6 +52,7 @@ func (b *TokenBucketV2) Allow() bool {
 		}
 
 		if b.tokens.CompareAndSwap(tok, newTokens-1) {
+			// Safely update lastRefill matching the tokens state transition
 			b.lastRefill.Store(now)
 			return true
 		}
