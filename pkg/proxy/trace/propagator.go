@@ -1,6 +1,7 @@
 package trace
 
 import (
+	"encoding/binary"
 	"encoding/hex"
 	"io"
 	"sync"
@@ -41,10 +42,7 @@ func (p *Propagator) WriteTraceParent(w io.Writer, traceID [16]byte) error {
 	buf[35] = '-'
 
 	var spanBytes [8]byte
-	for i := 0; i < 8; i++ {
-		shift := uint(56 - i*8)
-		spanBytes[i] = uint8((spanID >> shift) & 0xFF)
-	}
+	binary.BigEndian.PutUint64(spanBytes[:], spanID)
 	hex.Encode(buf[36:52], spanBytes[:])
 	buf[52] = '-'
 	buf[53] = '0'
