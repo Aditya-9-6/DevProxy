@@ -1,0 +1,87 @@
+name: PR Auto-Merger Gate
+
+on:
+  workflow_run:
+    workflows:
+      - "PR Validation & Quality Gate"
+      - "AI CI Test Fixer Bot"
+      - "Security Scan (Gosec)"
+    types: [completed]
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "Pull Request number to evaluate and auto-merge"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  actions: read
+
+concurrency:
+  group: auto-merge-${{ github.event.issue.number || github.event.inputs.pr_number || github.event.workflow_run.id }}
+  cancel-in-progress: false
+
+jobs:
+  auto-merge:
+    name: Auto-Merge Gatekeeper
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') ||
+      (github.event_name == 'issue_comment' && github.event.issue.pull_request && (
+        contains(github.event.comment.body, '/merge') ||
+        contains(github.event.comment.body, '/automerge')
+      ))
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate GitHub App Token (Higher Rate Limits)
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        continue-on-error: true
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Resolve PR and Evaluate Auto-Merge
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          PR_NUM=""
+          NOTIFY_FLAG=""
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            PR_NUM="${{ github.event.inputs.pr_number }}"
+            NOTIFY_FLAG="--notify-on-failure"
+          elif [ "${{ github.event_name }}" = "issue_comment" ]; then
+            PR_NUM="${{ github.event.issue.number }}"
+            NOTIFY_FLAG="--notify-on-failure"
+          elif [ "${{ github.event_name }}" = "workflow_run" ]; then
+            # Extract PR number associated with the workflow run
+            HEAD_BRANCH="${{ github.event.workflow_run.head_branch }}"
+            echo "Workflow run completed for branch: $HEAD_BRANCH"
+            PR_NUM=$(gh pr list --head "$HEAD_BRANCH" --state open --json number --jq '.[0].number // empty')
+            NOTIFY_FLAG=""
+          fi
+
+          if [ -z "$PR_NUM" ]; then
+            echo "[*] No active open PR found for this trigger. Exiting cleanly."
+            exit 0
+          fi
+
+          echo "Evaluating auto-merge for PR #$PR_NUM with notify_flag='$NOTIFY_FLAG'..."
+          python3 .github/scripts/auto_merge_pr.py --pr-number "$PR_NUM" $NOTIFY_FLAG || true
