@@ -9,8 +9,6 @@ import (
 
 // ParameterValidator tracks parameter multiplicity using atomic counters.
 type ParameterValidator struct {
-	// Multiplicity counters for common parameter names.
-	// Using a fixed array for O(1) access without map allocations.
 	Counters [256]CacheLinePad
 }
 
@@ -26,10 +24,9 @@ func (v *ParameterValidator) ValidateQuery(query string) bool {
 		return true
 	}
 
-	// Stack-allocated bitmap to track seen keys without map allocation.
-	var seenBits [4]uint64
+	// Increased bitset to 1024 bits (16 * 64) to reduce collision probability.
+	var seenBits [16]uint64
 
-	// Parse query string by iterating over & and ; delimiters without strings.Split allocations.
 	start := 0
 	for i := 0; i <= len(query); i++ {
 		if i == len(query) || query[i] == '&' || query[i] == ';' {
@@ -40,17 +37,15 @@ func (v *ParameterValidator) ValidateQuery(query string) bool {
 					key = part[:idx]
 				}
 
-				// Unescape key if needed to catch URL-encoded variations
 				if unescaped, err := url.QueryUnescape(key); err == nil {
 					key = unescaped
 				}
 
 				key = strings.ToLower(key)
 				hash := fnv32a(key)
-				wordIdx := (hash >> 6) & 3
+				wordIdx := (hash >> 6) & 15
 				bitIdx := hash & 63
 
-				// Check bit
 				if (seenBits[wordIdx] & (1 << bitIdx)) != 0 {
 					return false
 				}

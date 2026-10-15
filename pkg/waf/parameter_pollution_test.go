@@ -1,6 +1,8 @@
 package waf
 
 import (
+	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -18,6 +20,18 @@ func TestParameterPollution(t *testing.T) {
 	t.Run("PollutedRequest", func(t *testing.T) {
 		if validator.ValidateQuery("id=123&id=456") {
 			t.Error("Expected polluted request to fail")
+		}
+	})
+
+	t.Run("CollisionStress", func(t *testing.T) {
+		// Generate many unique keys to ensure bitset doesn't trigger false positives easily
+		var sb strings.Builder
+		for i := 0; i < 50; i++ {
+			sb.WriteString(fmt.Sprintf("key%d=val&", i))
+		}
+		query := sb.String()
+		if !validator.ValidateQuery(query) {
+			t.Error("Expected high-cardinality unique query to pass")
 		}
 	})
 
