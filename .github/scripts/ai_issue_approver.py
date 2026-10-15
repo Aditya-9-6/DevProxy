@@ -19,14 +19,12 @@ import urllib.request
 import urllib.error
 from pathlib import Path
 
-DEFAULT_MODEL = "gemini-2.5-flash"
+DEFAULT_MODEL = "gemini-3.1-flash-lite"
 FALLBACK_MODELS = [
-    "gemini-2.5-flash",
-    "gemini-2.5-flash-lite",
     "gemini-3.1-flash-lite",
     "gemini-3.5-flash-lite",
     "gemini-3.5-flash",
-    "gemini-3.7-flash",
+    "gemini-flash-latest",
 ]
 
 SYSTEM_PROMPT = """You are the Principal AI Architect and Gatekeeper.
@@ -110,13 +108,13 @@ def call_gemini(api_key: str, prompt: str, system_prompt: str = SYSTEM_PROMPT) -
                 headers={"Content-Type": "application/json"}, method="POST"
             )
             try:
-                with urllib.request.urlopen(req, timeout=90) as resp:
+                with urllib.request.urlopen(req, timeout=15) as resp:
                     data = json.loads(resp.read().decode("utf-8"))
                     text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
                     return extract_json_response(text)
             except urllib.error.HTTPError as e:
                 last_err = e.read().decode("utf-8", errors="replace")
-                if e.code in (404, 429):
+                if e.code in (400, 401, 403, 429):
                     break
                 continue
             except Exception as e:
@@ -124,11 +122,12 @@ def call_gemini(api_key: str, prompt: str, system_prompt: str = SYSTEM_PROMPT) -
                 continue
     raise RuntimeError(f"Gemini API exhausted. Last error: {last_err}")
 
-def call_openrouter(api_key: str, prompt: str, system_prompt: str = SYSTEM_PROMPT) -> dict:
-    if not api_key:
+def call_openrouter(api_key: str = "", prompt: str = "", system_prompt: str = SYSTEM_PROMPT) -> dict:
+    key = api_key or os.environ.get("OPENROUTER_API_KEY", "").strip()
+    if not key:
         raise ValueError("Missing OPENROUTER_API_KEY")
     url = "https://openrouter.ai/api/v1/chat/completions"
-    models = ["deepseek/deepseek-chat", "meta-llama/llama-3.3-70b-instruct", "google/gemini-2.5-flash"]
+    models = ["google/gemini-2.0-flash-001", "meta-llama/llama-3.3-70b-instruct", "deepseek/deepseek-chat"]
     for model in models:
         payload = {
             "model": model,
@@ -137,10 +136,10 @@ def call_openrouter(api_key: str, prompt: str, system_prompt: str = SYSTEM_PROMP
         }
         req = urllib.request.Request(
             url, data=json.dumps(payload).encode("utf-8"),
-            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}, method="POST"
+            headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"}, method="POST"
         )
         try:
-            with urllib.request.urlopen(req, timeout=90) as resp:
+            with urllib.request.urlopen(req, timeout=30) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
                 return extract_json_response(data["choices"][0]["message"]["content"])
         except Exception:
@@ -153,12 +152,10 @@ def call_ai_model(prompt: str) -> dict:
         return call_gemini(primary_gemini, prompt)
     except Exception as e:
         print(f"[!] Gemini failed: {e}. Trying OpenRouter...", file=sys.stderr)
-    openrouter_key = os.environ.get("OPENROUTER_API_KEY", "").strip()
-    if openrouter_key:
-        try:
-            return call_openrouter(openrouter_key, prompt)
-        except Exception:
-            pass
+    try:
+        return call_openrouter(prompt=prompt)
+    except Exception as e:
+        print(f"[!] OpenRouter failed: {e}", file=sys.stderr)
     raise RuntimeError("All AI models exhausted in issue approver.")
 
 def run_cmd(cmd: list[str], cwd: Path = Path(".")) -> tuple[int, str, str]:
