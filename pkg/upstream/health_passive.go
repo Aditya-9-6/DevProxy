@@ -39,7 +39,12 @@ func (pm *PassiveMonitor) Close() {
 }
 
 func (pm *PassiveMonitor) Observe(start time.Time) {
-	duration := uint64(time.Since(start).Milliseconds())
+	ms := time.Since(start).Milliseconds()
+	var duration uint64
+	if ms > 0 {
+		// #nosec G115 -- ms is verified to be positive
+		duration = uint64(ms) // #nosec G115
+	}
 	pm.window.Record(duration)
 
 	// Force refresh stats for immediate evaluation in tests/observers if needed

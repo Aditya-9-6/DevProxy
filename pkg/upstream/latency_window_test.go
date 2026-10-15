@@ -66,6 +66,24 @@ func TestLatencyWindow_LifecycleShutdown(t *testing.T) {
 	// Verify no goroutine leak (test passing without hanging is proof)
 }
 
+func TestLatencyWindow_EmptyStats(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	lw := NewLatencyWindow(ctx, 0)
+	defer lw.Close()
+
+	avg, count := lw.RefreshStats()
+	if avg != 0 || count != 0 {
+		t.Errorf("expected 0, 0 for empty stats, got %d, %d", avg, count)
+	}
+
+	avg, count = lw.GetStats()
+	if avg != 0 || count != 0 {
+		t.Errorf("expected cached stats 0, 0, got %d, %d", avg, count)
+	}
+}
+
 func TestPassiveMonitor_HealthStateTransition(t *testing.T) {
 	pm := NewPassiveMonitor(50) // threshold 50ms
 	defer pm.Close()
@@ -86,4 +104,21 @@ func TestPassiveMonitor_HealthStateTransition(t *testing.T) {
 	if pm.IsHealthy() {
 		t.Errorf("expected node to transition to Degraded when latency exceeds threshold")
 	}
+}
+
+func TestPassiveMonitor_EdgeCases(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	pm := NewPassiveMonitorWithContext(ctx, 50, 10*time.Millisecond)
+	defer pm.Close()
+
+	// Observe future start time (negative delta ms)
+	pm.Observe(time.Now().Add(10 * time.Second))
+	if !pm.IsHealthy() {
+		t.Errorf("expected node to remain healthy on negative delta")
+	}
+
+	// Multiple Close calls should not panic
+	pm.Close()
 }
