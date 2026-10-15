@@ -5,12 +5,9 @@ import (
 	"time"
 )
 
-<<<<<<< HEAD
-=======
 // MitigationPad prevents false sharing by padding atomic counters to 64 bytes.
 type MitigationPad [8]uint64
 
->>>>>>> origin/main
 // Mitigator tracks socket states using lock-free atomic counters.
 type Mitigator struct {
 	ActiveConnections   MitigationPad
