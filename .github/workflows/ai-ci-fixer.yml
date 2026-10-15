@@ -15,6 +15,7 @@ permissions:
   pull-requests: write
   issues: write
   actions: write
+  workflows: write
 
 concurrency:
   group: ai-fixer-${{ github.event.issue.number || github.event.inputs.pr_number }}
@@ -139,7 +140,11 @@ jobs:
             git reset -- ai_pr_*.md ai_review_*.json ci_fix_*.md 2>/dev/null || true
             git commit -m "fix(ci): autonomous repair & conflict resolution for PR #${PR_NUM}" -m "Co-authored-by: Aditya Dahale <aditya-9-6@users.noreply.github.com>"
             git remote set-url origin "https://x-access-token:${AUTH_TOKEN}@github.com/${{ github.repository }}.git"
-            git push origin "$HEAD_REF"
+            git push origin "$HEAD_REF" || {
+              echo "App push failed (possibly due to workflow permissions). Falling back to GITHUB_TOKEN..."
+              git remote set-url origin "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
+              git push origin "$HEAD_REF"
+            }
             COMMIT_SHA=$(git rev-parse --short HEAD)
             echo "has_changes=true" >> $GITHUB_ENV
             echo "commit_sha=$COMMIT_SHA" >> $GITHUB_ENV
@@ -154,7 +159,7 @@ jobs:
           HEAD_REF: ${{ steps.meta.outputs.head_ref }}
         run: |
           echo "Re-triggering failed CI runs for PR #$PR_NUM on $HEAD_REF..."
-          FAILED_RUNS=$(gh run list --pr "$PR_NUM" --limit 5 --json databaseId,conclusion --jq '.[] | select(.conclusion=="failure") | .databaseId')
+          FAILED_RUNS=$(gh run list -b "$HEAD_REF" --limit 5 --json databaseId,conclusion --jq '.[] | select(.conclusion=="failure") | .databaseId')
           if [ -n "$FAILED_RUNS" ]; then
             for r in $FAILED_RUNS; do
               echo "Re-running failed workflow run $r..."
