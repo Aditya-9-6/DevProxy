@@ -22,8 +22,9 @@ func (t *TraceRecorder) Wrap(next http.Handler) http.Handler {
 		duration := time.Since(start)
 
 		if duration > 500*time.Millisecond {
-			// Flush logic would trigger here
-			_ = t.recorder.Flush()
+			t.recorder.Flush(func(b []byte) {
+				// Process flushed telemetry data
+			})
 		}
 	})
 }

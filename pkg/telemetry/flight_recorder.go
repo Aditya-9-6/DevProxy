@@ -31,15 +31,13 @@ func (f *FlightRecorder) Record(data []byte) {
 	}
 }
 
-// Flush returns all captured events and clears the buffer slots.
-func (f *FlightRecorder) Flush() [][]byte {
-	var results [][]byte
+// Flush processes all captured events via a callback to avoid allocations.
+func (f *FlightRecorder) Flush(fn func([]byte)) {
 	for i := 0; i < 1024; i++ {
-		// Atomically clear the slot
 		old := f.buffer[i].Swap(nil)
 		if old != nil {
-			results = append(results, *old)
+			fn(*old)
+			BufferPool.Put(*old)
 		}
 	}
-	return results
 }

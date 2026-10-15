@@ -1,6 +1,7 @@
 package telemetry
 
 import (
+	"bytes"
 	"sync"
 	"testing"
 )
@@ -10,14 +11,30 @@ func TestFlightRecorder(t *testing.T) {
 	recorder.Record([]byte("event1"))
 	recorder.Record([]byte("event2"))
 
-	flushed := recorder.Flush()
-	if len(flushed) != 2 {
-		t.Errorf("expected 2 events, got %d", len(flushed))
+	count := 0
+	recorder.Flush(func(b []byte) {
+		count++
+	})
+
+	if count != 2 {
+		t.Errorf("expected 2 events, got %d", count)
+	}
+}
+
+func TestFlightRecorder_LargePayload(t *testing.T) {
+	recorder := NewFlightRecorder()
+	largeData := make([]byte, 4096)
+	for i := range largeData {
+		largeData[i] = byte(i % 256)
 	}
 
-	for _, buf := range flushed {
-		BufferPool.Put(buf)
-	}
+	recorder.Record(largeData)
+
+	recorder.Flush(func(b []byte) {
+		if !bytes.Equal(b, largeData) {
+			t.Error("data mismatch in large payload")
+		}
+	})
 }
 
 func TestFlightRecorder_ConcurrentLoad(t *testing.T) {
@@ -34,19 +51,12 @@ func TestFlightRecorder_ConcurrentLoad(t *testing.T) {
 			for j := 0; j < iterations; j++ {
 				recorder.Record([]byte("concurrent-event"))
 				if j%50 == 0 {
-					flushed := recorder.Flush()
-					for _, buf := range flushed {
-						BufferPool.Put(buf)
-					}
+					recorder.Flush(func(b []byte) {})
 				}
 			}
 		}()
 	}
 
 	wg.Wait()
-
-	flushed := recorder.Flush()
-	for _, buf := range flushed {
-		BufferPool.Put(buf)
-	}
+	recorder.Flush(func(b []byte) {})
 }
