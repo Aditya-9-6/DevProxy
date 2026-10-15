@@ -60,12 +60,17 @@ func (p *DeflatePipe) CompressStream(dst io.Writer, src io.Reader) error {
 	}
 	defer w.Close()
 
-	// Use buffer from pool as temporary chunk read buffer
-	tmpBuf := make([]byte, 16384)
+	// Ensure buffer has adequate capacity and slice length for reading
+	if cap(*bufPtr) < 16384 {
+		*bufPtr = make([]byte, 16384)
+	} else {
+		*bufPtr = (*bufPtr)[:16384]
+	}
+
 	for {
-		n, rErr := src.Read(tmpBuf)
+		n, rErr := src.Read(*bufPtr)
 		if n > 0 {
-			_, wErr := w.Write(tmpBuf[:n])
+			_, wErr := w.Write((*bufPtr)[:n])
 			if wErr != nil {
 				atomic.AddUint64(&p.stats.ErrorsCount[0], 1)
 				return wErr
