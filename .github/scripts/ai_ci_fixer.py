@@ -454,14 +454,16 @@ def run_diagnostics(workspace: Path, pr_number: str = "") -> tuple[int, str]:
         combined = (test_res.stdout + "\n" + test_res.stderr).strip()
         out_lines.append(combined)
 
-    # Check remote GitHub CI failures if available
-    if pr_number:
+    local_errors = bool(out_lines)
+
+    # Check remote GitHub CI failures as extra diagnostic context only if local tests failed
+    if pr_number and local_errors:
         remote_ci = fetch_remote_ci_errors(pr_number, workspace)
         if remote_ci:
             out_lines.append(remote_ci)
 
     combined_output = "\n".join(out_lines).strip()
-    total_exit = 0 if not combined_output else 1
+    total_exit = 1 if local_errors else 0
     return total_exit, combined_output
 
 def extract_referenced_files(error_log: str, workspace: Path) -> list[str]:
