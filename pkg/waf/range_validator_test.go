@@ -1,6 +1,9 @@
 package waf
 
-import "testing"
+import (
+	"sync"
+	"testing"
+)
 
 func TestRangeValidator(t *testing.T) {
 	tests := []struct {
@@ -20,4 +23,29 @@ func TestRangeValidator(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestRangeValidator_Persistence(t *testing.T) {
+	v := NewRangeValidator()
+	if !v.ValidateRangeHeader("bytes=0-10") {
+		t.Fatal("First request failed")
+	}
+	v.Reset()
+	if !v.ValidateRangeHeader("bytes=0-10") {
+		t.Fatal("Second request failed after reset")
+	}
+}
+
+func TestRangeValidator_Concurrency(t *testing.T) {
+	v := NewRangeValidator()
+	var wg sync.WaitGroup
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			// Concurrent validation of non-overlapping ranges
+			_ = v.ValidateRangeHeader("bytes=0-10")
+		}()
+	}
+	wg.Wait()
 }

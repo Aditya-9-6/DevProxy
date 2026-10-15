@@ -18,6 +18,13 @@ func NewRangeValidator() *RangeValidator {
 	return &RangeValidator{}
 }
 
+// Reset clears the bitset for reuse.
+func (v *RangeValidator) Reset() {
+	for i := range v.bitset {
+		v.bitset[i].Store(0)
+	}
+}
+
 // ValidateRangeHeader checks for range overlaps and excessive range counts.
 func (v *RangeValidator) ValidateRangeHeader(header string) bool {
 	// Strip prefix if present
@@ -67,11 +74,15 @@ func (v *RangeValidator) markRange(start, end int) bool {
 			return false
 		}
 		bit := uint64(1) << (uint(i) % 64)
-		prev := v.bitset[idx].Load()
-		if (prev & bit) != 0 {
-			return false
+		for {
+			prev := v.bitset[idx].Load()
+			if (prev & bit) != 0 {
+				return false
+			}
+			if v.bitset[idx].CompareAndSwap(prev, prev|bit) {
+				break
+			}
 		}
-		v.bitset[idx].Or(bit)
 		if end == -1 {
 			break
 		}
