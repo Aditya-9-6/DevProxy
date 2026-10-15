@@ -13,6 +13,7 @@ var sseBufferPool = sync.Pool{
 }
 
 var ErrMaxBufferExceeded = errors.New("sse: maximum buffer size exceeded")
+var ErrParserClosed = errors.New("sse: parser is closed")
 
 type SSEEvent struct {
 	Data  []byte
@@ -25,6 +26,7 @@ type SSEParser struct {
 	buffer    []byte
 	current   SSEEvent
 	maxBuffer int
+	closed    bool
 }
 
 func NewSSEParser() *SSEParser {
@@ -48,12 +50,31 @@ func (p *SSEParser) Close() {
 		poolBuf := p.buffer[:0]
 		sseBufferPool.Put(poolBuf)
 		p.buffer = nil
+		p.closed = true
 	}
+}
+
+func (p *SSEParser) cloneEvent(e SSEEvent) SSEEvent {
+	clone := SSEEvent{}
+	if len(e.Data) > 0 {
+		clone.Data = append([]byte(nil), e.Data...)
+	}
+	if len(e.Event) > 0 {
+		clone.Event = append([]byte(nil), e.Event...)
+	}
+	if len(e.ID) > 0 {
+		clone.ID = append([]byte(nil), e.ID...)
+	}
+	return clone
 }
 
 func (p *SSEParser) ParseChunk(chunk []byte, onEvent func(SSEEvent)) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+
+	if p.closed {
+		return ErrParserClosed
+	}
 
 	if len(p.buffer)+len(chunk) > p.maxBuffer {
 		return ErrMaxBufferExceeded
@@ -78,7 +99,7 @@ func (p *SSEParser) ParseChunk(chunk []byte, onEvent func(SSEEvent)) error {
 
 		if len(line) == 0 {
 			if len(p.current.Data) > 0 || len(p.current.Event) > 0 || len(p.current.ID) > 0 {
-				onEvent(p.current)
+				onEvent(p.cloneEvent(p.current))
 				p.current = SSEEvent{}
 			}
 			continue
@@ -102,9 +123,9 @@ func (p *SSEParser) ParseChunk(chunk []byte, onEvent func(SSEEvent)) error {
 			p.current.Data = append(p.current.Data, value...)
 			p.current.Data = append(p.current.Data, '\n')
 		case "event":
-			p.current.Event = value
+			p.current.Event = append([]byte(nil), value...)
 		case "id":
-			p.current.ID = value
+			p.current.ID = append([]byte(nil), value...)
 		}
 	}
 
