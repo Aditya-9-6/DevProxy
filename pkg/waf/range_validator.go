@@ -20,6 +20,8 @@ func NewRangeValidator() *RangeValidator {
 
 // ValidateRangeHeader checks for range overlaps and excessive range counts.
 func (v *RangeValidator) ValidateRangeHeader(header string) bool {
+	// Strip prefix if present
+	header = strings.TrimPrefix(header, "bytes=")
 	parts := strings.Split(header, ",")
 	if len(parts) > 16 {
 		return false
@@ -42,24 +44,37 @@ func (v *RangeValidator) parseRange(s string) (int, int) {
 	if len(parts) != 2 {
 		return -1, -1
 	}
-	start, _ := strconv.Atoi(parts[0])
+	start, err1 := strconv.Atoi(parts[0])
 	end := -1
+	var err2 error
 	if parts[1] != "" {
-		end, _ = strconv.Atoi(parts[1])
+		end, err2 = strconv.Atoi(parts[1])
+	}
+	if err1 != nil || (parts[1] != "" && err2 != nil) {
+		return -1, -1
 	}
 	return start, end
 }
 
 func (v *RangeValidator) markRange(start, end int) bool {
-	idx := start / 64
-	bit := uint64(1) << (uint(start) % 64)
-	if idx >= 1024 {
-		return false
+	limit := end
+	if limit == -1 || limit >= 65535 {
+		limit = 65535
 	}
-	prev := v.bitset[idx].Load()
-	if (prev & bit) != 0 {
-		return false
+	for i := start; i <= limit; i++ {
+		idx := i / 64
+		if idx >= 1024 {
+			return false
+		}
+		bit := uint64(1) << (uint(i) % 64)
+		prev := v.bitset[idx].Load()
+		if (prev & bit) != 0 {
+			return false
+		}
+		v.bitset[idx].Or(bit)
+		if end == -1 {
+			break
+		}
 	}
-	v.bitset[idx].Or(bit)
 	return true
 }
