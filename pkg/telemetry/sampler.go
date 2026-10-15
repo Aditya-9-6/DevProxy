@@ -4,9 +4,6 @@ import (
 	"sync/atomic"
 )
 
-// CacheLinePad prevents false sharing by padding atomic counters to 64 bytes.
-type CacheLinePad [8]uint64
-
 // Sampler enforces a dynamic sampling rate using atomic operations.
 type Sampler struct {
 	// counters[0]: total requests, counters[1]: sampled requests, counters[2]: error count
