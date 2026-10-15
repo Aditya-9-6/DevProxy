@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"sync"
 	"testing"
+	"unsafe"
 )
 
 func TestCookieEngine_Validate(t *testing.T) {
@@ -32,14 +33,22 @@ func TestCookieEngine_Validate(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			val, err := engine.Validate(tt.input)
+			dst := make([]byte, 1024)
+			n, err := engine.Validate(tt.input, dst)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
 			}
-			if !tt.wantErr && string(val) != string(payload) {
-				t.Errorf("Expected %s, got %s", payload, val)
+			if !tt.wantErr && string(dst[:n]) != string(payload) {
+				t.Errorf("Expected %s, got %s", payload, dst[:n])
 			}
 		})
+	}
+}
+
+func TestCacheLinePad(t *testing.T) {
+	var p CacheLinePad
+	if unsafe.Sizeof(p) < 64 {
+		t.Errorf("CacheLinePad size too small: %d", unsafe.Sizeof(p))
 	}
 }
 
@@ -50,7 +59,7 @@ func TestCookieEngine_Concurrency(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, _ = engine.Validate([]byte("invalid.sig"))
+			_, _ = engine.Validate([]byte("invalid.sig"), make([]byte, 1024))
 		}()
 	}
 	wg.Wait()
@@ -67,10 +76,11 @@ func BenchmarkCookieValidate(b *testing.B) {
 	mac.Write(payload)
 	sig := hex.EncodeToString(mac.Sum(nil))
 	cookie := []byte(base64.RawURLEncoding.EncodeToString(payload) + "." + sig)
+	dst := make([]byte, 1024)
 
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, _ = engine.Validate(cookie)
+		_, _ = engine.Validate(cookie, dst)
 	}
 }

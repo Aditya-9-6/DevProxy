@@ -26,11 +26,11 @@ func NewCookieEngine(secretKey string) *CookieEngine {
 	}
 }
 
-func (e *CookieEngine) Validate(cookieValue []byte) ([]byte, error) {
+func (e *CookieEngine) Validate(cookieValue []byte, dst []byte) (int, error) {
 	idx := bytes.IndexByte(cookieValue, '.')
 	if idx == -1 {
 		e.incrementFailures()
-		return nil, ErrInvalidCookieFormat
+		return 0, ErrInvalidCookieFormat
 	}
 
 	payloadPart := cookieValue[:idx]
@@ -42,16 +42,20 @@ func (e *CookieEngine) Validate(cookieValue []byte) ([]byte, error) {
 	n, err := base64.RawURLEncoding.Decode(buf, payloadPart)
 	if err != nil {
 		e.incrementFailures()
-		return nil, err
+		return 0, err
 	}
 	payload := buf[:n]
+
+	if len(dst) < len(payload) {
+		return 0, errors.New("destination buffer too small")
+	}
 
 	sigBuf := GetBuffer()
 	defer PutBuffer(sigBuf)
 	n, err = hex.Decode(sigBuf, sigPart)
 	if err != nil {
 		e.incrementFailures()
-		return nil, err
+		return 0, err
 	}
 
 	mac := hmac.New(sha256.New, e.secretKey)
@@ -60,12 +64,11 @@ func (e *CookieEngine) Validate(cookieValue []byte) ([]byte, error) {
 
 	if !hmac.Equal(sigBuf[:n], expectedSig) {
 		e.incrementFailures()
-		return nil, ErrInvalidSignature
+		return 0, ErrInvalidSignature
 	}
 
-	result := make([]byte, len(payload))
-	copy(result, payload)
-	return result, nil
+	copy(dst, payload)
+	return len(payload), nil
 }
 
 func (e *CookieEngine) incrementFailures() {
