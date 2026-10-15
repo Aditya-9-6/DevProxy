@@ -5,6 +5,9 @@ import (
 	"time"
 )
 
+// CacheLinePad prevents false sharing by padding structures to 64 bytes.
+type CacheLinePad [8]uint64
+
 // TokenBucketV2 implements a thread-safe, lock-free token bucket using atomic fields.
 // Padding is used to prevent false sharing on cache lines.
 type TokenBucketV2 struct {
