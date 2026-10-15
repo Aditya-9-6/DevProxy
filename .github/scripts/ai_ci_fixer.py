@@ -332,6 +332,13 @@ def detect_and_resolve_conflicts(workspace: Path, user_instructions: str = "") -
             subprocess.run(["git", "add", rel_path], cwd=workspace)
             resolved.append(rel_path)
             continue
+
+        if rel_path in ("pkg/waf/types.go", ".gitignore", "go.sum") or rel_path.startswith(".github/"):
+            print(f"[*] Auto-resolving boilerplate/infrastructure conflict in {rel_path} using origin/main...", flush=True)
+            subprocess.run(["git", "checkout", "origin/main", "--", rel_path], cwd=workspace)
+            subprocess.run(["git", "add", rel_path], cwd=workspace)
+            resolved.append(rel_path)
+            continue
         conflicted_text = target_file.read_text(encoding="utf-8", errors="replace")
         if "<<<<<<<" not in conflicted_text and ">>>>>>>" not in conflicted_text:
             print(f"[*] Resolving non-marker conflict in {rel_path} by restoring from origin/main...", flush=True)
