@@ -72,5 +72,8 @@ jobs:
           GEMINI_ISSUE_KEY: ${{ secrets.GEMINI_ISSUE_KEY || '' }}
           GEMINI_REVIEWER_KEY: ${{ secrets.GEMINI_REVIEWER_KEY || '' }}
           GEMINI_SOLVER_KEY: ${{ secrets.GEMINI_SOLVER_KEY || '' }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY || '' }}
+          HUGGINGFACE_API_KEY: ${{ secrets.HUGGINGFACE_API_KEY || '' }}
+          COHERE_API_KEY: ${{ secrets.COHERE_API_KEY || '' }}
         run: |
           python3 .github/scripts/autonomous_loop.py --workspace . --interval 5 --max-cycles ${{ inputs.iterations || '5' }} --timeout-mins 20 --worker-id ${{ matrix.worker }} --num-workers 3
