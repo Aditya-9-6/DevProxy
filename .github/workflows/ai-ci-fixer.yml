@@ -9,6 +9,16 @@ on:
         description: "Pull Request number to fix"
         required: true
         type: string
+      instructions:
+        description: "Optional custom instructions for the fixer agent"
+        required: false
+        default: ""
+        type: string
+  workflow_run:
+    workflows:
+      - "PR Validation & Quality Gate"
+      - "Security Scan (Gosec)"
+    types: [completed]
 
 permissions:
   contents: write
@@ -17,7 +27,7 @@ permissions:
   actions: write
 
 concurrency:
-  group: ai-fixer-${{ github.event.issue.number || github.event.inputs.pr_number }}
+  group: ai-fixer-${{ github.event.issue.number || github.event.inputs.pr_number || github.event.workflow_run.head_branch }}
   cancel-in-progress: false
 
 jobs:
@@ -25,7 +35,8 @@ jobs:
     name: Autonomous CI Fixer & Conflict Resolver
     if: >
       github.event_name == 'workflow_dispatch' ||
-      (github.event.issue.pull_request && contains(github.event.comment.body, '/fix'))
+      (github.event_name == 'issue_comment' && github.event.issue.pull_request && contains(github.event.comment.body, '/fix')) ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'failure' && github.event.workflow_run.head_branch != 'main' && github.event.workflow_run.head_branch != 'master')
     runs-on: ubuntu-latest
     steps:
       - name: Generate GitHub App Token (Higher Rate Limits)
@@ -41,9 +52,29 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
+          EVENT_NAME: ${{ github.event_name }}
+          COMMENT_BODY: ${{ github.event.comment.body || '' }}
+          DISPATCH_INSTRUCTIONS: ${{ github.event.inputs.instructions || '' }}
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             PR_NUM="${{ github.event.inputs.pr_number }}"
+          elif [ "${{ github.event_name }}" = "workflow_run" ]; then
+            HEAD_BRANCH="${{ github.event.workflow_run.head_branch }}"
+            echo "Workflow run failed for branch: $HEAD_BRANCH. Finding open PR..."
+            PR_NUM=$(gh pr list --head "$HEAD_BRANCH" --state open --json number --jq '.[0].number // empty')
+            if [ -z "$PR_NUM" ]; then
+              echo "No open PR found for branch $HEAD_BRANCH. Skipping CI fixer."
+              echo "skip=true" >> $GITHUB_OUTPUT
+              exit 0
+            fi
+            AUTO_COMMITS=$(gh pr view "$PR_NUM" --json commits --jq '[.commits[].messageHeadline | select(startswith("fix(ci): autonomous repair"))] | length')
+            echo "Consecutive auto-fix commits detected: $AUTO_COMMITS"
+            if [ "$AUTO_COMMITS" -ge 3 ]; then
+              echo "Bot has attempted 3 automatic fixes already on this PR. Pausing to avoid loop."
+              gh pr comment "$PR_NUM" --body "⚠️ **CI Auto-Fixer Paused**: Reached 3 automated repair cycles on \`$HEAD_BRANCH\`. Use \`/fix <optional instructions>\` to manually re-engage or inspect the remaining CI logs."
+              echo "skip=true" >> $GITHUB_OUTPUT
+              exit 0
+            fi
           else
             PR_NUM="${{ github.event.issue.number }}"
           fi
@@ -56,16 +87,19 @@ jobs:
           echo "pr_num=$PR_NUM" >> $GITHUB_OUTPUT
           echo "head_ref=$HEAD_REF" >> $GITHUB_OUTPUT
           echo "title=$TITLE" >> $GITHUB_OUTPUT
+          echo "skip=false" >> $GITHUB_OUTPUT
 
           gh pr comment "$PR_NUM" --body "🤖 **DevProxy CI Auto-Fixer & Conflict Resolver** is analyzing branch \`$HEAD_REF\` against latest \`main\`..."
 
       - name: Checkout PR Branch
+        if: steps.meta.outputs.skip != 'true'
         uses: actions/checkout@v4
         with:
           ref: ${{ steps.meta.outputs.head_ref }}
           fetch-depth: 0
 
       - name: Fetch and Merge Base Branch (Conflict Detection)
+        if: steps.meta.outputs.skip != 'true'
         env:
           HEAD_REF: ${{ steps.meta.outputs.head_ref }}
         run: |
@@ -80,21 +114,25 @@ jobs:
           fi
 
       - name: Ensure Latest AI Fixer Script Present
+        if: steps.meta.outputs.skip != 'true'
         run: |
           git checkout origin/main -- .github/scripts/ai_ci_fixer.py || true
 
       - name: Set up Go
+        if: steps.meta.outputs.skip != 'true'
         uses: actions/setup-go@v5
         with:
           go-version: '1.25'
           cache: true
 
       - name: Set up Python
+        if: steps.meta.outputs.skip != 'true'
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
       - name: Run Autonomous CI Repair & Conflict Agent
+        if: steps.meta.outputs.skip != 'true'
         id: repair
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_SOLVER_KEY || secrets.GEMINI_API_KEY }}
@@ -113,15 +151,18 @@ jobs:
           python3 .github/scripts/ai_ci_fixer.py \
             --pr-number "$PR_NUM" \
             --workspace . \
+            --user-instructions "${{ github.event.inputs.instructions || '' }}" \
             --max-iterations 10
 
       - name: Verify Go Compilation & Format
+        if: steps.meta.outputs.skip != 'true'
         run: |
           go mod tidy
           gofmt -w .
           go vet ./... || true
 
       - name: Commit and Push Fix
+        if: steps.meta.outputs.skip != 'true'
         env:
           HEAD_REF: ${{ steps.meta.outputs.head_ref }}
           PR_NUM: ${{ steps.meta.outputs.pr_num }}
@@ -155,7 +196,7 @@ jobs:
           fi
 
       - name: Re-trigger CI Checks
-        if: always()
+        if: always() && steps.meta.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
@@ -174,7 +215,7 @@ jobs:
           gh workflow run pr-validation.yml --ref "$HEAD_REF" 2>/dev/null || true
 
       - name: Comment Resolution on PR
-        if: always()
+        if: always() && steps.meta.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
@@ -186,3 +227,13 @@ jobs:
           elif [ "$has_changes" = "true" ]; then
             gh pr comment "$PR_NUM" --body "✅ **CI Fix Applied!** Pushed commit \`$commit_sha\` to \`$HEAD_REF\` and re-triggered CI validation."
           fi
+
+      - name: Evaluate PR Auto-Merge Gate
+        if: always() && steps.meta.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUM: ${{ steps.meta.outputs.pr_num }}
+        run: |
+          echo "Evaluating if PR #$PR_NUM can be auto-merged immediately..."
+          python3 .github/scripts/auto_merge_pr.py --pr-number "$PR_NUM" || true
