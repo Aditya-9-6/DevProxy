@@ -1,6 +1,7 @@
 package h2
 
 import (
+	"container/heap"
 	"sync"
 	"sync/atomic"
 )
@@ -11,18 +12,46 @@ type CacheLinePad [8]uint64
 // StreamWeight tracks the relative priority of an HTTP/2 stream.
 type StreamWeight struct {
 	Weight CacheLinePad
+	index  int
 }
 
-// Scheduler manages fair-share bandwidth allocation for HTTP/2 streams.
+// Scheduler manages fair-share bandwidth allocation for HTTP/2 streams using a Max-Heap.
+// This implementation uses a RWMutex for thread-safe access to the underlying heap.
 type Scheduler struct {
 	mu      sync.RWMutex
-	streams []*StreamWeight
+	streams streamHeap
+}
+
+type streamHeap []*StreamWeight
+
+func (h streamHeap) Len() int { return len(h) }
+func (h streamHeap) Less(i, j int) bool {
+	return atomic.LoadUint64(&h[i].Weight[0]) > atomic.LoadUint64(&h[j].Weight[0])
+}
+func (h streamHeap) Swap(i, j int) {
+	h[i], h[j] = h[j], h[i]
+	h[i].index = i
+	h[j].index = j
+}
+func (h *streamHeap) Push(x interface{}) {
+	n := len(*h)
+	item := x.(*StreamWeight)
+	item.index = n
+	*h = append(*h, item)
+}
+func (h *streamHeap) Pop() interface{} {
+	old := *h
+	n := len(old)
+	item := old[n-1]
+	item.index = -1
+	*h = old[0 : n-1]
+	return item
 }
 
 // NewScheduler initializes a new scheduler.
 func NewScheduler() *Scheduler {
 	return &Scheduler{
-		streams: make([]*StreamWeight, 0),
+		streams: make(streamHeap, 0),
 	}
 }
 
@@ -31,17 +60,22 @@ func (s *Scheduler) AddStream(initialWeight uint64) *StreamWeight {
 	sw := &StreamWeight{}
 	sw.Weight[0] = initialWeight
 	s.mu.Lock()
-	s.streams = append(s.streams, sw)
+	heap.Push(&s.streams, sw)
 	s.mu.Unlock()
 	return sw
 }
 
-// UpdateWeight updates the stream weight using atomic store to ensure thread safety.
-func (sw *StreamWeight) UpdateWeight(newWeight uint64) {
+// UpdateWeight updates the stream weight and re-heaps the scheduler.
+func (sw *StreamWeight) UpdateWeight(s *Scheduler, newWeight uint64) {
 	atomic.StoreUint64(&sw.Weight[0], newWeight)
+	s.mu.Lock()
+	if sw.index >= 0 {
+		heap.Fix(&s.streams, sw.index)
+	}
+	s.mu.Unlock()
 }
 
-// SelectStream performs a weighted round-robin selection (simplified fair-share).
+// SelectStream returns the index of the highest weight stream in O(log N).
 func (s *Scheduler) SelectStream() int {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -49,15 +83,5 @@ func (s *Scheduler) SelectStream() int {
 	if len(s.streams) == 0 {
 		return -1
 	}
-
-	bestIdx := 0
-	var maxW uint64
-	for i, sw := range s.streams {
-		w := atomic.LoadUint64(&sw.Weight[0])
-		if w > maxW {
-			maxW = w
-			bestIdx = i
-		}
-	}
-	return bestIdx
+	return s.streams[0].index
 }
