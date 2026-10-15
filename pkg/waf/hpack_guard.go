@@ -1,7 +1,6 @@
 package waf
 
 import (
-	"sync"
 	"sync/atomic"
 )
 
@@ -9,12 +8,6 @@ import (
 type HPACKGuard struct {
 	maxTableSize uint64
 	currentSize  atomic.Uint64
-}
-
-var bufferPool = sync.Pool{
-	New: func() interface{} {
-		return make([]byte, 4096)
-	},
 }
 
 // NewHPACKGuard initializes a guard with a specific memory limit in bytes.
