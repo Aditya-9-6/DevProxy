@@ -1,6 +1,8 @@
 package waf
 
-import "testing"
+import (
+	"testing"
+)
 
 func TestDeframeAndScan(t *testing.T) {
 	scanner := NewSignatureScanner([][]byte{[]byte("malware")})
