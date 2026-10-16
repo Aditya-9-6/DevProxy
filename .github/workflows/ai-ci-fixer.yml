@@ -155,14 +155,14 @@ jobs:
             --max-iterations 10
 
       - name: Verify Go Compilation & Format
-        if: steps.meta.outputs.skip != 'true'
+        if: always() && steps.meta.outputs.skip != 'true'
         run: |
           go mod tidy
           gofmt -w .
           go vet ./... || true
 
       - name: Commit and Push Fix
-        if: steps.meta.outputs.skip != 'true'
+        if: always() && steps.meta.outputs.skip != 'true'
         id: push
         env:
           HEAD_REF: ${{ steps.meta.outputs.head_ref }}
