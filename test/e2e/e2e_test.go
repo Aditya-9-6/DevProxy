@@ -188,9 +188,30 @@ func TestE2E_FullProxyForwardingAndStorage(t *testing.T) {
 	}
 
 	// 6. Query Dashboard REST API
-	dashResp, err := http.Get(fmt.Sprintf("http://%s/api/requests", webAddr))
-	if err != nil {
-		t.Fatalf("failed to query dashboard API: %v", err)
+	// Use a custom client with no proxy to avoid inheriting HTTP_PROXY from CI environment
+	dashClient := &http.Client{
+		Transport: &http.Transport{
+			Proxy: nil,
+		},
+		Timeout: 5 * time.Second,
+	}
+
+	var dashResp *http.Response
+	var errDash error
+	deadlineDash := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadlineDash) {
+		dashResp, errDash = dashClient.Get(fmt.Sprintf("http://%s/api/requests", webAddr))
+		if errDash == nil && dashResp.StatusCode == http.StatusOK {
+			break
+		}
+		if dashResp != nil {
+			dashResp.Body.Close()
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	if errDash != nil {
+		t.Fatalf("failed to query dashboard API: %v", errDash)
 	}
 	defer dashResp.Body.Close()
 
