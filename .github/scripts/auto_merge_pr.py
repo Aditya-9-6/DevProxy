@@ -121,6 +121,8 @@ def auto_merge_pr(pr_number: str, workspace: Path, notify_on_failure: bool = Fal
 
     if can_merge:
         print(f"\n[🎉 READY TO MERGE] PR #{pr_number} meets all conditions! Merging to '{base_ref}'...", flush=True)
+        run_cmd(["gh", "label", "create", "ready-to-merge", "--color", "0e8a16", "-f"], cwd=workspace, check=False)
+        run_cmd(["gh", "pr", "edit", pr_number, "--add-label", "ready-to-merge"], cwd=workspace, check=False)
         # Attempt squash merge first, fallback to regular merge
         code, stdout, stderr = run_cmd([
             "gh", "pr", "merge", pr_number,
@@ -152,7 +154,8 @@ def auto_merge_pr(pr_number: str, workspace: Path, notify_on_failure: bool = Fal
                 run_cmd(["gh", "pr", "comment", pr_number, "--body", err_comment], cwd=workspace)
             return False
 
-    # PR cannot be merged at this time
+    # PR cannot be merged at this time - strip ready-to-merge if present
+    run_cmd(["gh", "pr", "edit", pr_number, "--remove-label", "ready-to-merge"], cwd=workspace, check=False)
     print(f"[!] PR #{pr_number} cannot be merged yet.", flush=True)
     if has_conflicts:
         print(f"    - Blocked: Merge conflicts detected ({mergeable}).", flush=True)
