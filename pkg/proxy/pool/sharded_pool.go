@@ -45,25 +45,23 @@ func (p *ShardedPool) getShardIndex() uint32 {
 	return p.counter.Add(1) & p.mask
 }
 
+func (p *ShardedPool) getShard(idx uint32) *Shard {
+	return p.shards[idx]
+}
+
 func (p *ShardedPool) Acquire(dialer func() (net.Conn, error)) (net.Conn, error) {
 	idx := p.getShardIndex()
-	shard := p.shards[idx]
-
-	shard.mu.Lock()
-	for len(shard.IdleConns) > 0 {
-		conn := shard.IdleConns[len(shard.IdleConns)-1]
-		shard.IdleConns = shard.IdleConns[:len(shard.IdleConns)-1]
-		shard.mu.Unlock()
-		shard.ActiveConn.Add(1)
-		return conn, nil
-	}
-	shard.mu.Unlock()
+	shard := p.getShard(idx)
 
 	conn, err := dialer()
 	if err == nil && conn != nil {
+		shard.mu.Lock()
+		defer shard.mu.Unlock()
+
 		shard.ActiveConn.Add(1)
 		return &pooledConn{Conn: conn, shardIdx: idx}, nil
 	}
+
 	return conn, err
 }
 
@@ -83,7 +81,7 @@ func (p *ShardedPool) Release(conn net.Conn) {
 		idx = p.getShardIndex()
 	}
 
-	shard := p.shards[idx]
+	shard := p.getShard(idx)
 	shard.mu.Lock()
 	defer shard.mu.Unlock()
 
