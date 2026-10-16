@@ -200,6 +200,25 @@ def run_diagnostics(workspace: Path) -> tuple[int, str]:
     combined = "\n".join(out_lines).strip()
     return (0 if not combined else 1), combined
 
+def is_pr_clean_and_green(pr_num: int, workspace: Path) -> bool:
+    """Verifies that PR has zero merge conflicts and all CI checks are green before ready-to-merge is granted."""
+    try:
+        out = run_cmd(["gh", "pr", "view", str(pr_num), "--repo", REPO, "--json", "mergeable,statusCheckRollup"], cwd=workspace)
+        if not out:
+            return False
+        data = json.loads(out)
+        if data.get("mergeable") != "MERGEABLE":
+            return False
+        checks = data.get("statusCheckRollup") or []
+        for c in checks:
+            conclusion = (c.get("conclusion") or "").upper()
+            state = (c.get("state") or "").upper()
+            if conclusion in ("FAILURE", "CANCELLED", "TIMED_OUT") or state in ("FAILURE", "ERROR"):
+                return False
+        return True
+    except Exception:
+        return False
+
 def heal_and_merge_open_prs(workspace: Path, worker_id: int = 1, num_workers: int = 1) -> bool:
     """Finds open AI PRs assigned to this worker shard, self-heals failing checks or /fix comments, reviews, and marks ready."""
     try:
@@ -381,13 +400,15 @@ def heal_and_merge_open_prs(workspace: Path, worker_id: int = 1, num_workers: in
                             except Exception:
                                 pass
 
-                if verdict == "APPROVED" and score >= 90:
-                    print(f"[APPROVED] PR #{pr_num} APPROVED ({score}/100)! Marked ready for manual maintainer merge.", flush=True)
+                if verdict == "APPROVED" and score >= 90 and is_pr_clean_and_green(pr_num, workspace):
+                    print(f"[APPROVED] PR #{pr_num} APPROVED ({score}/100) with 0 conflicts and 100% green CI! Marked ready-to-merge.", flush=True)
                     run_cmd(["gh", "label", "create", "ready-to-merge", "--repo", REPO, "--color", "0E8A16", "-f"], cwd=workspace, check=False)
                     run_cmd(["gh", "pr", "edit", str(pr_num), "--repo", REPO, "--add-label", "ready-to-merge"], cwd=workspace, check=False)
                     print(f"[READY] PR #{pr_num} is clean, green, and awaiting manual merge by maintainer. Leaving open.", flush=True)
                     run_cmd("git checkout main", cwd=workspace, check=False)
                     return True
+                else:
+                    run_cmd(["gh", "pr", "edit", str(pr_num), "--repo", REPO, "--remove-label", "ready-to-merge"], cwd=workspace, check=False)
     finally:
         run_cmd("git checkout main", cwd=workspace, check=False)
     return False
@@ -548,15 +569,16 @@ def solve_issue(workspace: Path, issue_num: int, issue_title: str, issue_body: s
     if review_md_file.exists():
         run_cmd(["gh", "pr", "comment", str(pr_num), "--repo", REPO, "--body-file", str(review_md_file)], cwd=workspace, check=False)
 
-    if verdict == "APPROVED" and score >= 90:
-        print(f"[APPROVED] PR #{pr_num} APPROVED (Score: {score}/100)! Marked ready for manual maintainer merge.", flush=True)
+    if verdict == "APPROVED" and score >= 90 and is_pr_clean_and_green(pr_num, workspace):
+        print(f"[APPROVED] PR #{pr_num} APPROVED (Score: {score}/100) with 0 conflicts and 100% green CI! Marked ready-to-merge.", flush=True)
         run_cmd(["gh", "label", "create", "ready-to-merge", "--repo", REPO, "--color", "0E8A16", "-f"], cwd=workspace, check=False)
         run_cmd(["gh", "pr", "edit", str(pr_num), "--repo", REPO, "--add-label", "ready-to-merge"], cwd=workspace, check=False)
         print(f"[READY] PR #{pr_num} is clean, green, and awaiting manual merge by maintainer. Leaving open.", flush=True)
         run_cmd("git checkout main", cwd=workspace, check=False)
         return True
     else:
-        print(f"[!] PR #{pr_num} verdict: {verdict} (Score: {score}). Awaiting review fixes.", flush=True)
+        run_cmd(["gh", "pr", "edit", str(pr_num), "--repo", REPO, "--remove-label", "ready-to-merge"], cwd=workspace, check=False)
+        print(f"[!] PR #{pr_num} not ready for merge (Verdict: {verdict}, Score: {score}).", flush=True)
         return False
 
 def run_loop_iteration(workspace: Path, worker_id: int = 1, num_workers: int = 1):
