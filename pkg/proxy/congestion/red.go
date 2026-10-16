@@ -1,7 +1,8 @@
 package congestion
 
 import (
-	"math/rand"
+	"crypto/rand"
+	"math/big"
 	"sync/atomic"
 )
 
@@ -39,8 +40,14 @@ func (r *REDController) ShouldDrop() bool {
 	}
 
 	// Calculate probability: (occ - min) / (max - min) * maxProb
-	prob := ((occ - r.minThreshold) * r.maxProb) / (r.maxThreshold - r.minThreshold)
-	return int64(rand.Intn(1000)) < prob
+	prob := big.NewInt(0)
+	prob.Sub(big.NewInt(occ), big.NewInt(r.minThreshold))
+	prob.Mul(prob, big.NewInt(r.maxProb))
+	prob.Div(prob, big.NewInt(r.maxThreshold-r.minThreshold))
+
+	// Generate a cryptographically secure random number between 0 and 1000
+	random, _ := rand.Int(rand.Reader, big.NewInt(1000))
+	return prob.Cmp(random) >= 0
 }
 
 // Increment increases the occupancy count.
