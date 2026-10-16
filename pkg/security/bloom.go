@@ -20,6 +20,7 @@ func fnv1a64(data []byte) uint64 {
 }
 
 // BloomFilter implements a thread-safe, lock-free Bloom filter for IP blacklisting using atomic bitsets.
+// It uses inline double-hashing to avoid heap allocations.
 type BloomFilter struct {
 	bits   []atomic.Uint64
 	size   uint64
@@ -27,6 +28,7 @@ type BloomFilter struct {
 }
 
 // NewBloomFilter creates a new Bloom filter with the specified size (in bits) and number of hash functions.
+// If size is zero, it defaults to 65536.
 func NewBloomFilter(size uint64, hashes uint64) *BloomFilter {
 	if size == 0 {
 		size = 65536
@@ -39,7 +41,7 @@ func NewBloomFilter(size uint64, hashes uint64) *BloomFilter {
 	}
 }
 
-// Add inserts an IP into the filter using inline double-hashing to avoid heap allocations.
+// Add inserts an IP into the filter using inline double-hashing.
 func (b *BloomFilter) Add(ip []byte) {
 	if len(ip) == 0 {
 		return
