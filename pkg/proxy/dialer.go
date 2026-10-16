@@ -14,8 +14,9 @@ type HappyEyeballsDialer struct {
 }
 
 func NewHappyEyeballsDialer() *HappyEyeballsDialer {
+	cache := dns.NewDNSCache()
 	return &HappyEyeballsDialer{
-		resolver: dns.NewResolver(),
+		resolver: dns.NewResolver(cache),
 	}
 }
 
@@ -25,7 +26,7 @@ func (d *HappyEyeballsDialer) DialContext(ctx context.Context, network, address 
 		return (&net.Dialer{}).DialContext(ctx, network, address)
 	}
 
-	addrs, err := d.resolver.Resolve(ctx, host)
+	addrs, err := d.resolver.Lookup(ctx, host)
 	if err != nil {
 		return (&net.Dialer{}).DialContext(ctx, network, address)
 	}
