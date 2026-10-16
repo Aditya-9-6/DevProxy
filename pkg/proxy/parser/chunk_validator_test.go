@@ -20,6 +20,7 @@ func TestChunkValidator_ParseChunkSize(t *testing.T) {
 		{"invalid", 0, ErrInvalidChunkHeader},
 		{"2000", 0, ErrChunkSizeOverflow},
 		{"", 0, ErrInvalidChunkHeader},
+		{"-1", 0, ErrInvalidChunkHeader},
 	}
 
 	for _, tt := range tests {
@@ -62,5 +63,15 @@ func TestChunkValidator_Malformed(t *testing.T) {
 	_, err := validator.ValidateStream(strings.NewReader(raw), nil)
 	if err == nil {
 		t.Error("expected error for malformed stream")
+	}
+}
+
+func TestChunkValidator_NegativeChunkSize(t *testing.T) {
+	validator := NewChunkValidator(1024)
+	rawChunked := "-1\r\nhello\r\n0\r\n\r\n"
+	src := bytes.NewReader([]byte(rawChunked))
+	_, err := validator.ValidateStream(src, nil)
+	if err != ErrInvalidChunkHeader {
+		t.Errorf("expected ErrInvalidChunkHeader, got %v", err)
 	}
 }
