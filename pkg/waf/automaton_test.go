@@ -158,8 +158,8 @@ func TestAutomaton_Scan(t *testing.T) {
 			},
 		},
 		{
-			name: "completely disjoint",
-			data: []byte("foo bar baz"),
+			name:     "completely disjoint",
+			data:     []byte("foo bar baz"),
 			expected: []match{},
 		},
 	}
