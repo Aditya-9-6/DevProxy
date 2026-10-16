@@ -10,6 +10,7 @@ import (
 )
 
 // PipelineQueue manages pipelined HTTP/1.1 requests without locks.
+// It ensures that the capacity is within the uint64 range to prevent overflow.
 type PipelineQueue struct {
 	capacity uint64
 	count    atomic.Uint64
@@ -19,9 +20,17 @@ type PipelineQueue struct {
 }
 
 func NewPipelineQueue(capacity int) *PipelineQueue {
+	// Convert capacity to uint64 to ensure it's within the range
+	cap := uint64(capacity)
+
+	// Check for integer overflow
+	if cap > ^uint64(0) { // ^uint64(0) is the maximum value for uint64
+		cap = ^uint64(0)
+	}
+
 	return &PipelineQueue{
-		capacity: uint64(capacity),
-		queue:    make(chan *http.Request, capacity),
+		capacity: cap,
+		queue:    make(chan *http.Request, int(cap)),
 		pool: sync.Pool{
 			New: func() interface{} {
 				return new(http.Request)
@@ -34,7 +43,9 @@ func (p *PipelineQueue) Enqueue(req *http.Request) bool {
 	if p.count.Load() >= p.capacity {
 		return false
 	}
+
 	p.count.Add(1)
+
 	select {
 	case p.queue <- req:
 		return true
