@@ -2,11 +2,7 @@ package waf
 
 import "sync"
 
-<<<<<<< HEAD
-// BufferPool provides 32KB buffers for large operations.
-=======
-// BufferPool is a global pool for 32KB buffers.
->>>>>>> origin/main
+// BufferPool provides a global pool of 32KB buffers for large operations.
 var BufferPool = sync.Pool{
 	New: func() interface{} {
 		return make([]byte, 32*1024)
@@ -20,31 +16,22 @@ var bufferPool = sync.Pool{
 	},
 }
 
-<<<<<<< HEAD
-// GetBuffer returns a 32KB buffer from the pool.
-=======
-// GetBuffer retrieves a 4KB buffer from the internal pool.
->>>>>>> origin/main
+// GetBuffer retrieves a 32KB buffer from the pool.
 func GetBuffer() []byte {
 	return BufferPool.Get().([]byte)
 }
 
-// PutBuffer returns a 32KB buffer to the pool.
+// PutBuffer returns the 32KB buffer to the pool.
 func PutBuffer(b []byte) {
 	BufferPool.Put(b)
 }
 
-// GetSmallBuffer returns a 4KB buffer from the secondary pool.
+// GetSmallBuffer fetches a 4KB buffer from the secondary pool.
 func GetSmallBuffer() []byte {
 	return bufferPool.Get().([]byte)
 }
 
-<<<<<<< HEAD
-// PutSmallBuffer returns a 4KB buffer to the secondary pool.
+// PutSmallBuffer returns a used 4KB buffer to the secondary pool.
 func PutSmallBuffer(b []byte) {
-=======
-// PutBuffer returns a 4KB buffer to the internal pool.
-func PutBuffer(b []byte) {
->>>>>>> origin/main
 	bufferPool.Put(b)
 }
