@@ -25,7 +25,7 @@ FALLBACK_MODELS = [
     "gemini-3.5-flash",
     "gemini-3.7-flash",
     "gemini-3-flash-preview",
-    "gemini-3.1-pro-preview",
+    "gemini-2.5-pro",
 ]
 
 DEFAULT_KEYS = []
@@ -516,17 +516,17 @@ To complete the merge into `main`:
         if is_approved:
             node.publish(
                 GossipTopic.BEST_PRACTICES,
-                {"pr_number": pr_number, "score": score, "summary": summary},
+                {"pr_number": args.pr_number, "score": score, "summary": summary},
                 repo="DevProxy"
             )
-            print(f"[*] GossipMesh: Broadcasted APPROVED best-practice gossip across mesh for PR #{pr_number}.", flush=True)
+            print(f"[*] GossipMesh: Broadcasted APPROVED best-practice gossip across mesh for PR #{args.pr_number}.", flush=True)
         else:
             node.publish(
                 GossipTopic.ANTI_PATTERNS,
-                {"pr_number": pr_number, "score": score, "action_items": action_items, "summary": summary},
+                {"pr_number": args.pr_number, "score": score, "action_items": action_items, "summary": summary},
                 repo="DevProxy"
             )
-            print(f"[*] GossipMesh: Broadcasted ANTI_PATTERNS feedback gossip across mesh for PR #{pr_number}.", flush=True)
+            print(f"[*] GossipMesh: Broadcasted ANTI_PATTERNS feedback gossip across mesh for PR #{args.pr_number}.", flush=True)
     except Exception as e:
         pass
 
