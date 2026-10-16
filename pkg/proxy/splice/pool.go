@@ -3,7 +3,6 @@ package splice
 import (
 	"fmt"
 	"runtime"
-	"syscall"
 )
 
 func NewPool(size int) (*Pool, error) {
@@ -12,11 +11,11 @@ func NewPool(size int) (*Pool, error) {
 	}
 	pipes := make([]PipePair, size)
 	for i := 0; i < size; i++ {
-		var fds [2]int
-		if err := syscall.Pipe(fds[:]); err != nil {
+		r, w, err := createPipe()
+		if err != nil {
 			return nil, fmt.Errorf("failed to create pipe: %w", err)
 		}
-		pipes[i] = PipePair{Reader: fds[0], Writer: fds[1], Index: i}
+		pipes[i] = PipePair{Reader: r, Writer: w, Index: i}
 	}
 	return &Pool{pipes: pipes, capacity: size}, nil
 }
@@ -50,8 +49,7 @@ func (p *Pool) Release(pipe PipePair) {
 
 func (p *Pool) Close() error {
 	for _, pipe := range p.pipes {
-		syscall.Close(pipe.Reader)
-		syscall.Close(pipe.Writer)
+		closePipe(pipe.Reader, pipe.Writer)
 	}
 	return nil
 }

@@ -19,12 +19,11 @@ from pathlib import Path
 DEFAULT_MODEL = "gemini-2.5-flash"
 FALLBACK_MODELS = [
     "gemini-2.5-flash",
-    "gemini-2.5-flash-lite",
-    "gemini-3.1-flash-lite",
-    "gemini-3.5-flash-lite",
-    "gemini-3.5-flash",
-    "gemini-3.7-flash",
-    "gemini-3-flash-preview",
+    "gemini-2.0-flash",
+    "gemini-2.0-flash-lite",
+    "gemini-1.5-flash",
+    "gemini-1.5-flash-8b",
+    "gemini-1.5-pro",
     "gemini-2.5-pro",
 ]
 
@@ -516,17 +515,17 @@ To complete the merge into `main`:
         if is_approved:
             node.publish(
                 GossipTopic.BEST_PRACTICES,
-                {"pr_number": args.pr_number, "score": score, "summary": summary},
+                {"pr_number": pr_number, "score": score, "summary": summary},
                 repo="DevProxy"
             )
-            print(f"[*] GossipMesh: Broadcasted APPROVED best-practice gossip across mesh for PR #{args.pr_number}.", flush=True)
+            print(f"[*] GossipMesh: Broadcasted APPROVED best-practice gossip across mesh for PR #{pr_number}.", flush=True)
         else:
             node.publish(
                 GossipTopic.ANTI_PATTERNS,
-                {"pr_number": args.pr_number, "score": score, "action_items": action_items, "summary": summary},
+                {"pr_number": pr_number, "score": score, "action_items": action_items, "summary": summary},
                 repo="DevProxy"
             )
-            print(f"[*] GossipMesh: Broadcasted ANTI_PATTERNS feedback gossip across mesh for PR #{args.pr_number}.", flush=True)
+            print(f"[*] GossipMesh: Broadcasted ANTI_PATTERNS feedback gossip across mesh for PR #{pr_number}.", flush=True)
     except Exception as e:
         pass
 
