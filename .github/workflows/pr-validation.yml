@@ -227,10 +227,24 @@ jobs:
     needs: [code-quality, test-matrix, benchmark-performance, fuzz-testing, e2e-integration-tests, docker-build-smoke, cross-compile-check]
     runs-on: ubuntu-latest
     if: always()
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
     steps:
-      - name: Check Upstream Pipeline Status
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify Upstream Tests and Zero Merge Conflicts
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUM: ${{ github.event.pull_request.number }}
         run: |
           FAILED=0
+
+          echo "==> 1. Checking Upstream CI Suites..."
           if [ "${{ needs.code-quality.result }}" != "success" ]; then
             echo "❌ Code Quality / Lint checks failed."
             FAILED=1
@@ -274,11 +288,39 @@ jobs:
             echo "✅ Cross-platform compilation passed."
           fi
 
+          echo "==> 2. Checking Git Merge Conflicts against origin/main..."
+          if [ -n "$PR_NUM" ]; then
+            git fetch origin main --quiet
+            git config --global user.name "github-actions[bot]"
+            git config --global user.email "github-actions[bot]@users.noreply.github.com"
+            if ! git merge-base --is-ancestor origin/main HEAD 2>/dev/null; then
+              if ! git merge --no-commit --no-ff origin/main 2>/dev/null; then
+                echo "❌ MERGE CONFLICT DETECTED: PR #$PR_NUM cannot cleanly merge into main!"
+                git merge --abort 2>/dev/null || true
+                FAILED=1
+              else
+                echo "✅ Clean merge verified with origin/main (0 conflicts)."
+                git merge --abort 2>/dev/null || true
+              fi
+            else
+              echo "✅ PR branch is fully up to date with origin/main."
+            fi
+          fi
+
           if [ $FAILED -ne 0 ]; then
             echo ""
-            echo "🚨 Pipeline failed. Review the failed suites above."
+            echo "🚨 Pipeline blocked: CI checks failing or merge conflicts exist!"
+            if [ -n "$PR_NUM" ]; then
+              echo "Removing ready-to-merge label from PR #$PR_NUM..."
+              gh pr edit "$PR_NUM" --remove-label "ready-to-merge" 2>/dev/null || true
+            fi
             exit 1
           fi
 
           echo ""
-          echo "🎉 All PR validation and specialized test suites passed! PR is clean and green to merge."
+          echo "🎉 All PR validation suites passed AND zero merge conflicts detected!"
+          if [ -n "$PR_NUM" ]; then
+            echo "Applying ready-to-merge badge/label to PR #$PR_NUM..."
+            gh label create "ready-to-merge" --color "0e8a16" --description "Clean 100% green with 0 conflicts" --force 2>/dev/null || true
+            gh pr edit "$PR_NUM" --add-label "ready-to-merge" 2>/dev/null || true
+          fi
