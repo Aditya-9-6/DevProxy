@@ -128,8 +128,8 @@ func TestRadixTrie_Lookup_EdgeCases(t *testing.T) {
 		t.Error("Lookup(empty IP) should return false")
 	}
 
-    // IP with wrong length
-    if _, found := trie.Lookup(net.IP{1, 2, 3}); found {
+	// IP with wrong length
+	if _, found := trie.Lookup(net.IP{1, 2, 3}); found {
 		t.Error("Lookup(invalid length IP) should return false")
 	}
 }
