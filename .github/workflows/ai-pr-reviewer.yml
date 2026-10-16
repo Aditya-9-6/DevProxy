@@ -17,6 +17,7 @@ permissions:
   pull-requests: write
   issues: write
   statuses: write
+  actions: write
 
 concurrency:
   group: ai-reviewer-${{ github.event.pull_request.number || github.event.issue.number || github.event.inputs.pr_number }}
@@ -25,7 +26,6 @@ concurrency:
 jobs:
   review-and-heal-pr:
     name: Autonomous PR Reviewer & Self-Healing Loop
-    # Trigger on PR open/synchronize by maintainer, workflow_dispatch, or authorized maintainer comment /review
     if: >
       github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'pull_request' && (
@@ -34,15 +34,11 @@ jobs:
         github.event.pull_request.user.login == 'app/aditya-s-agent' ||
         contains(github.event.pull_request.labels.*.name, 'ai-generated')
       )) ||
-      (github.event_name == 'issue_comment' && github.event.issue.pull_request &&
-       (contains('["OWNER", "COLLABORATOR", "MEMBER"]', github.event.comment.author_association) ||
-        github.actor == github.repository_owner ||
-        github.event.comment.user.login == 'Aditya-9-6') &&
-       (startsWith(github.event.comment.body, '/review') ||
+      (github.event_name == 'issue_comment' && github.event.issue.pull_request && (
         contains(github.event.comment.body, '/review') ||
-        startsWith(github.event.comment.body, '@devproxy-bot review') ||
-        startsWith(github.event.comment.body, '@spryzen-bot review'))
-      )
+        contains(github.event.comment.body, '@devproxy-bot review') ||
+        contains(github.event.comment.body, '@spryzen-bot review')
+      ))
     runs-on: ubuntu-latest
     steps:
       - name: Generate GitHub App Token (Higher Rate Limits)
@@ -106,6 +102,11 @@ jobs:
           GEMINI_SOLVER_KEY: ${{ secrets.GEMINI_SOLVER_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GEMINI_KEY_POOL: ${{ secrets.GEMINI_KEY_POOL || '' }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY || '' }}
+          HUGGINGFACE_API_KEY: ${{ secrets.HUGGINGFACE_API_KEY || '' }}
+          COHERE_API_KEY: ${{ secrets.COHERE_API_KEY || '' }}
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY || '' }}
+          NVIDIA_API_KEY_2: ${{ secrets.NVIDIA_API_KEY_2 || '' }}
           PR_NUM: ${{ steps.meta.outputs.pr_num }}
           GH_TOKEN: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
@@ -150,20 +151,39 @@ jobs:
           echo "==> Review verdict: $VERDICT, Needs improvement: $NEEDS_IMP, Cycles completed: $CYCLE_COUNT"
 
           if [ "$VERDICT" = "APPROVED" ]; then
-            echo "==> PR is 100% approved. Marking with ready-to-merge label."
-            gh label create "ready-to-merge" --color "0e8a16" --description "Approved by autonomous reviewer" --force || true
-            gh pr edit "$PR_NUM" --add-label "ready-to-merge" || true
+            echo "Verifying local test and compiler suite..."
+            go mod tidy
+            if ! go vet ./... || ! go test ./pkg/...; then
+              echo "⚠️ Reviewer LLM approved diff, but local compiler/tests failed! Reverting verdict to ACTION_REQUIRED."
+              VERDICT="ACTION_REQUIRED"
+              NEEDS_IMP="true"
+              echo "verdict=ACTION_REQUIRED" >> $GITHUB_OUTPUT
+              echo "needs_improvement=true" >> $GITHUB_OUTPUT
+              gh pr edit "$PR_NUM" --remove-label "ready-to-merge" 2>/dev/null || true
+            else
+              # Strict check: only grant ready-to-merge if 0 conflicts and CI checks green
+              PR_MERGEABLE=$(gh pr view "$PR_NUM" --json mergeable --jq '.mergeable // "UNKNOWN"')
+              FAILED_CHECKS=$(gh pr view "$PR_NUM" --json statusCheckRollup --jq '[.statusCheckRollup[]? | select(.conclusion=="FAILURE")] | length')
+              if [ "$PR_MERGEABLE" = "MERGEABLE" ] && [ "$FAILED_CHECKS" -eq 0 ]; then
+                echo "==> PR is 100% approved, 0 conflicts, and all CI checks green. Marking with ready-to-merge label."
+                gh label create "ready-to-merge" --color "0e8a16" --description "Clean 100% green with 0 conflicts" --force || true
+                gh pr edit "$PR_NUM" --add-label "ready-to-merge" || true
 
-            # Extract linked issue number from branch or PR body
-            LINKED_ISSUE=$(echo "$HEAD_REF" | grep -oE 'issue-[0-9]+' | grep -oE '[0-9]+' || true)
-            if [ -z "$LINKED_ISSUE" ]; then
-              LINKED_ISSUE=$(gh pr view "$PR_NUM" --json body -q .body | grep -oEi '(closes|fixes|resolves) #[0-9]+' | head -n1 | grep -oE '[0-9]+' || true)
-            fi
+                # Extract linked issue number from branch or PR body
+                LINKED_ISSUE=$(echo "$HEAD_REF" | grep -oE 'issue-[0-9]+' | grep -oE '[0-9]+' || true)
+                if [ -z "$LINKED_ISSUE" ]; then
+                  LINKED_ISSUE=$(gh pr view "$PR_NUM" --json body -q .body | grep -oEi '(closes|fixes|resolves) #[0-9]+' | head -n1 | grep -oE '[0-9]+' || true)
+                fi
 
-            if [ -n "$LINKED_ISSUE" ]; then
-              SCORE=$(jq -r .score ai_review_status.json)
-              NOTIFY_MSG=$(printf '🌟 **Solution 100%%%% Ready for Merge!**\n\nThe pull request (#%s) implementing this advancement has passed all autonomous architectural quality gates and anti-spaghetti checks with a score of **%s/100**.\n\ncc **@Aditya-9-6**: All automated quality gates and tests passed cleanly. Please review and merge PR #%s when you are ready.' "$PR_NUM" "$SCORE" "$PR_NUM")
-              gh issue comment "$LINKED_ISSUE" --body "$NOTIFY_MSG" || true
+                if [ -n "$LINKED_ISSUE" ]; then
+                  SCORE=$(jq -r .score ai_review_status.json)
+                  NOTIFY_MSG=$(printf '🌟 **Solution 100%%%% Ready for Merge!**\n\nThe pull request (#%s) implementing this advancement has passed all autonomous architectural quality gates, has zero merge conflicts, and is 100%%%% green with a score of **%s/100**.\n\ncc **@Aditya-9-6**: All automated quality gates and tests passed cleanly. Please review and merge PR #%s when you are ready.' "$PR_NUM" "$SCORE" "$PR_NUM")
+                  gh issue comment "$LINKED_ISSUE" --body "$NOTIFY_MSG" || true
+                fi
+              else
+                echo "==> PR is architecturally approved, but mergeable='$PR_MERGEABLE' or failed_checks='$FAILED_CHECKS'. Withholding ready-to-merge badge/label."
+                gh pr edit "$PR_NUM" --remove-label "ready-to-merge" 2>/dev/null || true
+              fi
             fi
           fi
 
@@ -174,6 +194,11 @@ jobs:
           GEMINI_REVIEWER_KEY: ${{ secrets.GEMINI_REVIEWER_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GEMINI_KEY_POOL: ${{ secrets.GEMINI_KEY_POOL || '' }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY || '' }}
+          HUGGINGFACE_API_KEY: ${{ secrets.HUGGINGFACE_API_KEY || '' }}
+          COHERE_API_KEY: ${{ secrets.COHERE_API_KEY || '' }}
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY || '' }}
+          NVIDIA_API_KEY_2: ${{ secrets.NVIDIA_API_KEY_2 || '' }}
           PR_NUM: ${{ steps.meta.outputs.pr_num }}
           HEAD_REF: ${{ steps.meta.outputs.head_ref }}
           AUTH_TOKEN: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
