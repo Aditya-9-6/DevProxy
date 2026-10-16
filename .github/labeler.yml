@@ -1,19 +1,31 @@
-area/backend:
+proxy:
   - changed-files:
-      - any-glob-to-any-file: ['pkg/**/*.go', 'cmd/**/*.go', 'go.mod', 'go.sum']
+    - any-glob-to-any-file: 'pkg/proxy/**/*'
+    - any-glob-to-any-file: 'cmd/devproxy/**/*'
 
-area/frontend:
+waf:
   - changed-files:
-      - any-glob-to-any-file: ['web/**']
+    - any-glob-to-any-file: 'pkg/waf/**/*'
+    - any-glob-to-any-file: 'pkg/security/**/*'
+    - any-glob-to-any-file: 'pkg/analysis/**/*'
 
-area/documentation:
+dashboard:
   - changed-files:
-      - any-glob-to-any-file: ['*.md', 'docs/**']
+    - any-glob-to-any-file: 'web/**/*'
+    - any-glob-to-any-file: 'pkg/dashboard/**/*'
 
-area/ci-cd:
+extension:
   - changed-files:
-      - any-glob-to-any-file: ['.github/**']
+    - any-glob-to-any-file: 'vscode-extension/**/*'
 
-area/testing:
+docs:
   - changed-files:
-      - any-glob-to-any-file: ['**/*_test.go']
+    - any-glob-to-any-file: 'docs/**/*'
+    - any-glob-to-any-file: 'README.md'
+
+testing:
+  - changed-files:
+    - any-glob-to-any-file: 'test/**/*'
+    - any-glob-to-any-file: 'pkg/mock/**/*'
+    - any-glob-to-any-file: 'pkg/replay/**/*'
+    - any-glob-to-any-file: 'pkg/contract/**/*'
