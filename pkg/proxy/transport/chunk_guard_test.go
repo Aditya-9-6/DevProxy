@@ -44,7 +44,7 @@ func TestChunkGuard_MaxTotalExceeded(t *testing.T) {
 	if err != ErrMaxTotalExceeded {
 		t.Errorf(
 			"expected ErrMaxTotalExceeded, got %v",
-			err,
+			"err",
 		)
 	}
 }
