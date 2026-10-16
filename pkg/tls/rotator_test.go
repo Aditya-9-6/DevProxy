@@ -1,26 +1,22 @@
 package tls
 
 import (
-	"crypto/tls"
 	"testing"
+	"time"
 )
 
-func TestCertificateRotator(t *testing.T) {
-	rotator := NewCertificateRotator()
-	cert := &tls.Certificate{}
-
-	// Test initial state
-	if rotator.GetCertificate("example.com") != nil {
-		t.Error("Expected nil for unknown SNI")
+func TestKeyRotator(t *testing.T) {
+	rotator, err := NewKeyRotator(10 * time.Millisecond)
+	if err != nil {
+		t.Fatalf("failed to init: %v", err)
 	}
+	defer rotator.Stop()
 
-	// Test rotation
-	newMap := map[string]*tls.Certificate{
-		"example.com": cert,
-	}
-	rotator.Rotate(newMap)
+	first := rotator.GetActive()
+	time.Sleep(25 * time.Millisecond)
+	second := rotator.GetActive()
 
-	if rotator.GetCertificate("example.com") != cert {
-		t.Error("Failed to retrieve rotated certificate")
+	if first == second {
+		t.Error("key did not rotate")
 	}
 }

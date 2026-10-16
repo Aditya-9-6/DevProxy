@@ -1,28 +1,50 @@
 package tls
 
 import (
-	"crypto/tls"
+	"context"
 	"sync/atomic"
+	"time"
 )
 
-// CertificateRotator implements a lock-free RCU pattern for SNI certificate updates.
-type CertificateRotator struct {
-	current atomic.Pointer[map[string]*tls.Certificate]
+// KeyRotator manages the atomic rotation of session keys.
+type KeyRotator struct {
+	active atomic.Pointer[SessionKeyRing]
+	ctx    context.Context
+	cancel context.CancelFunc
 }
 
-func NewCertificateRotator() *CertificateRotator {
-	r := &CertificateRotator{}
-	r.current.Store(&map[string]*tls.Certificate{})
-	return r
+func NewKeyRotator(interval time.Duration) (*KeyRotator, error) {
+	initial, err := NewSessionKeyRing()
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	r := &KeyRotator{ctx: ctx, cancel: cancel}
+	r.active.Store(initial)
+	go r.run(interval)
+	return r, nil
 }
 
-// GetCertificate performs an O(1) lookup without mutex contention.
-func (r *CertificateRotator) GetCertificate(sni string) *tls.Certificate {
-	cache := *r.current.Load()
-	return cache[sni]
+func (r *KeyRotator) run(interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-r.ctx.Done():
+			return
+		case <-ticker.C:
+			next, err := NewSessionKeyRing()
+			if err == nil {
+				r.active.Store(next)
+			}
+		}
+	}
 }
 
-// Rotate updates the certificate map atomically.
-func (r *CertificateRotator) Rotate(newCerts map[string]*tls.Certificate) {
-	r.current.Store(&newCerts)
+func (r *KeyRotator) GetActive() *SessionKeyRing {
+	return r.active.Load()
+}
+
+func (r *KeyRotator) Stop() {
+	r.cancel()
 }
