@@ -49,7 +49,7 @@ func (h *HLL) Count() uint64 {
 	estimate := alpha * float64(h.m*h.m) / sum
 
 	if estimate <= 2.5*float64(h.m) {
-		v := 0
+		v := uint32(0)
 		for i := uint32(0); i < h.m; i++ {
 			if h.registers[i].Load() == 0 {
 				v++
