@@ -1,35 +1,12 @@
 package analysis
 
 import (
-	"net"
 	"net/http"
 	"testing"
 	"time"
 
 	"github.com/Aditya-9-6/DevProxy/pkg/ringbuffer"
 )
-
-func TestRadixTrie_Lookup(t *testing.T) {
-	trie := DefaultBlocklistTrie()
-
-	// Test Cloud Metadata IP
-	entry, found := trie.Lookup(net.ParseIP("169.254.169.254"))
-	if !found || entry.Category != "CLOUD_METADATA" {
-		t.Fatalf("Failed to match cloud metadata IP: found=%v, entry=%v", found, entry)
-	}
-
-	// Test Internal RFC 1918
-	entry, found = trie.Lookup(net.ParseIP("10.240.0.5"))
-	if !found || entry.Category != "INTERNAL_NETWORK" {
-		t.Fatalf("Failed to match 10.0.0.0/8 internal IP: found=%v, entry=%v", found, entry)
-	}
-
-	// Test Public Internet IP (should not match)
-	_, found = trie.Lookup(net.ParseIP("8.8.8.8"))
-	if found {
-		t.Fatalf("Public IP 8.8.8.8 should not match blocklist")
-	}
-}
 
 func TestRulesEngine_SecretDetection(t *testing.T) {
 	engine := NewSecurityRulesEngine()

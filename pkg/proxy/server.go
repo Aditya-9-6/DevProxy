@@ -73,9 +73,10 @@ func NewProxyServer(addr string, cm *certs.CertificateManager, rb *ringbuffer.Ri
 // SetInsecureUpstreamTLS enables or disables skipping certificate verification on upstream endpoints.
 func (p *ProxyServer) SetInsecureUpstreamTLS(insecure bool) {
 	p.insecureUpstream = insecure
-	if insecure {
-		p.transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+	if p.transport.TLSClientConfig == nil {
+		p.transport.TLSClientConfig = &tls.Config{}
 	}
+	p.transport.TLSClientConfig.InsecureSkipVerify = insecure
 }
 
 // SetMockEngine configures the mock & chaos engine.

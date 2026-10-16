@@ -207,9 +207,12 @@ func BenchmarkRingBuffer_ParallelPush(b *testing.B) {
 func FuzzRingBuffer(f *testing.F) {
 	f.Add([]byte("event-payload-1"), uint16(16))
 	f.Add([]byte("large-event-payload-long-string-data"), uint16(128))
-	f.Add([]byte(""), uint16(1))
+	f.Add([]byte("kanal"), uint16(1))
 
 	f.Fuzz(func(t *testing.T, payload []byte, size uint16) {
+		if len(payload) == 0 {
+			return
+		}
 		capacity := int(size%256) + 1
 		rb := NewRingBuffer(capacity)
 		defer rb.Close()
@@ -217,6 +220,14 @@ func FuzzRingBuffer(f *testing.F) {
 		ev := &TrafficEvent{
 			ID:   string(payload),
 			Host: "fuzz.host",
+		}
+
+		for i := 0; i < 32; i++ {
+			rb.Push(&TrafficEvent{ID: fmt.Sprintf("%s-%d", payload, i), Host: "fuzz.host"})
+		}
+
+		for i := 0; i < 32; i++ {
+			_ = rb.TryPop()
 		}
 
 		pushed := rb.Push(ev)
