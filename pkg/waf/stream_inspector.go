@@ -16,8 +16,8 @@ func (s *StreamInspector) InspectStream(ctx context.Context, r io.Reader, frameT
 		s.Inspector = &HeuristicInspector{}
 	}
 
-	buf := bufferPool.Get().([]byte)
-	defer bufferPool.Put(buf)
+	buf := GetBuffer()
+	defer PutBuffer(buf)
 
 	var carryOver []byte
 
