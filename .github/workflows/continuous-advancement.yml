@@ -37,7 +37,7 @@ jobs:
           fetch-depth: 1   # shallow clone for speed
 
       - name: Cache UV wheels and pip packages
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: |
             ~/.cache/uv
@@ -47,7 +47,7 @@ jobs:
             uv-${{ runner.os }}-
 
       - name: Cache Go modules
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: |
             ~/.cache/go-build
@@ -63,7 +63,7 @@ jobs:
           cache: true
 
       - name: Cache uv.lock
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: uv.lock
           key: uv-lock-${{ runner.os }}-${{ hashFiles('pyproject.toml') }}
@@ -127,7 +127,7 @@ jobs:
 
       - name: Upload Metrics Artifact
         if: always()
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: metrics-${{ matrix.worker }}
           path: metrics.json
