@@ -129,7 +129,18 @@ def extract_json_response(raw_text: str) -> dict:
     raise ValueError(f"Could not parse valid JSON from model response: {raw_text[:200]}")
 
 def call_gemini(api_key: str, prompt: str, system_prompt: str = SYSTEM_PROMPT, fallback_key: str = "", model: str = DEFAULT_MODEL) -> dict:
-    """Calls Gemini REST API with fallback models and fallback API keys."""
+    """Calls Spryzen Sovereign AI Gateway with semantic caching and fallback models."""
+    # 🚀 Try Spryzen Gateway first (Sub-1ms Semantic Cache & Multi-Provider Cascade)
+    try:
+        from spryzen_gateway import GLOBAL_GATEWAY
+        return GLOBAL_GATEWAY.call_with_smart_routing(
+            prompt=prompt,
+            system_prompt=system_prompt,
+            preferred_model=model
+        )
+    except Exception as gw_err:
+        print(f"[*] [Gateway Notice] Routing via direct fallback pool: {gw_err}", flush=True)
+
     ordered = [model] + [m for m in FALLBACK_MODELS if m != model]
     models_to_try = []
     for m in ordered:

@@ -585,6 +585,15 @@ def run_loop_iteration(workspace: Path, worker_id: int = 1, num_workers: int = 1
     """Executes a single cycle of the autonomous loop for the assigned worker shard."""
     print(f"\n--- [Autonomous DevProxy Loop | Worker {worker_id}/{num_workers} | {time.strftime('%Y-%m-%d %H:%M:%S')} | Key Pool: {len(GLOBAL_POOL)} keys] ---", flush=True)
 
+    # Spryzen AI Gateway & Cost Slasher Telemetry
+    try:
+        from spryzen_gateway import GLOBAL_GATEWAY
+        telemetry = GLOBAL_GATEWAY.cache.get_telemetry()
+        if telemetry.get("total_queries", 0) > 0:
+            print(f"[*] Spryzen Gateway: {telemetry['cache_hits']}/{telemetry['total_queries']} hits ({telemetry['hit_rate_pct']}%), saved {telemetry['saved_tokens']} tokens (${telemetry['total_savings_usd']} USD).", flush=True)
+    except Exception:
+        pass
+
     # Synchronize with GossipMesh
     try:
         from gossipmesh import GossipNode, MemeticKnowledgeBase
