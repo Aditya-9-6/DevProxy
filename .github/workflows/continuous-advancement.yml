@@ -10,7 +10,7 @@ on:
       iterations:
         description: 'Number of autonomous development cycles to run'
         required: false
-        default: '5'
+        default: '30'
 
 permissions:
   contents: write
@@ -24,16 +24,27 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        worker: [1, 2, 3]
+        worker: [1, 2, 3, 4, 5, 6, 7, 8]
       fail-fast: false
+      max-parallel: 8
     concurrency:
       group: continuous-advancement-worker-${{ matrix.worker }}
-      cancel-in-progress: false
+      cancel-in-progress: true
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 1   # shallow clone for speed
+
+      - name: Cache Go modules
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ${{ env.GOPATH }}/pkg/mod
+          key: go-${{ runner.os }}-${{ hashFiles('**/*.go', 'go.sum') }}
+          restore-keys: |
+            go-${{ runner.os }}-
 
       - name: Setup Go
         uses: actions/setup-go@v5
@@ -54,9 +65,10 @@ jobs:
           app-id: ${{ secrets.APP_ID }}
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
 
-      - name: Install GossipMesh
+      - name: Install Python Dependencies
         run: |
-          pip install git+https://github.com/Aditya-9-6/GossipMesh.git
+          python -m pip install --upgrade pip
+          pip install requests pyyaml
 
       - name: Configure Git User Identity
         run: |
@@ -72,8 +84,34 @@ jobs:
           GEMINI_ISSUE_KEY: ${{ secrets.GEMINI_ISSUE_KEY || '' }}
           GEMINI_REVIEWER_KEY: ${{ secrets.GEMINI_REVIEWER_KEY || '' }}
           GEMINI_SOLVER_KEY: ${{ secrets.GEMINI_SOLVER_KEY || '' }}
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY || '' }}
+          NVIDIA_API_KEY_2: ${{ secrets.NVIDIA_API_KEY_2 || '' }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY || '' }}
           HUGGINGFACE_API_KEY: ${{ secrets.HUGGINGFACE_API_KEY || '' }}
           COHERE_API_KEY: ${{ secrets.COHERE_API_KEY || '' }}
+          MODEL_TEMPERATURE: 0.2
+          MODEL_MAX_TOKENS: 2048
+          TOP_P: 0.95
+          API_GATEWAY_URL: ${{ secrets.API_GATEWAY_URL || '' }}
         run: |
-          python3 .github/scripts/autonomous_loop.py --workspace . --interval 5 --max-cycles ${{ inputs.iterations || '5' }} --timeout-mins 20 --worker-id ${{ matrix.worker }} --num-workers 3
+          python3 .github/scripts/autonomous_loop.py \
+            --workspace . \
+            --interval 3 \
+            --max-cycles ${{ inputs.iterations || '30' }} \
+            --timeout-mins 180 \
+            --worker-id ${{ matrix.worker }} \
+            --num-workers 8
+
+      - name: Export Metrics
+        if: always()
+        run: |
+          echo "--- Metrics collected during this run ---"
+          # The autonomous_loop script writes a metrics.json file; this step just ensures it exists.
+          ls -l metrics.json || echo "No metrics file generated."
+
+      - name: Upload Metrics Artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: metrics-${{ matrix.worker }}
+          path: metrics.json
