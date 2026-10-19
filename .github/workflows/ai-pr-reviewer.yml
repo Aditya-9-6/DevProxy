@@ -34,11 +34,16 @@ jobs:
         github.event.pull_request.user.login == 'app/aditya-s-agent' ||
         contains(github.event.pull_request.labels.*.name, 'ai-generated')
       )) ||
-      (github.event_name == 'issue_comment' && github.event.issue.pull_request && (
-        contains(github.event.comment.body, '/review') ||
-        contains(github.event.comment.body, '@devproxy-bot review') ||
-        contains(github.event.comment.body, '@spryzen-bot review')
-      ))
+      (github.event_name == 'issue_comment' && github.event.issue.pull_request &&
+       !endsWith(github.actor, '[bot]') &&
+       github.actor != 'aditya-s-agent' &&
+       github.event.comment.user.login != 'github-actions[bot]' &&
+       github.event.comment.user.login != 'aditya-s-agent[bot]' &&
+       github.event.comment.user.login != 'aditya-s-agent' && (
+         startsWith(github.event.comment.body, '/review') ||
+         contains(github.event.comment.body, '@devproxy-bot review') ||
+         contains(github.event.comment.body, '@spryzen-bot review')
+       ))
     runs-on: ubuntu-latest
     steps:
       - name: Generate GitHub App Token (Higher Rate Limits)
@@ -123,6 +128,13 @@ jobs:
           PR_NUM: ${{ steps.meta.outputs.pr_num }}
         run: |
           if [ -f "ai_pr_review.md" ]; then
+            if grep -q "Temporarily Rate-Limited" ai_pr_review.md; then
+              PREV=$(gh pr view "$PR_NUM" --json comments --jq '[.comments[].body | select(contains("Temporarily Rate-Limited"))] | length')
+              if [ "$PREV" -gt 0 ]; then
+                echo "Rate-limited comment already exists on PR #$PR_NUM ($PREV found). Skipping post."
+                exit 0
+              fi
+            fi
             gh pr comment "$PR_NUM" --body-file "ai_pr_review.md"
           fi
 
