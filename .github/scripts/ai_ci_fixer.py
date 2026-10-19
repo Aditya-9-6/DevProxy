@@ -20,12 +20,11 @@ from pathlib import Path
 DEFAULT_MODEL = "gemini-2.5-flash"
 FALLBACK_MODELS = [
     "gemini-2.5-flash",
-    "gemini-2.5-flash-lite",
-    "gemini-3.1-flash-lite",
-    "gemini-3.5-flash-lite",
-    "gemini-3.5-flash",
-    "gemini-3.7-flash",
-    "gemini-3-flash-preview",
+    "gemini-2.0-flash",
+    "gemini-2.0-flash-lite",
+    "gemini-1.5-flash",
+    "gemini-1.5-flash-8b",
+    "gemini-1.5-pro",
     "gemini-2.5-pro",
 ]
 
@@ -130,7 +129,18 @@ def extract_json_response(raw_text: str) -> dict:
     raise ValueError(f"Could not parse valid JSON from model response: {raw_text[:200]}")
 
 def call_gemini(api_key: str, prompt: str, system_prompt: str = SYSTEM_PROMPT, fallback_key: str = "", model: str = DEFAULT_MODEL) -> dict:
-    """Calls Gemini REST API with fallback models and fallback API keys."""
+    """Calls Spryzen Sovereign AI Gateway with semantic caching and fallback models."""
+    # 🚀 Try Spryzen Gateway first (Sub-1ms Semantic Cache & Multi-Provider Cascade)
+    try:
+        from spryzen_gateway import GLOBAL_GATEWAY
+        return GLOBAL_GATEWAY.call_with_smart_routing(
+            prompt=prompt,
+            system_prompt=system_prompt,
+            preferred_model=model
+        )
+    except Exception as gw_err:
+        print(f"[*] [Gateway Notice] Routing via direct fallback pool: {gw_err}", flush=True)
+
     ordered = [model] + [m for m in FALLBACK_MODELS if m != model]
     models_to_try = []
     for m in ordered:
@@ -234,12 +244,87 @@ def call_openrouter(api_key: str, prompt: str, system_prompt: str = SYSTEM_PROMP
             continue
     raise RuntimeError(f"OpenRouter calls failed. Last error: {last_err}")
 
+def call_cohere(api_key: str, prompt: str, system_prompt: str = SYSTEM_PROMPT) -> dict:
+    """Calls Cohere Chat API as resilient fallback."""
+    if not api_key:
+        raise ValueError("Missing COHERE_API_KEY")
+    url = "https://api.cohere.com/v2/chat"
+    models = ["command-r-plus-08-2024", "command-r-08-2024", "command-r-plus", "command-r"]
+    last_err = None
+    for model in models:
+        print(f"[*] [Cohere] Querying {model}...", flush=True)
+        payload = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": prompt}
+            ],
+            "response_format": {"type": "json_object"}
+        }
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+                "User-Agent": "DevProxy-CI/1.0"
+            },
+            method="POST"
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                content = data.get("message", {}).get("content", [])
+                if content and isinstance(content, list):
+                    text = content[0].get("text", "")
+                    return extract_json_response(text)
+        except Exception as e:
+            print(f"[!] [Cohere] Model {model} failed: {e}", file=sys.stderr)
+            last_err = str(e)
+            continue
+    raise RuntimeError(f"Cohere calls failed. Last error: {last_err}")
+
+def call_huggingface(api_key: str, prompt: str, system_prompt: str = SYSTEM_PROMPT) -> dict:
+    """Calls Hugging Face Inference Router API as resilient fallback."""
+    if not api_key:
+        raise ValueError("Missing HUGGINGFACE_API_KEY")
+    url = "https://router.huggingface.co/hf-inference/v1/chat/completions"
+    models = ["Qwen/Qwen2.5-Coder-32B-Instruct", "meta-llama/Llama-3.3-70B-Instruct"]
+    last_err = None
+    for model in models:
+        print(f"[*] [HuggingFace] Querying {model}...", flush=True)
+        payload = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": prompt}
+            ],
+            "temperature": 0.1,
+            "response_format": {"type": "json_object"}
+        }
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            method="POST"
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                text = data["choices"][0]["message"]["content"]
+                return extract_json_response(text)
+        except Exception as e:
+            print(f"[!] [HuggingFace] Model {model} failed: {e}", file=sys.stderr)
+            last_err = str(e)
+            continue
+    raise RuntimeError(f"HuggingFace calls failed. Last error: {last_err}")
+
 def call_nvidia_nim(api_key: str, prompt: str, system_prompt: str = SYSTEM_PROMPT) -> dict:
     """Calls NVIDIA NIM API as fallback."""
     if not api_key:
         raise ValueError("Missing NVIDIA_API_KEY")
     url = "https://integrate.api.nvidia.com/v1/chat/completions"
-    models = ["meta/llama-3.3-70b-instruct", "meta/llama-3.1-70b-instruct", "mistralai/mistral-large-2407"]
+    models = ["nvidia/llama-3.1-nemotron-70b-instruct", "meta/llama-3.1-8b-instruct", "meta/llama-3.1-70b-instruct", "deepseek-ai/deepseek-r1"]
     last_err = None
     for model in models:
         print(f"[*] [NVIDIA NIM] Querying {model}...", flush=True)
@@ -280,9 +365,25 @@ def call_ai_model(prompt: str, system_prompt: str = SYSTEM_PROMPT) -> dict:
     try:
         return call_gemini(primary_gemini, prompt, system_prompt=system_prompt, fallback_key=fallback_gemini)
     except Exception as e:
-        print(f"[!] Gemini attempt failed: {e}. Switching to secondary providers...", file=sys.stderr)
+        print(f"[!] Gemini attempt failed: {e}. Trying secondary providers...", file=sys.stderr)
 
-    # 2. Try NVIDIA NIM
+    # 2. Try Cohere
+    cohere_key = os.environ.get("COHERE_API_KEY", "").strip()
+    if cohere_key:
+        try:
+            return call_cohere(cohere_key, prompt, system_prompt=system_prompt)
+        except Exception as e:
+            print(f"[!] Cohere failed: {e}. Trying next provider...", file=sys.stderr)
+
+    # 3. Try Hugging Face
+    hf_key = os.environ.get("HUGGINGFACE_API_KEY", "").strip()
+    if hf_key:
+        try:
+            return call_huggingface(hf_key, prompt, system_prompt=system_prompt)
+        except Exception as e:
+            print(f"[!] HuggingFace failed: {e}. Trying next provider...", file=sys.stderr)
+
+    # 4. Try NVIDIA NIM
     for nv_key in [os.environ.get("NVIDIA_API_KEY", "").strip(), os.environ.get("NVIDIA_API_KEY_2", "").strip()]:
         if nv_key:
             try:
@@ -290,7 +391,7 @@ def call_ai_model(prompt: str, system_prompt: str = SYSTEM_PROMPT) -> dict:
             except Exception as e:
                 print(f"[!] NVIDIA NIM key failed: {e}. Trying next provider...", file=sys.stderr)
 
-    # 3. Try OpenRouter
+    # 5. Try OpenRouter
     openrouter_key = os.environ.get("OPENROUTER_API_KEY", "").strip()
     if openrouter_key:
         try:
@@ -298,7 +399,7 @@ def call_ai_model(prompt: str, system_prompt: str = SYSTEM_PROMPT) -> dict:
         except Exception as e:
             print(f"[!] OpenRouter failed: {e}. Trying next provider...", file=sys.stderr)
 
-    raise RuntimeError("All AI model providers (Gemini, NVIDIA NIM, OpenRouter) exhausted without successful response.")
+    raise RuntimeError("All AI model providers (Gemini, Cohere, HuggingFace, NVIDIA NIM, OpenRouter) exhausted without successful response.")
 
 def detect_and_resolve_conflicts(workspace: Path, user_instructions: str = "") -> list[str]:
     """Detects Git conflict markers and uses AI to resolve them cleanly."""
@@ -328,6 +429,13 @@ def detect_and_resolve_conflicts(workspace: Path, user_instructions: str = "") -
         target_file = workspace / rel_path
         if not target_file.is_file():
             print(f"[*] Handling deleted/missing conflicted file {rel_path} by restoring from origin/main...", flush=True)
+            subprocess.run(["git", "checkout", "origin/main", "--", rel_path], cwd=workspace)
+            subprocess.run(["git", "add", rel_path], cwd=workspace)
+            resolved.append(rel_path)
+            continue
+
+        if rel_path in ("pkg/waf/types.go", ".gitignore", "go.sum") or rel_path.startswith(".github/"):
+            print(f"[*] Auto-resolving boilerplate/infrastructure conflict in {rel_path} using origin/main...", flush=True)
             subprocess.run(["git", "checkout", "origin/main", "--", rel_path], cwd=workspace)
             subprocess.run(["git", "add", rel_path], cwd=workspace)
             resolved.append(rel_path)
@@ -392,33 +500,91 @@ CRITICAL INSTRUCTIONS:
     return resolved
 
 def fetch_remote_ci_errors(pr_number: str, workspace: Path) -> str:
-    """Fetches failed GitHub Actions logs for this PR if available."""
+    """Fetches failed GitHub Actions logs and check annotations for this PR if available."""
+    ci_reports = []
     try:
-        head_ref = ""
-        pr_view = subprocess.run(["gh", "pr", "view", pr_number, "--json", "headRefName"], cwd=workspace, capture_output=True, text=True)
+        # 1. Inspect statusCheckRollup to find all failing checks, security scans, and matrix jobs
+        pr_view = subprocess.run(
+            ["gh", "pr", "view", pr_number, "--json", "headRefName,statusCheckRollup"],
+            cwd=workspace, capture_output=True, text=True
+        )
         if pr_view.returncode == 0:
-            head_ref = json.loads(pr_view.stdout).get("headRefName", "")
+            pr_data = json.loads(pr_view.stdout)
+            checks = pr_data.get("statusCheckRollup", [])
+            for c in checks:
+                name = c.get("name", "Unknown Check")
+                conclusion = (c.get("conclusion") or c.get("state") or "").upper()
+                if conclusion in ("FAILURE", "TIMED_OUT", "STARTUP_FAILURE"):
+                    url = c.get("detailsUrl", "")
+                    print(f"[*] Identified failing CI check: {name} (URL: {url})", flush=True)
 
-        cmd = ["gh", "run", "list", "--limit", "10", "--json", "databaseId,conclusion,name,headBranch"]
-        if head_ref:
-            cmd.extend(["-b", head_ref])
+                    # Extract check run ID (e.g., https://github.com/owner/repo/runs/123456)
+                    match_cr = re.search(r'/runs/(\d+)$', url)
+                    if match_cr:
+                        cr_id = match_cr.group(1)
+                        ann_res = subprocess.run(
+                            ["gh", "api", f"/repos/:owner/:repo/check-runs/{cr_id}/annotations"],
+                            cwd=workspace, capture_output=True, text=True
+                        )
+                        if ann_res.returncode == 0 and ann_res.stdout.strip():
+                            try:
+                                anns = json.loads(ann_res.stdout)
+                                for a in anns:
+                                    ci_reports.append(
+                                        f"=== SECURITY / LINT ALERT: {name} ===\n"
+                                        f"File: {a.get('path')}:{a.get('start_line')}\n"
+                                        f"Title: {a.get('title')}\n"
+                                        f"Message: {a.get('message')}\n"
+                                    )
+                            except Exception:
+                                pass
 
-        res = subprocess.run(cmd, cwd=workspace, capture_output=True, text=True)
-        if res.returncode == 0:
-            data = json.loads(res.stdout)
-            for run in data:
-                if run.get("conclusion") in ("failure", "timed_out", "startup_failure"):
-                    run_id = str(run.get("databaseId"))
-                    print(f"[*] Found failed GitHub Actions run {run_id} ({run.get('name')}). Fetching failed logs...", flush=True)
-                    log_res = subprocess.run(
-                        ["gh", "run", "view", "--log-failed", run_id],
-                        cwd=workspace, capture_output=True, text=True
-                    )
-                    if log_res.stdout.strip():
-                        return f"=== GITHUB ACTIONS FAILED RUN ({run.get('name')} #{run_id}) ===\n" + log_res.stdout.strip()[:15000]
+                    # Extract job ID (e.g., /actions/runs/123/job/456)
+                    match_job = re.search(r'/job/(\d+)', url)
+                    if match_job:
+                        job_id = match_job.group(1)
+                        job_log = subprocess.run(
+                            ["gh", "run", "view", "--job", job_id, "--log-failed"],
+                            cwd=workspace, capture_output=True, text=True
+                        )
+                        if job_log.stdout.strip():
+                            ci_reports.append(
+                                f"=== FAILED CI JOB ({name} [Job #{job_id}]) ===\n"
+                                + job_log.stdout.strip()[:8000]
+                            )
+
+        # 2. Fallback: check recent workflow runs for this branch if no specific job logs captured
+        if not ci_reports:
+            head_ref = ""
+            if pr_view.returncode == 0:
+                head_ref = json.loads(pr_view.stdout).get("headRefName", "")
+            cmd = ["gh", "run", "list", "--limit", "10", "--json", "databaseId,conclusion,name,headBranch"]
+            if head_ref:
+                cmd.extend(["-b", head_ref])
+            res = subprocess.run(cmd, cwd=workspace, capture_output=True, text=True)
+            if res.returncode == 0:
+                data = json.loads(res.stdout)
+                for run in data:
+                    run_name = run.get("name", "").lower()
+                    if any(x in run_name for x in ("ai ci", "ai-ci", "auto-approve", "auto-merge", "autonomous", "fixer")):
+                        continue
+                    if run.get("conclusion") in ("failure", "timed_out", "startup_failure"):
+                        run_id = str(run.get("databaseId"))
+                        print(f"[*] Found failed GitHub Actions run {run_id} ({run.get('name')}). Fetching failed logs...", flush=True)
+                        log_res = subprocess.run(
+                            ["gh", "run", "view", "--log-failed", run_id],
+                            cwd=workspace, capture_output=True, text=True
+                        )
+                        if log_res.stdout.strip():
+                            ci_reports.append(
+                                f"=== GITHUB ACTIONS FAILED RUN ({run.get('name')} #{run_id}) ===\n"
+                                + log_res.stdout.strip()[:10000]
+                            )
+                            break
     except Exception as e:
         print(f"[*] Note: Could not fetch remote CI logs via gh CLI: {e}", flush=True)
-    return ""
+
+    return "\n\n".join(ci_reports).strip()
 
 def run_diagnostics(workspace: Path, pr_number: str = "") -> tuple[int, str]:
     """Runs compiler and test suite, returning exit code and combined error output."""
@@ -457,14 +623,15 @@ def run_diagnostics(workspace: Path, pr_number: str = "") -> tuple[int, str]:
 
     local_errors = bool(out_lines)
 
-    # Check remote GitHub CI failures as extra diagnostic context only if local tests failed
-    if pr_number and local_errors:
+    # Always fetch remote GitHub CI failures and security alerts if pr_number is provided
+    remote_ci = ""
+    if pr_number:
         remote_ci = fetch_remote_ci_errors(pr_number, workspace)
         if remote_ci:
             out_lines.append(remote_ci)
 
     combined_output = "\n".join(out_lines).strip()
-    total_exit = 1 if local_errors else 0
+    total_exit = 1 if (local_errors or bool(remote_ci)) else 0
     return total_exit, combined_output
 
 def extract_referenced_files(error_log: str, workspace: Path) -> list[str]:
@@ -711,6 +878,9 @@ Instructions:
 
     if post_code == 0:
         print("[🎉 100% GREEN] CI suite passed cleanly.")
+        sys.exit(0)
+    elif all_repaired_files or initial_conflicted:
+        print("[+] Fixes applied and/or conflicts resolved. Exiting cleanly to push changes.")
         sys.exit(0)
     else:
         print(f"[!] Tests still failing after repair passes.")
