@@ -25,7 +25,6 @@ permissions:
   pull-requests: write
   issues: write
   actions: write
-  workflows: write
 
 concurrency:
   group: ai-fixer-${{ github.event.issue.number || github.event.inputs.pr_number || github.event.workflow_run.head_branch }}
@@ -36,7 +35,13 @@ jobs:
     name: Autonomous CI Fixer & Conflict Resolver
     if: >
       github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'issue_comment' && github.event.issue.pull_request && contains(github.event.comment.body, '/fix')) ||
+      (github.event_name == 'issue_comment' && github.event.issue.pull_request &&
+       !endsWith(github.actor, '[bot]') &&
+       github.actor != 'aditya-s-agent' &&
+       github.event.comment.user.login != 'github-actions[bot]' &&
+       github.event.comment.user.login != 'aditya-s-agent[bot]' &&
+       github.event.comment.user.login != 'aditya-s-agent' &&
+       startsWith(github.event.comment.body, '/fix')) ||
       (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'failure' && github.event.workflow_run.head_branch != 'main' && github.event.workflow_run.head_branch != 'master')
     runs-on: ubuntu-latest
     steps:
@@ -156,14 +161,14 @@ jobs:
             --max-iterations 10
 
       - name: Verify Go Compilation & Format
-        if: steps.meta.outputs.skip != 'true'
+        if: always() && steps.meta.outputs.skip != 'true'
         run: |
           go mod tidy
           gofmt -w .
           go vet ./... || true
 
       - name: Commit and Push Fix
-        if: steps.meta.outputs.skip != 'true'
+        if: always() && steps.meta.outputs.skip != 'true'
         id: push
         env:
           HEAD_REF: ${{ steps.meta.outputs.head_ref }}

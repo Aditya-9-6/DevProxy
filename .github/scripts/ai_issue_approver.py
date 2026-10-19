@@ -19,12 +19,14 @@ import urllib.request
 import urllib.error
 from pathlib import Path
 
-DEFAULT_MODEL = "gemini-3.1-flash-lite"
+DEFAULT_MODEL = "gemini-2.5-flash"
 FALLBACK_MODELS = [
-    "gemini-3.1-flash-lite",
-    "gemini-3.5-flash-lite",
-    "gemini-3.5-flash",
-    "gemini-flash-latest",
+    "gemini-2.5-flash",
+    "gemini-2.0-flash",
+    "gemini-2.0-flash-lite",
+    "gemini-1.5-flash",
+    "gemini-1.5-flash-8b",
+    "gemini-1.5-pro",
 ]
 
 SYSTEM_PROMPT = """You are the Principal AI Architect and Gatekeeper.
@@ -147,6 +149,12 @@ def call_openrouter(api_key: str = "", prompt: str = "", system_prompt: str = SY
     raise RuntimeError("OpenRouter failed.")
 
 def call_ai_model(prompt: str) -> dict:
+    try:
+        from spryzen_gateway import GLOBAL_GATEWAY
+        return GLOBAL_GATEWAY.call_with_smart_routing(prompt=prompt, system_prompt=SYSTEM_PROMPT)
+    except Exception as gw_err:
+        print(f"[*] [Gateway Notice] Routing via approver fallback: {gw_err}", flush=True)
+
     primary_gemini = os.environ.get("GEMINI_ISSUE_KEY", "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
     try:
         return call_gemini(primary_gemini, prompt)

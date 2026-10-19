@@ -25,12 +25,11 @@ except ImportError:
 DEFAULT_MODEL = "gemini-2.5-flash"
 FALLBACK_MODELS = [
     "gemini-2.5-flash",
-    "gemini-2.5-flash-lite",
-    "gemini-3.1-flash-lite",
-    "gemini-3.5-flash-lite",
-    "gemini-3.5-flash",
-    "gemini-3.7-flash",
-    "gemini-3-flash-preview",
+    "gemini-2.0-flash",
+    "gemini-2.0-flash-lite",
+    "gemini-1.5-flash",
+    "gemini-1.5-flash-8b",
+    "gemini-1.5-pro",
     "gemini-2.5-pro",
 ]
 
@@ -142,7 +141,7 @@ def get_relevant_files(workspace_root: Path, all_files: list, keywords: list) ->
     return "\n\n".join(context_files)
 
 def call_gemini(api_key: str, prompt: str, model: str = DEFAULT_MODEL, system_prompt: Optional[str] = None) -> dict:
-    """Calls Gemini REST API with fallback and retries across supported models."""
+    """Calls Spryzen Sovereign AI Gateway with semantic caching and cross-provider fallback."""
     active_sys_prompt = system_prompt or SYSTEM_PROMPT
     if system_prompt is None and GOSSIP_AVAILABLE:
         try:
@@ -153,6 +152,17 @@ def call_gemini(api_key: str, prompt: str, model: str = DEFAULT_MODEL, system_pr
                 print(f"[*] GossipMesh: Injected {len(kb.get_top_memes(repo='DevProxy'))} top evolutionary memes into solver prompt.", flush=True)
         except Exception:
             pass
+
+    # 🚀 Try Spryzen Gateway first (Sub-1ms Semantic Cache & Multi-Provider Cascade)
+    try:
+        from spryzen_gateway import GLOBAL_GATEWAY
+        return GLOBAL_GATEWAY.call_with_smart_routing(
+            prompt=prompt,
+            system_prompt=active_sys_prompt,
+            preferred_model=model
+        )
+    except Exception as gw_err:
+        print(f"[*] [Gateway Notice] Routing via direct fallback pool: {gw_err}", flush=True)
 
     ordered = [model] + [m for m in FALLBACK_MODELS if m != model]
     models_to_try = []

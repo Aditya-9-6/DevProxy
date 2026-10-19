@@ -34,11 +34,16 @@ jobs:
         github.event.pull_request.user.login == 'app/aditya-s-agent' ||
         contains(github.event.pull_request.labels.*.name, 'ai-generated')
       )) ||
-      (github.event_name == 'issue_comment' && github.event.issue.pull_request && (
-        contains(github.event.comment.body, '/review') ||
-        contains(github.event.comment.body, '@devproxy-bot review') ||
-        contains(github.event.comment.body, '@spryzen-bot review')
-      ))
+      (github.event_name == 'issue_comment' && github.event.issue.pull_request &&
+       !endsWith(github.actor, '[bot]') &&
+       github.actor != 'aditya-s-agent' &&
+       github.event.comment.user.login != 'github-actions[bot]' &&
+       github.event.comment.user.login != 'aditya-s-agent[bot]' &&
+       github.event.comment.user.login != 'aditya-s-agent' && (
+         startsWith(github.event.comment.body, '/review') ||
+         contains(github.event.comment.body, '@devproxy-bot review') ||
+         contains(github.event.comment.body, '@spryzen-bot review')
+       ))
     runs-on: ubuntu-latest
     steps:
       - name: Generate GitHub App Token (Higher Rate Limits)
@@ -123,6 +128,13 @@ jobs:
           PR_NUM: ${{ steps.meta.outputs.pr_num }}
         run: |
           if [ -f "ai_pr_review.md" ]; then
+            if grep -q "Temporarily Rate-Limited" ai_pr_review.md; then
+              PREV=$(gh pr view "$PR_NUM" --json comments --jq '[.comments[].body | select(contains("Temporarily Rate-Limited"))] | length')
+              if [ "$PREV" -gt 0 ]; then
+                echo "Rate-limited comment already exists on PR #$PR_NUM ($PREV found). Skipping post."
+                exit 0
+              fi
+            fi
             gh pr comment "$PR_NUM" --body-file "ai_pr_review.md"
           fi
 
@@ -159,21 +171,30 @@ jobs:
               NEEDS_IMP="true"
               echo "verdict=ACTION_REQUIRED" >> $GITHUB_OUTPUT
               echo "needs_improvement=true" >> $GITHUB_OUTPUT
+              gh pr edit "$PR_NUM" --remove-label "ready-to-merge" 2>/dev/null || true
             else
-              echo "==> PR is 100% approved and tests passed. Marking with ready-to-merge label."
-              gh label create "ready-to-merge" --color "0e8a16" --description "Approved by autonomous reviewer" --force || true
-              gh pr edit "$PR_NUM" --add-label "ready-to-merge" || true
+              # Strict check: only grant ready-to-merge if 0 conflicts and CI checks green
+              PR_MERGEABLE=$(gh pr view "$PR_NUM" --json mergeable --jq '.mergeable // "UNKNOWN"')
+              FAILED_CHECKS=$(gh pr view "$PR_NUM" --json statusCheckRollup --jq '[.statusCheckRollup[]? | select(.conclusion=="FAILURE")] | length')
+              if [ "$PR_MERGEABLE" = "MERGEABLE" ] && [ "$FAILED_CHECKS" -eq 0 ]; then
+                echo "==> PR is 100% approved, 0 conflicts, and all CI checks green. Marking with ready-to-merge label."
+                gh label create "ready-to-merge" --color "0e8a16" --description "Clean 100% green with 0 conflicts" --force || true
+                gh pr edit "$PR_NUM" --add-label "ready-to-merge" || true
 
-              # Extract linked issue number from branch or PR body
-              LINKED_ISSUE=$(echo "$HEAD_REF" | grep -oE 'issue-[0-9]+' | grep -oE '[0-9]+' || true)
-              if [ -z "$LINKED_ISSUE" ]; then
-                LINKED_ISSUE=$(gh pr view "$PR_NUM" --json body -q .body | grep -oEi '(closes|fixes|resolves) #[0-9]+' | head -n1 | grep -oE '[0-9]+' || true)
-              fi
+                # Extract linked issue number from branch or PR body
+                LINKED_ISSUE=$(echo "$HEAD_REF" | grep -oE 'issue-[0-9]+' | grep -oE '[0-9]+' || true)
+                if [ -z "$LINKED_ISSUE" ]; then
+                  LINKED_ISSUE=$(gh pr view "$PR_NUM" --json body -q .body | grep -oEi '(closes|fixes|resolves) #[0-9]+' | head -n1 | grep -oE '[0-9]+' || true)
+                fi
 
-              if [ -n "$LINKED_ISSUE" ]; then
-                SCORE=$(jq -r .score ai_review_status.json)
-                NOTIFY_MSG=$(printf '🌟 **Solution 100%%%% Ready for Merge!**\n\nThe pull request (#%s) implementing this advancement has passed all autonomous architectural quality gates and anti-spaghetti checks with a score of **%s/100**.\n\ncc **@Aditya-9-6**: All automated quality gates and tests passed cleanly. Please review and merge PR #%s when you are ready.' "$PR_NUM" "$SCORE" "$PR_NUM")
-                gh issue comment "$LINKED_ISSUE" --body "$NOTIFY_MSG" || true
+                if [ -n "$LINKED_ISSUE" ]; then
+                  SCORE=$(jq -r .score ai_review_status.json)
+                  NOTIFY_MSG=$(printf '🌟 **Solution 100%%%% Ready for Merge!**\n\nThe pull request (#%s) implementing this advancement has passed all autonomous architectural quality gates, has zero merge conflicts, and is 100%%%% green with a score of **%s/100**.\n\ncc **@Aditya-9-6**: All automated quality gates and tests passed cleanly. Please review and merge PR #%s when you are ready.' "$PR_NUM" "$SCORE" "$PR_NUM")
+                  gh issue comment "$LINKED_ISSUE" --body "$NOTIFY_MSG" || true
+                fi
+              else
+                echo "==> PR is architecturally approved, but mergeable='$PR_MERGEABLE' or failed_checks='$FAILED_CHECKS'. Withholding ready-to-merge badge/label."
+                gh pr edit "$PR_NUM" --remove-label "ready-to-merge" 2>/dev/null || true
               fi
             fi
           fi
