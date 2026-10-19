@@ -101,7 +101,18 @@ You MUST respond ONLY with a single valid JSON object with the following schema:
 """
 
 def call_gemini(api_key: str, prompt: str, fallback_key: str = "", model: str = DEFAULT_MODEL) -> dict:
-    """Calls Gemini REST API with fallback models and fallback API key, expecting JSON."""
+    """Calls Spryzen Sovereign AI Gateway with semantic caching and fallback models."""
+    # 🚀 Try Spryzen Gateway first (Sub-1ms Semantic Cache & Multi-Provider Cascade)
+    try:
+        from spryzen_gateway import GLOBAL_GATEWAY
+        return GLOBAL_GATEWAY.call_with_smart_routing(
+            prompt=prompt,
+            system_prompt=REVIEWER_SYSTEM_PROMPT,
+            preferred_model=model
+        )
+    except Exception as gw_err:
+        print(f"[*] [Gateway Notice] Routing via direct fallback pool: {gw_err}", flush=True)
+
     ordered = [model] + [m for m in FALLBACK_MODELS if m != model]
     models_to_try = []
     for m in ordered:
@@ -398,6 +409,28 @@ Audit the code against all anti-spaghetti, concurrency, performance, and securit
         audit = call_ai_reviewer(primary_key, prompt, fallback_key=fallback_key)
     except Exception as e:
         print(f"[Warning] Gemini API review call failed: {e}", file=sys.stderr)
+        
+        # Check if rate-limit notice is already posted on this PR to prevent comment loops
+        try:
+            cmd = ["gh", "pr", "view", str(pr_num), "--json", "comments"]
+            res = subprocess.run(cmd, capture_output=True, text=True, cwd=workspace)
+            if res.returncode == 0:
+                comments_data = json.loads(res.stdout).get("comments", [])
+                if any("Temporarily Rate-Limited" in c.get("body", "") for c in comments_data):
+                    print(f"[*] Rate-limited notice already posted on PR #{pr_num}. Skipping duplicate comment.")
+                    status_file = workspace / "ai_review_status.json"
+                    status_data = {
+                        "verdict": "RATE_LIMITED",
+                        "score": 0,
+                        "needs_improvement": False,
+                        "action_items": [],
+                        "system_impact": "Review temporarily delayed due to API rate-limits."
+                    }
+                    status_file.write_text(json.dumps(status_data, indent=2), encoding="utf-8")
+                    return
+        except Exception:
+            pass
+
         review_md = f"""## ⏳ Autonomous Architectural Review: Temporarily Rate-Limited
 
 The autonomous reviewer encountered an API quota limit across available keys while reviewing this PR.
@@ -408,7 +441,7 @@ The autonomous reviewer encountered an API quota limit across available keys whi
 ```
 
 **Next Steps**:
-- Wait a few minutes and re-trigger with `/review` or wait for the next autonomous cycle.
+- The reviewer will automatically resume once API quota resets.
 """
         review_file = workspace / "ai_pr_review.md"
         review_file.write_text(review_md.strip(), encoding="utf-8")
