@@ -29,22 +29,12 @@ jobs:
       max-parallel: 8
     concurrency:
       group: continuous-advancement-worker-${{ matrix.worker }}
-      cancel-in-progress: false
+      cancel-in-progress: true
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 1   # shallow clone for speed
-
-      - name: Cache UV wheels and pip packages
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cache/uv
-            ~/.cache/pip
-          key: uv-${{ runner.os }}-${{ hashFiles('pyproject.toml', 'requirements/*.txt') }}
-          restore-keys: |
-            uv-${{ runner.os }}-
 
       - name: Cache Go modules
         uses: actions/cache@v4
@@ -62,14 +52,6 @@ jobs:
           go-version: '1.25'
           cache: true
 
-      - name: Cache uv.lock
-        uses: actions/cache@v4
-        with:
-          path: uv.lock
-          key: uv-lock-${{ runner.os }}-${{ hashFiles('pyproject.toml') }}
-          restore-keys: |
-            uv-lock-${{ runner.os }}-
-
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
@@ -83,10 +65,10 @@ jobs:
           app-id: ${{ secrets.APP_ID }}
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
 
-      - name: Install GossipMesh
+      - name: Install Python Dependencies
         run: |
-          python -m pip install --upgrade uv
-          uv pip install -e .[api,dev]
+          python -m pip install --upgrade pip
+          pip install requests pyyaml
 
       - name: Configure Git User Identity
         run: |
@@ -102,6 +84,8 @@ jobs:
           GEMINI_ISSUE_KEY: ${{ secrets.GEMINI_ISSUE_KEY || '' }}
           GEMINI_REVIEWER_KEY: ${{ secrets.GEMINI_REVIEWER_KEY || '' }}
           GEMINI_SOLVER_KEY: ${{ secrets.GEMINI_SOLVER_KEY || '' }}
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY || '' }}
+          NVIDIA_API_KEY_2: ${{ secrets.NVIDIA_API_KEY_2 || '' }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY || '' }}
           HUGGINGFACE_API_KEY: ${{ secrets.HUGGINGFACE_API_KEY || '' }}
           COHERE_API_KEY: ${{ secrets.COHERE_API_KEY || '' }}

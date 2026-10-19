@@ -576,6 +576,16 @@ def solve_issue(workspace: Path, issue_num: int, issue_title: str, issue_body: s
         print(f"[READY] PR #{pr_num} is clean, green, and awaiting manual merge by maintainer. Leaving open.", flush=True)
         run_cmd("git checkout main", cwd=workspace, check=False)
         return True
+    elif verdict == "REJECT" or (score > 0 and score < 60):
+        print(f"[REJECT] PR #{pr_num} rejected by architectural audit (Score: {score}/100). Closing PR.", flush=True)
+        run_cmd([
+            "gh", "pr", "close", str(pr_num),
+            "--repo", REPO,
+            "--comment", f"🤖 **DevProxy Gatekeeper**: Automatically closing this PR because it was rejected by architectural review (Score: {score}/100, Verdict: REJECT).",
+            "--delete-branch"
+        ], cwd=workspace, check=False)
+        run_cmd("git checkout main", cwd=workspace, check=False)
+        return False
     else:
         run_cmd(["gh", "pr", "edit", str(pr_num), "--repo", REPO, "--remove-label", "ready-to-merge"], cwd=workspace, check=False)
         print(f"[!] PR #{pr_num} not ready for merge (Verdict: {verdict}, Score: {score}).", flush=True)
@@ -584,6 +594,15 @@ def solve_issue(workspace: Path, issue_num: int, issue_title: str, issue_body: s
 def run_loop_iteration(workspace: Path, worker_id: int = 1, num_workers: int = 1):
     """Executes a single cycle of the autonomous loop for the assigned worker shard."""
     print(f"\n--- [Autonomous DevProxy Loop | Worker {worker_id}/{num_workers} | {time.strftime('%Y-%m-%d %H:%M:%S')} | Key Pool: {len(GLOBAL_POOL)} keys] ---", flush=True)
+
+    # Phase 0: Gatekeeper Triage & Cleanup (Worker 1 sweeps obsolete/duplicate items)
+    if worker_id == 1:
+        try:
+            import triage_cleanup
+            triage_cleanup.audit_and_close_unneeded_prs(workspace)
+            triage_cleanup.audit_and_close_unneeded_issues(workspace)
+        except Exception as te:
+            print(f"[Warning] Triage cleanup error: {te}", flush=True)
 
     # Spryzen AI Gateway & Cost Slasher Telemetry
     try:
