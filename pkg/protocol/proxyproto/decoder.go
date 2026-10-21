@@ -315,15 +315,21 @@ func unixAddressLength(path []byte) uint8 {
 	if len(path) == 0 {
 		return 0
 	}
-	if path[0] == 0 {
-		return uint8(len(path))
-	}
-	for index, value := range path {
-		if value == 0 {
-			return uint8(index)
+
+	abstract := path[0] == 0
+	var length uint8
+	for _, value := range path {
+		if !abstract && value == 0 {
+			return length
 		}
+		// Count directly in uint8 to avoid an unchecked int-to-uint8
+		// conversion. Saturation also prevents oversized inputs wrapping.
+		if length == 0xff {
+			return length
+		}
+		length++
 	}
-	return uint8(len(path))
+	return length
 }
 
 func hasSignature(data []byte) bool {
