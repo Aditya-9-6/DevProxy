@@ -37,12 +37,9 @@ WALLET_FILE = Path(".ai_wallet_usage.json")
 
 # Model pricing approximations ($ per million tokens)
 PRICING_PER_MILLION = {
+    "gemini-3.8-flash": {"prompt": 0.075, "completion": 0.30},
+    "gemini-flash-latest": {"prompt": 0.075, "completion": 0.30},
     "gemini-2.5-flash": {"prompt": 0.075, "completion": 0.30},
-    "gemini-2.0-flash": {"prompt": 0.075, "completion": 0.30},
-    "gemini-2.0-flash-lite": {"prompt": 0.0375, "completion": 0.15},
-    "gemini-1.5-flash": {"prompt": 0.075, "completion": 0.30},
-    "gemini-1.5-pro": {"prompt": 3.50, "completion": 10.50},
-    "gemini-2.5-pro": {"prompt": 3.50, "completion": 10.50},
     "llama-3.3-70b": {"prompt": 0.59, "completion": 0.79},
     "default": {"prompt": 0.15, "completion": 0.60},
 }
@@ -445,15 +442,39 @@ class SpryzenGateway:
             gem_err_clean = str(gemini_err).encode("ascii", errors="replace").decode()
             print(f"[!] [Gateway] Gemini pool exhausted: {gem_err_clean}. Cascading to OpenRouter...", file=sys.stderr, flush=True)
 
-        # Provider B: OpenRouter Fallback
+        # Provider B: OpenRouter Fallback (with free models)
         if response is None:
             try:
                 response = self._call_openrouter(sanitized_prompt, system_prompt, temperature)
                 used_model = "openrouter-cascade"
             except Exception as or_err:
-                print(f"[!] [Gateway] OpenRouter fallback failed: {or_err}. Cascading to Custom Gateway...", file=sys.stderr, flush=True)
+                print(f"[!] [Gateway] OpenRouter fallback failed: {or_err}. Cascading to NVIDIA NIM...", file=sys.stderr, flush=True)
 
-        # Provider C: Custom API Gateway
+        # Provider C: NVIDIA NIM Fallback
+        if response is None:
+            try:
+                response = self._call_nvidia_nim(sanitized_prompt, system_prompt, temperature)
+                used_model = "nvidia-nim-cascade"
+            except Exception as nv_err:
+                print(f"[!] [Gateway] NVIDIA NIM fallback failed: {nv_err}. Cascading to Hugging Face...", file=sys.stderr, flush=True)
+
+        # Provider D: Hugging Face Fallback
+        if response is None:
+            try:
+                response = self._call_huggingface(sanitized_prompt, system_prompt, temperature)
+                used_model = "huggingface-cascade"
+            except Exception as hf_err:
+                print(f"[!] [Gateway] Hugging Face fallback failed: {hf_err}. Cascading to Cohere...", file=sys.stderr, flush=True)
+
+        # Provider E: Cohere Fallback
+        if response is None:
+            try:
+                response = self._call_cohere(sanitized_prompt, system_prompt, temperature)
+                used_model = "cohere-cascade"
+            except Exception as co_err:
+                print(f"[!] [Gateway] Cohere fallback failed: {co_err}. Cascading to Custom Gateway...", file=sys.stderr, flush=True)
+
+        # Provider F: Custom API Gateway
         if response is None:
             gateway_url = os.environ.get("API_GATEWAY_URL", "").strip()
             if gateway_url:
@@ -545,12 +566,18 @@ class SpryzenGateway:
             raise ValueError("No OPENROUTER_API_KEY provided.")
 
         models = [
-            "google/gemini-2.0-flash-001",
+            "openrouter/free",
+            "meta-llama/llama-3.3-70b-instruct:free",
+            "deepseek/deepseek-chat:free",
+            "deepseek/deepseek-r1:free",
+            "qwen/qwen-2.5-coder-32b-instruct:free",
+            "google/gemini-2.0-flash-exp:free",
+            "mistralai/mistral-7b-instruct:free",
             "meta-llama/llama-3.3-70b-instruct",
-            "deepseek/deepseek-chat",
-            "anthropic/claude-3.5-haiku"
+            "deepseek/deepseek-chat"
         ]
         url = "https://openrouter.ai/api/v1/chat/completions"
+        last_err = None
 
         for m in models:
             payload = {
@@ -559,8 +586,7 @@ class SpryzenGateway:
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": prompt}
                 ],
-                "temperature": temperature,
-                "response_format": {"type": "json_object"}
+                "temperature": temperature
             }
             req = urllib.request.Request(
                 url,
@@ -578,10 +604,176 @@ class SpryzenGateway:
                     res_json = json.loads(resp.read().decode("utf-8"))
                     text = res_json["choices"][0]["message"]["content"].strip()
                     return extract_json_response(text)
-            except Exception:
+            except urllib.error.HTTPError as e:
+                err_body = e.read().decode("utf-8", errors="replace")
+                last_err = f"HTTP {e.code} ({m}): {err_body[:160]}"
+                print(f"[!] [OpenRouter] Model {m} failed: HTTP {e.code} - {err_body[:120]}", file=sys.stderr, flush=True)
+                if e.code == 401:
+                    break
+                continue
+            except Exception as ex:
+                last_err = str(ex)
                 continue
 
-        raise RuntimeError("All OpenRouter models failed.")
+        raise RuntimeError(f"All OpenRouter models failed. Last: {last_err}")
+
+    def _call_nvidia_nim(self, prompt: str, system_prompt: str, temperature: float) -> dict:
+        keys = [os.environ.get("NVIDIA_API_KEY", "").strip(), os.environ.get("NVIDIA_API_KEY_2", "").strip()]
+        keys = [k for k in keys if k]
+        if not keys:
+            raise ValueError("No NVIDIA_API_KEY provided.")
+
+        models = [
+            "meta/llama-3.3-70b-instruct",
+            "nvidia/llama-3.3-nemotron-super-49b-v1.5",
+            "mistralai/mistral-large-2-instruct",
+            "meta/llama-3.1-70b-instruct",
+            "meta/llama-3.1-8b-instruct"
+        ]
+        url = "https://integrate.api.nvidia.com/v1/chat/completions"
+        last_err = None
+
+        for key in keys:
+            for m in models:
+                payload = {
+                    "model": m,
+                    "messages": [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": prompt}
+                    ],
+                    "temperature": temperature
+                }
+                req = urllib.request.Request(
+                    url,
+                    data=json.dumps(payload).encode("utf-8"),
+                    headers={
+                        "Authorization": f"Bearer {key}",
+                        "Content-Type": "application/json"
+                    },
+                    method="POST"
+                )
+                try:
+                    with urllib.request.urlopen(req, timeout=90) as resp:
+                        res_json = json.loads(resp.read().decode("utf-8"))
+                        text = res_json["choices"][0]["message"]["content"].strip()
+                        return extract_json_response(text)
+                except urllib.error.HTTPError as e:
+                    err_body = e.read().decode("utf-8", errors="replace")
+                    last_err = f"HTTP {e.code} ({m}): {err_body[:160]}"
+                    print(f"[!] [NVIDIA NIM] Model {m} failed: HTTP {e.code} - {err_body[:120]}", file=sys.stderr, flush=True)
+                    if e.code == 401:
+                        break
+                    if e.code == 429:
+                        break
+                    continue
+                except Exception as ex:
+                    last_err = str(ex)
+                    continue
+
+        raise RuntimeError(f"All NVIDIA NIM models failed. Last: {last_err}")
+
+    def _call_huggingface(self, prompt: str, system_prompt: str, temperature: float) -> dict:
+        key = os.environ.get("HUGGINGFACE_API_KEY", "").strip()
+        if not key:
+            raise ValueError("No HUGGINGFACE_API_KEY provided.")
+
+        endpoints = [
+            "https://router.huggingface.co/v1/chat/completions",
+            "https://api-inference.huggingface.co/v1/chat/completions"
+        ]
+        models = [
+            "Qwen/Qwen2.5-Coder-32B-Instruct",
+            "meta-llama/Llama-3.3-70B-Instruct",
+            "deepseek-ai/DeepSeek-R1-Distill-Qwen-32B",
+            "mistralai/Mistral-7B-Instruct-v0.3"
+        ]
+        last_err = None
+
+        for endpoint in endpoints:
+            for m in models:
+                payload = {
+                    "model": m,
+                    "messages": [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": prompt}
+                    ],
+                    "temperature": temperature
+                }
+                req = urllib.request.Request(
+                    endpoint,
+                    data=json.dumps(payload).encode("utf-8"),
+                    headers={
+                        "Authorization": f"Bearer {key}",
+                        "Content-Type": "application/json"
+                    },
+                    method="POST"
+                )
+                try:
+                    with urllib.request.urlopen(req, timeout=90) as resp:
+                        res_json = json.loads(resp.read().decode("utf-8"))
+                        text = res_json["choices"][0]["message"]["content"].strip()
+                        return extract_json_response(text)
+                except urllib.error.HTTPError as e:
+                    err_body = e.read().decode("utf-8", errors="replace")
+                    last_err = f"HTTP {e.code} ({m}): {err_body[:160]}"
+                    print(f"[!] [HuggingFace] Model {m} failed: HTTP {e.code} - {err_body[:120]}", file=sys.stderr, flush=True)
+                    if e.code == 401:
+                        break
+                    continue
+                except Exception as ex:
+                    last_err = str(ex)
+                    continue
+
+        raise RuntimeError(f"All Hugging Face models failed. Last: {last_err}")
+
+    def _call_cohere(self, prompt: str, system_prompt: str, temperature: float) -> dict:
+        key = os.environ.get("COHERE_API_KEY", "").strip()
+        if not key:
+            raise ValueError("No COHERE_API_KEY provided.")
+
+        url = "https://api.cohere.com/v2/chat"
+        models = ["command-r-plus-08-2024", "command-r-08-2024", "command-r-plus", "command-r"]
+        last_err = None
+
+        for m in models:
+            payload = {
+                "model": m,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": prompt}
+                ]
+            }
+            req = urllib.request.Request(
+                url,
+                data=json.dumps(payload).encode("utf-8"),
+                headers={
+                    "Authorization": f"Bearer {key}",
+                    "Content-Type": "application/json",
+                    "User-Agent": "DevProxy-Spryzen/1.0"
+                },
+                method="POST"
+            )
+            try:
+                with urllib.request.urlopen(req, timeout=90) as resp:
+                    res_json = json.loads(resp.read().decode("utf-8"))
+                    content = res_json.get("message", {}).get("content", [])
+                    if content and isinstance(content, list):
+                        text = content[0].get("text", "")
+                        return extract_json_response(text)
+            except urllib.error.HTTPError as e:
+                err_body = e.read().decode("utf-8", errors="replace")
+                last_err = f"HTTP {e.code} ({m}): {err_body[:160]}"
+                print(f"[!] [Cohere] Model {m} failed: HTTP {e.code} - {err_body[:120]}", file=sys.stderr, flush=True)
+                if e.code == 429:
+                    break
+                if e.code == 401:
+                    break
+                continue
+            except Exception as ex:
+                last_err = str(ex)
+                continue
+
+        raise RuntimeError(f"All Cohere models failed. Last: {last_err}")
 
     def _call_custom_gateway(self, gateway_url: str, prompt: str, system_prompt: str, temperature: float) -> dict:
         payload = {

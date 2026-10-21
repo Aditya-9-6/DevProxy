@@ -244,31 +244,7 @@ def call_gemini(api_key: str, prompt: str, model: str = DEFAULT_MODEL, system_pr
 
     print(f"[!] Gemini pool exhausted: {last_err}. Cascading to secondary providers...", file=sys.stderr, flush=True)
 
-    # 1. Try Cohere
-    cohere_key = os.environ.get("COHERE_API_KEY", "").strip()
-    if cohere_key:
-        try:
-            return call_cohere(cohere_key, prompt, system_prompt=active_sys_prompt)
-        except Exception as e:
-            print(f"[!] Cohere fallback failed: {e}. Trying next provider...", file=sys.stderr, flush=True)
-
-    # 2. Try Hugging Face
-    hf_key = os.environ.get("HUGGINGFACE_API_KEY", "").strip()
-    if hf_key:
-        try:
-            return call_huggingface(hf_key, prompt, system_prompt=active_sys_prompt)
-        except Exception as e:
-            print(f"[!] HuggingFace fallback failed: {e}. Trying next provider...", file=sys.stderr, flush=True)
-
-    # 3. Try NVIDIA NIM
-    for nv_key in [os.environ.get("NVIDIA_API_KEY", "").strip(), os.environ.get("NVIDIA_API_KEY_2", "").strip()]:
-        if nv_key:
-            try:
-                return call_nvidia_nim(nv_key, prompt, system_prompt=active_sys_prompt)
-            except Exception as e:
-                print(f"[!] NVIDIA NIM fallback failed: {e}. Trying next provider...", file=sys.stderr, flush=True)
-
-    # 4. Try OpenRouter
+    # 1. Try OpenRouter (Multi-model free tier & fallback)
     openrouter_key = os.environ.get("OPENROUTER_API_KEY", "").strip()
     if openrouter_key:
         try:
@@ -276,7 +252,31 @@ def call_gemini(api_key: str, prompt: str, model: str = DEFAULT_MODEL, system_pr
         except Exception as e:
             print(f"[!] OpenRouter fallback failed: {e}. Trying next provider...", file=sys.stderr, flush=True)
 
-    raise RuntimeError(f"All AI providers (Gemini, Cohere, HuggingFace, NVIDIA NIM, OpenRouter) exhausted without successful response. Last error: {last_err}")
+    # 2. Try NVIDIA NIM (Llama 3.3 70B & Nemotron)
+    for nv_key in [os.environ.get("NVIDIA_API_KEY", "").strip(), os.environ.get("NVIDIA_API_KEY_2", "").strip()]:
+        if nv_key:
+            try:
+                return call_nvidia_nim(nv_key, prompt, system_prompt=active_sys_prompt)
+            except Exception as e:
+                print(f"[!] NVIDIA NIM fallback failed: {e}. Trying next provider...", file=sys.stderr, flush=True)
+
+    # 3. Try Hugging Face
+    hf_key = os.environ.get("HUGGINGFACE_API_KEY", "").strip()
+    if hf_key:
+        try:
+            return call_huggingface(hf_key, prompt, system_prompt=active_sys_prompt)
+        except Exception as e:
+            print(f"[!] HuggingFace fallback failed: {e}. Trying next provider...", file=sys.stderr, flush=True)
+
+    # 4. Try Cohere
+    cohere_key = os.environ.get("COHERE_API_KEY", "").strip()
+    if cohere_key:
+        try:
+            return call_cohere(cohere_key, prompt, system_prompt=active_sys_prompt)
+        except Exception as e:
+            print(f"[!] Cohere fallback failed: {e}. Trying next provider...", file=sys.stderr, flush=True)
+
+    raise RuntimeError(f"All AI providers (Gemini, OpenRouter, NVIDIA NIM, HuggingFace, Cohere) exhausted without successful response. Last error: {last_err}")
 
 def extract_json_response(raw_text: str) -> dict:
     """Extracts JSON object from model response, stripping markdown code blocks if present."""
@@ -307,7 +307,17 @@ def call_openrouter(api_key: str, prompt: str, system_prompt: str = SYSTEM_PROMP
     if not api_key:
         raise ValueError("Missing OPENROUTER_API_KEY")
     url = "https://openrouter.ai/api/v1/chat/completions"
-    models = ["deepseek/deepseek-chat", "meta-llama/llama-3.3-70b-instruct", "google/gemini-2.5-flash", "mistralai/mistral-large-2411"]
+    models = [
+        "openrouter/free",
+        "meta-llama/llama-3.3-70b-instruct:free",
+        "deepseek/deepseek-chat:free",
+        "deepseek/deepseek-r1:free",
+        "qwen/qwen-2.5-coder-32b-instruct:free",
+        "google/gemini-2.0-flash-exp:free",
+        "mistralai/mistral-7b-instruct:free",
+        "meta-llama/llama-3.3-70b-instruct",
+        "deepseek/deepseek-chat"
+    ]
     last_err = None
     for model in models:
         print(f"[*] [OpenRouter] Querying {model}...", flush=True)
@@ -317,8 +327,59 @@ def call_openrouter(api_key: str, prompt: str, system_prompt: str = SYSTEM_PROMP
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": prompt}
             ],
-            "temperature": 0.1,
-            "response_format": {"type": "json_object"}
+            "temperature": 0.1
+        }
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+                "HTTP-Referer": "https://github.com/Aditya-9-6/DevProxy",
+                "X-Title": "DevProxy Sovereign Autonomous Engine"
+            },
+            method="POST"
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                text = data["choices"][0]["message"]["content"]
+                return extract_json_response(text)
+        except urllib.error.HTTPError as e:
+            err_body = e.read().decode("utf-8", errors="replace")
+            last_err = f"HTTP {e.code}: {err_body[:160]}"
+            print(f"[!] [OpenRouter] Model {model} failed: HTTP {e.code} - {err_body[:120]}", file=sys.stderr)
+            if e.code == 401:
+                break
+            continue
+        except Exception as e:
+            print(f"[!] [OpenRouter] Model {model} failed: {e}", file=sys.stderr)
+            last_err = str(e)
+            continue
+    raise RuntimeError(f"OpenRouter calls failed. Last error: {last_err}")
+
+def call_nvidia_nim(api_key: str, prompt: str, system_prompt: str = SYSTEM_PROMPT) -> dict:
+    """Calls NVIDIA NIM API as fallback."""
+    if not api_key:
+        raise ValueError("Missing NVIDIA_API_KEY")
+    url = "https://integrate.api.nvidia.com/v1/chat/completions"
+    models = [
+        "meta/llama-3.3-70b-instruct",
+        "nvidia/llama-3.3-nemotron-super-49b-v1.5",
+        "mistralai/mistral-large-2-instruct",
+        "meta/llama-3.1-70b-instruct",
+        "meta/llama-3.1-8b-instruct"
+    ]
+    last_err = None
+    for model in models:
+        print(f"[*] [NVIDIA NIM] Querying {model}...", flush=True)
+        payload = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": prompt}
+            ],
+            "temperature": 0.1
         }
         req = urllib.request.Request(
             url,
@@ -334,11 +395,68 @@ def call_openrouter(api_key: str, prompt: str, system_prompt: str = SYSTEM_PROMP
                 data = json.loads(resp.read().decode("utf-8"))
                 text = data["choices"][0]["message"]["content"]
                 return extract_json_response(text)
+        except urllib.error.HTTPError as e:
+            err_body = e.read().decode("utf-8", errors="replace")
+            last_err = f"HTTP {e.code}: {err_body[:160]}"
+            print(f"[!] [NVIDIA NIM] Model {model} failed: HTTP {e.code} - {err_body[:120]}", file=sys.stderr)
+            if e.code == 401 or e.code == 429:
+                break
+            continue
         except Exception as e:
-            print(f"[!] [OpenRouter] Model {model} failed: {e}", file=sys.stderr)
+            print(f"[!] [NVIDIA NIM] Model {model} failed: {e}", file=sys.stderr)
             last_err = str(e)
             continue
-    raise RuntimeError(f"OpenRouter calls failed. Last error: {last_err}")
+    raise RuntimeError(f"NVIDIA NIM calls failed. Last error: {last_err}")
+
+def call_huggingface(api_key: str, prompt: str, system_prompt: str = SYSTEM_PROMPT) -> dict:
+    """Calls Hugging Face Inference Router API as resilient fallback."""
+    if not api_key:
+        raise ValueError("Missing HUGGINGFACE_API_KEY")
+    endpoints = [
+        "https://router.huggingface.co/v1/chat/completions",
+        "https://api-inference.huggingface.co/v1/chat/completions"
+    ]
+    models = [
+        "Qwen/Qwen2.5-Coder-32B-Instruct",
+        "meta-llama/Llama-3.3-70B-Instruct",
+        "deepseek-ai/DeepSeek-R1-Distill-Qwen-32B",
+        "mistralai/Mistral-7B-Instruct-v0.3"
+    ]
+    last_err = None
+    for endpoint in endpoints:
+        for model in models:
+            print(f"[*] [HuggingFace] Querying {model}...", flush=True)
+            payload = {
+                "model": model,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": prompt}
+                ],
+                "temperature": 0.1
+            }
+            req = urllib.request.Request(
+                endpoint,
+                data=json.dumps(payload).encode("utf-8"),
+                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                method="POST"
+            )
+            try:
+                with urllib.request.urlopen(req, timeout=120) as resp:
+                    data = json.loads(resp.read().decode("utf-8"))
+                    text = data["choices"][0]["message"]["content"]
+                    return extract_json_response(text)
+            except urllib.error.HTTPError as e:
+                err_body = e.read().decode("utf-8", errors="replace")
+                last_err = f"HTTP {e.code}: {err_body[:160]}"
+                print(f"[!] [HuggingFace] Model {model} failed: HTTP {e.code} - {err_body[:120]}", file=sys.stderr)
+                if e.code == 401:
+                    break
+                continue
+            except Exception as e:
+                print(f"[!] [HuggingFace] Model {model} failed: {e}", file=sys.stderr)
+                last_err = str(e)
+                continue
+    raise RuntimeError(f"HuggingFace calls failed. Last error: {last_err}")
 
 def call_cohere(api_key: str, prompt: str, system_prompt: str = SYSTEM_PROMPT) -> dict:
     """Calls Cohere Chat API as resilient fallback."""
@@ -354,8 +472,7 @@ def call_cohere(api_key: str, prompt: str, system_prompt: str = SYSTEM_PROMPT) -
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": prompt}
-            ],
-            "response_format": {"type": "json_object"}
+            ]
         }
         req = urllib.request.Request(
             url,
@@ -374,84 +491,18 @@ def call_cohere(api_key: str, prompt: str, system_prompt: str = SYSTEM_PROMPT) -
                 if content and isinstance(content, list):
                     text = content[0].get("text", "")
                     return extract_json_response(text)
+        except urllib.error.HTTPError as e:
+            err_body = e.read().decode("utf-8", errors="replace")
+            last_err = f"HTTP {e.code}: {err_body[:160]}"
+            print(f"[!] [Cohere] Model {model} failed: HTTP {e.code} - {err_body[:120]}", file=sys.stderr)
+            if e.code == 429 or e.code == 401:
+                break
+            continue
         except Exception as e:
             print(f"[!] [Cohere] Model {model} failed: {e}", file=sys.stderr)
             last_err = str(e)
             continue
     raise RuntimeError(f"Cohere calls failed. Last error: {last_err}")
-
-def call_huggingface(api_key: str, prompt: str, system_prompt: str = SYSTEM_PROMPT) -> dict:
-    """Calls Hugging Face Inference Router API as resilient fallback."""
-    if not api_key:
-        raise ValueError("Missing HUGGINGFACE_API_KEY")
-    url = "https://router.huggingface.co/hf-inference/v1/chat/completions"
-    models = ["Qwen/Qwen2.5-Coder-32B-Instruct", "meta-llama/Llama-3.3-70B-Instruct"]
-    last_err = None
-    for model in models:
-        print(f"[*] [HuggingFace] Querying {model}...", flush=True)
-        payload = {
-            "model": model,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": prompt}
-            ],
-            "temperature": 0.1,
-            "response_format": {"type": "json_object"}
-        }
-        req = urllib.request.Request(
-            url,
-            data=json.dumps(payload).encode("utf-8"),
-            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-            method="POST"
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=120) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
-                text = data["choices"][0]["message"]["content"]
-                return extract_json_response(text)
-        except Exception as e:
-            print(f"[!] [HuggingFace] Model {model} failed: {e}", file=sys.stderr)
-            last_err = str(e)
-            continue
-    raise RuntimeError(f"HuggingFace calls failed. Last error: {last_err}")
-
-def call_nvidia_nim(api_key: str, prompt: str, system_prompt: str = SYSTEM_PROMPT) -> dict:
-    """Calls NVIDIA NIM API as fallback."""
-    if not api_key:
-        raise ValueError("Missing NVIDIA_API_KEY")
-    url = "https://integrate.api.nvidia.com/v1/chat/completions"
-    models = ["nvidia/llama-3.1-nemotron-70b-instruct", "meta/llama-3.1-8b-instruct", "meta/llama-3.1-70b-instruct", "deepseek-ai/deepseek-r1"]
-    last_err = None
-    for model in models:
-        print(f"[*] [NVIDIA NIM] Querying {model}...", flush=True)
-        payload = {
-            "model": model,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": prompt}
-            ],
-            "temperature": 0.1,
-            "response_format": {"type": "json_object"}
-        }
-        req = urllib.request.Request(
-            url,
-            data=json.dumps(payload).encode("utf-8"),
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json"
-            },
-            method="POST"
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=120) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
-                text = data["choices"][0]["message"]["content"]
-                return extract_json_response(text)
-        except Exception as e:
-            print(f"[!] [NVIDIA NIM] Model {model} failed: {e}", file=sys.stderr)
-            last_err = str(e)
-            continue
-    raise RuntimeError(f"NVIDIA NIM calls failed. Last error: {last_err}")
 
 def main():
     parser = argparse.ArgumentParser(description="DevProxy AI Issue Solver")

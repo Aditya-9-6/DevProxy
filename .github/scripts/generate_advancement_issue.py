@@ -579,6 +579,12 @@ Output ONLY valid JSON matching this schema:
   "target_files": ["pkg/proxy/...", "pkg/analysis/..."]
 }}
 """
+    try:
+        from spryzen_gateway import GLOBAL_GATEWAY
+        return GLOBAL_GATEWAY.call_with_smart_routing(prompt=prompt, system_prompt="You are a Principal Go Systems Architect. Generate advancement issues formatted strictly as JSON.")
+    except Exception as gw_e:
+        print(f"[*] Gateway attempt in generate_advancement_issue: {gw_e}", flush=True)
+
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {"temperature": 0.3, "responseMimeType": "application/json"}

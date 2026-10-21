@@ -125,19 +125,35 @@ def call_openrouter(api_key: str = "", prompt: str = "", system_prompt: str = SY
     if not key:
         raise ValueError("Missing OPENROUTER_API_KEY")
     url = "https://openrouter.ai/api/v1/chat/completions"
-    models = ["google/gemini-2.0-flash-001", "meta-llama/llama-3.3-70b-instruct", "deepseek/deepseek-chat"]
+    models = [
+        "openrouter/free",
+        "meta-llama/llama-3.3-70b-instruct:free",
+        "deepseek/deepseek-chat:free",
+        "deepseek/deepseek-r1:free",
+        "qwen/qwen-2.5-coder-32b-instruct:free",
+        "google/gemini-2.0-flash-exp:free",
+        "mistralai/mistral-7b-instruct:free",
+        "meta-llama/llama-3.3-70b-instruct",
+        "deepseek/deepseek-chat"
+    ]
     for model in models:
         payload = {
             "model": model,
             "messages": [{"role": "system", "content": system_prompt}, {"role": "user", "content": prompt}],
-            "temperature": 0.2, "response_format": {"type": "json_object"}
+            "temperature": 0.2
         }
         req = urllib.request.Request(
             url, data=json.dumps(payload).encode("utf-8"),
-            headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"}, method="POST"
+            headers={
+                "Authorization": f"Bearer {key}",
+                "Content-Type": "application/json",
+                "HTTP-Referer": "https://github.com/Aditya-9-6/DevProxy",
+                "X-Title": "DevProxy Sovereign Autonomous Engine"
+            },
+            method="POST"
         )
         try:
-            with urllib.request.urlopen(req, timeout=30) as resp:
+            with urllib.request.urlopen(req, timeout=45) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
                 return extract_json_response(data["choices"][0]["message"]["content"])
         except Exception:
