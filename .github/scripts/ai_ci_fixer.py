@@ -51,25 +51,38 @@ def load_gemini_keys() -> list[str]:
             keys.append(k)
     return keys
 
-SYSTEM_PROMPT = """You are an expert autonomous Go systems engineer and compiler repair agent for DevProxy.
-Your mission is to fix failing Go build errors, compiler errors, data races, broken unit tests, AND refactor spaghetti code based on AI Reviewer feedback.
+SYSTEM_PROMPT = """You are an expert autonomous Go systems engineer and architectural refactoring agent for DevProxy.
+Your mission is to fix failing Go build errors, compiler errors, data races, broken unit tests, AND refactor code based on AI Reviewer feedback to elevate the Pull Request to 95-100 architectural grade.
 
 CRITICAL RULES:
-1. ANTI-SPAGHETTI & MODULARITY: Ensure functions are concise (<60 LOC), single-purpose, and decoupled. Refactor any tangled or duplicate logic identified by the reviewer.
-2. PRESERVE EXISTING INTERFACES & EXPORTS: Never remove or omit existing structs, interfaces, methods, or helper functions that other files or packages depend on. NEVER truncate a file or replace it with a skeleton stub.
-3. COMPILE-READY CODE: All files must be syntactically valid Go, with correct imports, correct types, and no undefined identifiers.
-4. CONCURRENCY & PERFORMANCE: Maintain DevProxy's zero-allocation streaming patterns (sync.Pool) and race-free concurrency.
-5. UNIT TEST GENERATION: Add comprehensive unit tests covering newly added functions, edge cases, and error branches.
-6. COMPLETE FILE CONTENT: When updating a file, provide the COMPLETE, FULL file content so it can replace the file directly. Never write partial snippets or omit existing methods.
+1. ANTI-SPAGHETTI & MODULARITY (MANDATORY FOR 95+ SCORE):
+   - Functions MUST be concise (<50 lines of code), single-purpose, and decoupled.
+   - Decompose any god functions into clean, focused private helper functions.
+   - Strictly eliminate deeply nested control blocks (>3 levels) or tangled logic identified by the reviewer.
+2. EXPAND UNIT TEST COVERAGE:
+   - Add comprehensive table-driven unit tests (*_test.go) covering all edge cases, error conditions, and negative branches.
+   - Include concurrency tests using `t.Parallel()` and parallel goroutines to prove race safety.
+3. CONCURRENCY & MEMORY INVARIANTS:
+   - Ensure complete data race freedom under `go test -race ./...`.
+   - Use `sync.Pool` for byte buffers (`[]byte`) on hot paths to eliminate heap allocations.
+   - Handle context cancellation cleanly (`select { case <-ctx.Done(): return }`) without goroutine leaks.
+   - Defer all mutex unlocks and resource closes immediately after acquisition.
+4. PRESERVE EXISTING INTERFACES & EXPORTS:
+   - Never remove or break existing structs, interfaces, methods, or helper functions that other packages depend on.
+   - NEVER truncate a file or replace it with a skeleton stub.
+5. COMPILE-READY GO CODE:
+   - All files must be syntactically valid Go, with correct imports, correct types, and no unused variables.
+6. COMPLETE FILE CONTENT:
+   - When updating a file, provide the COMPLETE, FULL file content so it can replace the file directly. Never write partial snippets or omit existing methods.
 
 CRITICAL OUTPUT FORMAT:
 Respond ONLY with a single valid JSON object and nothing else (no conversational filler, no markdown wrappers outside JSON):
 {
-  "summary": "Clear explanation of how the reviewer feedback was resolved and how the code was refactored.",
+  "summary": "Clear, detailed explanation of how reviewer action items were resolved, functions modularized, and tests added.",
   "files": [
     {
       "path": "relative/path/to/file.go",
-      "content": "full updated file content"
+      "content": "full updated compile-ready file content"
     }
   ]
 }
@@ -699,8 +712,11 @@ def extract_referenced_files(error_log: str, workspace: Path) -> list[str]:
 
     try:
         diff_names = subprocess.run(["git", "diff", "--name-only", "origin/main...HEAD"], cwd=workspace, capture_output=True, text=True)
-        for line in diff_names.stdout.splitlines():
-            line = line.strip().replace("\\", "/")
+        lines = [l.strip().replace("\\", "/") for l in diff_names.stdout.splitlines() if l.strip()]
+        if not lines:
+            diff_names = subprocess.run(["git", "diff", "--name-only", "HEAD~1"], cwd=workspace, capture_output=True, text=True)
+            lines = [l.strip().replace("\\", "/") for l in diff_names.stdout.splitlines() if l.strip()]
+        for line in lines:
             if line.endswith(".go") and (workspace / line).is_file():
                 found.add(line)
     except Exception:
@@ -778,6 +794,21 @@ def main():
     if args.review_feedback_file and Path(args.review_feedback_file).is_file():
         review_feedback = Path(args.review_feedback_file).read_text(encoding="utf-8")
         print(f"[*] Loaded Reviewer Feedback ({len(review_feedback)} chars).")
+    elif (workspace / "ai_pr_review.md").is_file():
+        review_feedback = (workspace / "ai_pr_review.md").read_text(encoding="utf-8")
+        print(f"[*] Automatically discovered reviewer feedback in ai_pr_review.md ({len(review_feedback)} chars).", flush=True)
+
+    action_items_text = ""
+    status_json_file = workspace / "ai_review_status.json"
+    if status_json_file.is_file():
+        try:
+            s_json = json.loads(status_json_file.read_text(encoding="utf-8"))
+            items = s_json.get("action_items", [])
+            if items:
+                action_items_text = "\n".join(f"- {it}" for it in items)
+                print(f"[*] Loaded {len(items)} specific architectural action items from ai_review_status.json.", flush=True)
+        except Exception:
+            pass
 
     all_repaired_files = set(conflicts_resolved)
     latest_summary = "Resolved Git merge conflicts." if conflicts_resolved else ""
@@ -825,18 +856,20 @@ def main():
         # Step 3: Construct prompt
         if not error_log and review_feedback:
             prompt_header = f"""Pull Request #{args.pr_number} compiles and tests pass, but the Architectural Reviewer flagged anti-patterns / action items (Pass {iteration}/{max_iterations}).
-Your goal: Refactor the code to resolve all architectural review action items while keeping all tests 100% GREEN."""
+Your goal: Refactor the code to resolve all architectural review action items and elevate to 95+ score while keeping all tests 100% GREEN."""
         else:
             prompt_header = f"""Pull Request #{args.pr_number} has failing Go tests or compiler errors (Pass {iteration}/{max_iterations}).
 Your goal: Fix all compiler errors and broken tests so that 'go test -v ./...' passes 100% GREEN."""
 
         user_inst_block = f"\n=== USER GUIDANCE & SPECIFIC INSTRUCTIONS ===\n{user_instructions}\nStrictly adhere to and implement these instructions.\n" if user_instructions else ""
+        action_items_block = f"\n=== MANDATORY ARCHITECTURAL ACTION ITEMS TO ACHIEVE 95+ SCORE ===\n{action_items_text}\nYou MUST implement each action item above to achieve approval!\n" if action_items_text else ""
 
         prompt = f"""{prompt_header}
 
 === CI DIAGNOSTIC ERROR LOG ===
 {error_log[:15000] if error_log else "None (compilation clean). Focus on architectural review feedback."}
 {user_inst_block}
+{action_items_block}
 {f"=== ARCHITECTURAL REVIEW FEEDBACK ==={chr(10)}{review_feedback[:10000]}" if review_feedback else ""}
 
 === CURRENT GIT DIFF ===
@@ -846,8 +879,8 @@ Your goal: Fix all compiler errors and broken tests so that 'go test -v ./...' p
 {chr(10).join(f"--- File: {path} ---{chr(10)}{content}" for path, content in file_contents.items())}
 
 Instructions:
-1. Examine the exact go compiler errors and failing unit tests above.
-2. Fix broken logic, type mismatches, missing imports, or missing methods.
+1. Examine the architectural review feedback and exact action items above.
+2. Resolve every action item: modularize functions into <50 LOC helpers, add table-driven unit tests with edge cases & t.Parallel(), and eliminate allocations.
 3. PRESERVATION MANDATE: You MUST preserve all existing structs, methods, interfaces, and packages. NEVER delete or truncate existing functionality.
 4. Provide the full replacement content for each file that needs to be updated.
 5. Output valid JSON adhering to the specified schema.

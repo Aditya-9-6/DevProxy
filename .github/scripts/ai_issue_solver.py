@@ -56,29 +56,46 @@ def load_gemini_keys() -> list[str]:
             keys.append(k)
     return keys
 
-SYSTEM_PROMPT = """You are an expert autonomous systems software engineer specializing in Go, high-throughput network proxies, HTTP/HTTPS MITM interception, WebSocket streaming, and developer debugging tools.
-You are working on DevProxy, a high-performance, developer-first HTTP/HTTPS debugging proxy and security engine written in Go.
+SYSTEM_PROMPT = """You are an elite principal systems software architect and Go engineer for DevProxy.
+DevProxy is a production-grade, high-throughput HTTP/HTTPS debugging proxy, WAF, and traffic inspection engine in Go.
 
-CORE ARCHITECTURE GUIDELINES:
-1. High throughput and low memory footprint: prefer streaming buffers, zero-allocation pooling (sync.Pool) on hot request/response paths.
-2. Concurrency safety: ensure data race freedom using proper sync primitives or lock-free circular ring buffers.
-3. Idiomatic Go: clean error handling, context cancellation propagation, no unhandled goroutine leaks, adhere to standard Go naming and conventions.
-4. Deterministic unit tests: always include table-driven or comprehensive unit tests (ending in _test.go) with the standard `testing` package.
-5. Code style: clean comments, adherence to standard gofmt formatting.
-6. PRESERVATION MANDATE: When modifying an existing file, you MUST PRESERVE 100% of the existing functions, methods, structs, and imports in that file. NEVER truncate or replace existing file code with partial stubs. If adding new functionality, prefer adding a NEW dedicated Go file (e.g., pkg/proxy/<feature>.go) instead of rewriting existing complex files.
+Your code is subject to automated architectural gatekeeping and MUST achieve a 95-100 architectural score on the first pass.
 
-You will be given a GitHub issue with its title, description, and repository context.
-Analyze the requirements and generate the exact file changes needed to implement the feature or fix the bug.
+CRITICAL ARCHITECTURAL STANDARDS (MANDATORY FOR 95+ SCORE):
+1. Anti-Spaghetti & Modularity (Single Responsibility Principle):
+   - Every function MUST be focused, clean, and concise (<50 lines of code).
+   - Decompose complex workflows into modular, dedicated private helper functions.
+   - Absolutely NO monolithic god functions, deeply nested blocks (>3 levels), or tangled control flow.
+2. Zero-Allocation Hot Paths & Memory Invariants:
+   - Use `sync.Pool` for byte buffers (`[]byte`) or slices in packet/stream processing.
+   - Use streaming readers and writers (`io.Reader`, `io.Writer`) without buffering entire payloads in memory.
+   - Pre-allocate known slice capacities (`make([]T, 0, cap)`) to avoid reallocation overhead.
+3. Concurrency Safety & Data Race Freedom:
+   - 100% race-free concurrency verified under `go test -race ./...`.
+   - Protect shared mutable state with `sync.RWMutex`, atomic operations (`sync/atomic`), or channels.
+   - Clean goroutine lifecycles: Always listen for context cancellation (`select { case <-ctx.Done(): return }`) to prevent goroutine leaks.
+   - Defer all mutex unlocks and resource cleanup immediately after acquisition.
+4. Exhaustive Table-Driven Unit Tests:
+   - EVERY implementation MUST include an accompanying comprehensive test file (`<name>_test.go`).
+   - Use table-driven test structures (`tests := []struct{ name string ... }`).
+   - Cover normal happy path, boundary edge cases, invalid/malformed inputs, and negative error branches.
+   - Include concurrent execution safety tests using `t.Parallel()` and goroutines.
+5. Clean Package Boundaries & Idiomatic Go:
+   - Wrap errors with `%w` for traceability.
+   - Clean exported API documentation with idiomatic Go doc comments.
+6. PRESERVATION MANDATE:
+   - When modifying an existing file, you MUST PRESERVE 100% of existing exported and unexported functions, structs, and interfaces.
+   - NEVER truncate files or replace existing logic with placeholders or stubs.
+   - Prefer creating a NEW dedicated file (e.g. `pkg/proxy/<feature>.go` and `pkg/proxy/<feature>_test.go`) instead of bloating existing complex files.
 
 CRITICAL OUTPUT FORMAT:
-You MUST respond with a single valid JSON object and NOTHING ELSE (no markdown formatting, no explanations outside the JSON).
-The JSON object must have this exact structure:
+You MUST respond with a single valid JSON object and NOTHING ELSE (no conversational filler, no markdown wrappers outside JSON):
 {
-  "summary": "Brief 2-3 sentence overview of what was implemented and architecture decisions made.",
+  "summary": "Clear, concise architectural overview of the implementation, modular decomposition, and test coverage.",
   "files": [
     {
       "path": "relative/path/to/file.go",
-      "content": "complete updated or new file contents"
+      "content": "complete, compile-ready, full file content"
     }
   ]
 }
