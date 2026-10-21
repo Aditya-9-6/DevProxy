@@ -528,10 +528,9 @@ def solve_issue(workspace: Path, issue_num: int, issue_title: str, issue_body: s
         "--issue-body", issue_body,
         "--workspace", str(workspace)
     ]
-    res = subprocess.run(solver_cmd, cwd=workspace, env=env, capture_output=True, text=True, encoding="utf-8", errors="replace")
-    print(res.stdout, flush=True)
+    res = subprocess.run(solver_cmd, cwd=workspace, env=env)
     if res.returncode != 0:
-        print(f"[!] Solver failed: {res.stderr}", file=sys.stderr, flush=True)
+        print(f"[!] Solver failed with exit code {res.returncode}", file=sys.stderr, flush=True)
         return False
 
     # Pre-commit Quality Assurance Gate
