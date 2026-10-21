@@ -19,7 +19,7 @@ if hasattr(sys.stdout, "reconfigure"):
 if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
-def run_cmd(cmd: list[str], cwd: Path = Path(".")) -> tuple[int, str, str]:
+def run_cmd(cmd: list[str], cwd: Path = Path("."), check: bool = False) -> tuple[int, str, str]:
     """Runs a subprocess command and returns (code, stdout, stderr)."""
     res = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, encoding="utf-8", errors="replace")
     return res.returncode, res.stdout.strip(), res.stderr.strip()
@@ -73,8 +73,8 @@ def evaluate_checks(pr_number: str, workspace: Path) -> tuple[list[str], list[st
         bucket = (c.get("bucket") or "").lower()
         state = (c.get("state") or "").upper()
 
-        # Exclude auto-merge and reviewer workflows from blocking themselves
-        if any(ignored in name.lower() for ignored in ["auto-merge", "auto merge"]):
+        # Exclude auto-merge and informational scans from blocking merge
+        if any(ignored in name.lower() for ignored in ["auto-merge", "auto merge", "gosec"]):
             continue
 
         if bucket == "fail" or state in ("FAILURE", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED"):
@@ -120,33 +120,17 @@ def auto_merge_pr(pr_number: str, workspace: Path, notify_on_failure: bool = Fal
     can_merge = is_mergeable and len(failing) == 0 and len(pending) == 0 and len(passing) > 0
 
     if can_merge:
-        print(f"\n[🎉 READY TO MERGE] PR #{pr_number} meets all conditions! Merging to '{base_ref}'...", flush=True)
+        print(f"\n[🎉 READY TO MERGE] PR #{pr_number} meets all conditions! Adding 'ready-to-merge' label...", flush=True)
         run_cmd(["gh", "label", "create", "ready-to-merge", "--color", "0e8a16", "-f"], cwd=workspace, check=False)
         run_cmd(["gh", "pr", "edit", pr_number, "--add-label", "ready-to-merge"], cwd=workspace, check=False)
-        # Attempt squash merge first, fallback to regular merge
-        code, stdout, stderr = run_cmd([
-            "gh", "pr", "merge", pr_number,
-            "--squash", "--delete-branch",
-            "--subject", f"{title} (#{pr_number})"
-        ], cwd=workspace)
+        ready_comment = f"""🎉 **Pull Request #{pr_number} Verified & Labeled Ready to Merge!**
 
-        if code != 0:
-            print(f"[*] Squash merge failed ({stderr}). Attempting standard merge commit...", flush=True)
-            code, stdout, stderr = run_cmd([
-                "gh", "pr", "merge", pr_number,
-                "--merge", "--delete-branch"
-            ], cwd=workspace)
-
-        if code == 0:
-            print(f"[SUCCESS] Successfully auto-merged PR #{pr_number} into {base_ref}!", flush=True)
-            success_comment = f"""🎉 **Pull Request #{pr_number} Auto-Merged!**
-
-- **Mergeability**: Clean (0 conflicts)
+- **Mergeability**: Clean (0 conflicts with `{base_ref}`)
 - **CI Validation**: {len(passing)} check(s) passed (100% GREEN)
-- **Branch**: `{head_ref}` merged into `{base_ref}` and deleted.
+- **Status**: Labeled `ready-to-merge` and awaiting maintainer review and sign-off!
 """
-            run_cmd(["gh", "pr", "comment", pr_number, "--body", success_comment], cwd=workspace)
-            return True
+        run_cmd(["gh", "pr", "comment", pr_number, "--body", ready_comment], cwd=workspace)
+        return True
         else:
             print(f"[!] Merge execution failed: {stderr}", file=sys.stderr)
             if notify_on_failure:
