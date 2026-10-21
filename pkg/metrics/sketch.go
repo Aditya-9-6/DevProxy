@@ -3,18 +3,20 @@ package metrics
 import (
 	"context"
 	"encoding/binary"
-	"math"
+	"sync"
 	"sync/atomic"
 	"time"
 )
 
-const cacheLineSize = 64
+const (
+	cacheLineSize               = 64
+	defaultCountMinSketchWindow = time.Minute
+)
 
-// paddedCounter is an atomic counter aligned to a cache line to prevent false sharing.
+// paddedCounter stores an atomic counter in a cache-line-sized value to reduce false sharing.
 type paddedCounter struct {
 	val uint64
-	// padding to fill the rest of the cache line (64 bytes total)
-	_ [cacheLineSize - 8]byte
+	_   [cacheLineSize - 8]byte
 }
 
 // CountMinSketch is a lock-free, cache-aligned Count-Min Sketch for frequency estimation.
@@ -26,7 +28,7 @@ type CountMinSketch struct {
 }
 
 // NewCountMinSketch creates a new CountMinSketch with the given width (number of columns)
-// and depth (number of hash functions/rows).
+// and depth (number of hash functions/rows). Zero dimensions are normalized to one.
 func NewCountMinSketch(width, depth uint64) *CountMinSketch {
 	if width == 0 {
 		width = 1
@@ -34,6 +36,7 @@ func NewCountMinSketch(width, depth uint64) *CountMinSketch {
 	if depth == 0 {
 		depth = 1
 	}
+
 	cms := &CountMinSketch{
 		width:    width,
 		depth:    depth,
@@ -46,37 +49,49 @@ func NewCountMinSketch(width, depth uint64) *CountMinSketch {
 }
 
 // Add increments the count for the given key by the specified count.
-// It is safe for concurrent use.
+// It is safe for concurrent use. Non-positive counts are ignored because the
+// sketch stores unsigned frequency counters.
 func (cms *CountMinSketch) Add(key []byte, count int64) {
+	if cms == nil || count <= 0 || cms.width == 0 || cms.depth == 0 {
+		return
+	}
+
 	h1 := murmurHash64(key, 0)
 	h2 := murmurHash64(key, 1)
+	// Every positive int64 is representable as uint64.
+	increment := uint64(count) // #nosec G115
 	for i := uint64(0); i < cms.depth; i++ {
 		idx := (h1 + i*h2) % cms.width
-		atomic.AddUint64(&cms.counters[i][idx].val, uint64(count))
+		atomic.AddUint64(&cms.counters[i][idx].val, increment)
 	}
 }
 
 // Estimate returns the estimated frequency of the given key.
 // It is safe for concurrent use.
 func (cms *CountMinSketch) Estimate(key []byte) uint64 {
-	h1 := murmurHash64(key, 0)
-	h2 := murmurHash64(key, 1)
-	var min uint64 = math.MaxUint64
-	for i := uint64(0); i < cms.depth; i++ {
-		idx := (h1 + i*h2) % cms.width
-		val := atomic.LoadUint64(&cms.counters[i][idx].val)
-		if val < min {
-			min = val
-		}
-	}
-	if min == math.MaxUint64 {
+	if cms == nil || cms.width == 0 || cms.depth == 0 {
 		return 0
 	}
-	return min
+
+	h1 := murmurHash64(key, 0)
+	h2 := murmurHash64(key, 1)
+	var minimum uint64
+	for i := uint64(0); i < cms.depth; i++ {
+		idx := (h1 + i*h2) % cms.width
+		value := atomic.LoadUint64(&cms.counters[i][idx].val)
+		if i == 0 || value < minimum {
+			minimum = value
+		}
+	}
+	return minimum
 }
 
 // Reset clears all counters in the sketch.
 func (cms *CountMinSketch) Reset() {
+	if cms == nil {
+		return
+	}
+
 	for i := range cms.counters {
 		for j := range cms.counters[i] {
 			atomic.StoreUint64(&cms.counters[i][j].val, 0)
@@ -90,67 +105,131 @@ type SlidingWindowCountMinSketch struct {
 	active   atomic.Pointer[CountMinSketch]
 	inactive *CountMinSketch
 	window   time.Duration
-	cancel   context.CancelFunc
-	done     chan struct{}
+
+	lifecycleMu sync.Mutex
+	cancel      context.CancelFunc
+	done        chan struct{}
 }
 
 // NewSlidingWindowCountMinSketch creates a new SlidingWindowCountMinSketch with the given
-// width, depth, and window duration.
+// width, depth, and window duration. Non-positive windows use a safe default duration.
 func NewSlidingWindowCountMinSketch(width, depth uint64, window time.Duration) *SlidingWindowCountMinSketch {
-	cms1 := NewCountMinSketch(width, depth)
-	cms2 := NewCountMinSketch(width, depth)
+	if window <= 0 {
+		window = defaultCountMinSketchWindow
+	}
+
 	s := &SlidingWindowCountMinSketch{
-		inactive: cms2,
+		inactive: NewCountMinSketch(width, depth),
 		window:   window,
 	}
-	s.active.Store(cms1)
+	s.active.Store(NewCountMinSketch(width, depth))
 	return s
 }
 
 // Start begins the background goroutine that periodically swaps the active sketch
 // and resets the inactive one. It respects ctx cancellation and cleans up on Stop.
+// Calling Start while an instance is already running has no effect.
 func (s *SlidingWindowCountMinSketch) Start(ctx context.Context) {
+	if s == nil {
+		return
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
+
 	if s.cancel != nil {
 		return
 	}
-	ctx, s.cancel = context.WithCancel(ctx)
-	s.done = make(chan struct{})
-	go func() {
-		defer close(s.done)
-		ticker := time.NewTicker(s.window)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				// Reset the sketch that will become active
-				s.inactive.Reset()
-				oldActive := s.active.Swap(s.inactive)
-				s.inactive = oldActive
-			}
-		}
-	}()
+	if s.window <= 0 {
+		s.window = defaultCountMinSketchWindow
+	}
+	if s.active.Load() == nil {
+		s.active.Store(NewCountMinSketch(1, 1))
+	}
+	if s.inactive == nil {
+		s.inactive = NewCountMinSketch(1, 1)
+	}
+
+	runCtx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	s.cancel = cancel
+	s.done = done
+	go s.run(runCtx, done)
 }
 
 // Stop halts the background goroutine and waits for it to finish.
+// It is safe to call Stop more than once or concurrently with Start.
 func (s *SlidingWindowCountMinSketch) Stop() {
-	if s.cancel != nil {
-		s.cancel()
-		<-s.done
-		s.cancel = nil
+	if s == nil {
+		return
 	}
+
+	s.lifecycleMu.Lock()
+	cancel := s.cancel
+	done := s.done
+	s.lifecycleMu.Unlock()
+
+	if cancel == nil {
+		return
+	}
+
+	cancel()
+	<-done
+
+	s.lifecycleMu.Lock()
+	if s.done == done {
+		s.cancel = nil
+		s.done = nil
+	}
+	s.lifecycleMu.Unlock()
+}
+
+func (s *SlidingWindowCountMinSketch) run(ctx context.Context, done chan<- struct{}) {
+	defer close(done)
+
+	ticker := time.NewTicker(s.window)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			s.rotate()
+		}
+	}
+}
+
+func (s *SlidingWindowCountMinSketch) rotate() {
+	s.inactive.Reset()
+	oldActive := s.active.Swap(s.inactive)
+	s.inactive = oldActive
 }
 
 // Add increments the count for the given key in the active sketch.
 func (s *SlidingWindowCountMinSketch) Add(key []byte, count int64) {
+	if s == nil {
+		return
+	}
 	active := s.active.Load()
+	if active == nil {
+		return
+	}
 	active.Add(key, count)
 }
 
 // Estimate returns the estimated frequency of the given key from the active sketch.
 func (s *SlidingWindowCountMinSketch) Estimate(key []byte) uint64 {
+	if s == nil {
+		return 0
+	}
 	active := s.active.Load()
+	if active == nil {
+		return 0
+	}
 	return active.Estimate(key)
 }
 
@@ -163,7 +242,6 @@ func murmurHash64(key []byte, seed uint64) uint64 {
 	h := seed
 	n := uint64(len(key))
 
-	// body
 	for i := 0; i < len(key)/8; i++ {
 		k := binary.LittleEndian.Uint64(key[i*8:])
 		k *= m
@@ -173,7 +251,6 @@ func murmurHash64(key []byte, seed uint64) uint64 {
 		h *= m
 	}
 
-	// tail
 	tail := len(key) % 8
 	if tail > 0 {
 		var k2 uint64

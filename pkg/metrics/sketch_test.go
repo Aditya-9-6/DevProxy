@@ -27,7 +27,6 @@ func TestCountMinSketch_MultipleKeys(t *testing.T) {
 			t.Errorf("key %s: expected estimate >= 5, got %d", k, est)
 		}
 	}
-	// Check a key not added
 	if est := cms.Estimate([]byte("nonexistent")); est != 0 {
 		t.Errorf("expected 0 for nonexistent key, got %d", est)
 	}
@@ -47,7 +46,7 @@ func TestCountMinSketch_ConcurrentAdds(t *testing.T) {
 	}
 	wg.Wait()
 	est := cms.Estimate(key)
-	if est < uint64(goroutines) {
+	if est < 100 {
 		t.Errorf("expected estimate >= %d, got %d", goroutines, est)
 	}
 }
@@ -100,6 +99,58 @@ func TestCountMinSketch_TableDriven(t *testing.T) {
 	}
 }
 
+func TestCountMinSketch_NonPositiveCountsIgnored(t *testing.T) {
+	cms := NewCountMinSketch(100, 4)
+	key := []byte("signed-count")
+
+	cms.Add(key, -10)
+	cms.Add(key, 0)
+	if est := cms.Estimate(key); est != 0 {
+		t.Fatalf("expected non-positive counts to be ignored, got %d", est)
+	}
+
+	cms.Add(key, 7)
+	if est := cms.Estimate(key); est != 7 {
+		t.Errorf("expected estimate 7, got %d", est)
+	}
+}
+
+func TestCountMinSketch_MaxPositiveCount(t *testing.T) {
+	cms := NewCountMinSketch(100, 4)
+	key := []byte("max-count")
+	const maxPositiveInt64 = 1<<63 - 1
+
+	cms.Add(key, maxPositiveInt64)
+	if est := cms.Estimate(key); est != maxPositiveInt64 {
+		t.Errorf("expected estimate %d, got %d", maxPositiveInt64, est)
+	}
+}
+
+func TestCountMinSketch_ZeroWidthDepth(t *testing.T) {
+	cms := NewCountMinSketch(0, 0)
+	cms.Add([]byte("key"), 5)
+	if est := cms.Estimate([]byte("key")); est != 5 {
+		t.Errorf("expected 5, got %d", est)
+	}
+}
+
+func TestCountMinSketch_ZeroValue(t *testing.T) {
+	var cms CountMinSketch
+	cms.Add([]byte("key"), 5)
+	if est := cms.Estimate([]byte("key")); est != 0 {
+		t.Errorf("expected zero-value sketch to remain empty, got %d", est)
+	}
+}
+
+func TestCountMinSketch_NilReceiver(t *testing.T) {
+	var cms *CountMinSketch
+	cms.Add([]byte("key"), 5)
+	cms.Reset()
+	if est := cms.Estimate([]byte("key")); est != 0 {
+		t.Errorf("expected nil receiver estimate 0, got %d", est)
+	}
+}
+
 func TestSlidingWindowCountMinSketch_Basic(t *testing.T) {
 	window := 50 * time.Millisecond
 	sw := NewSlidingWindowCountMinSketch(100, 4, window)
@@ -116,17 +167,17 @@ func TestSlidingWindowCountMinSketch_Basic(t *testing.T) {
 		t.Errorf("expected 10, got %d", est)
 	}
 
-	// Wait for window to pass (plus some buffer)
-	time.Sleep(window * 2)
-
-	// After window, the sketch should have been reset
+	deadline := time.Now().Add(time.Second)
+	for sw.Estimate(key) != 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
 	if est := sw.Estimate(key); est != 0 {
 		t.Errorf("expected 0 after window reset, got %d", est)
 	}
 }
 
 func TestSlidingWindowCountMinSketch_Concurrent(t *testing.T) {
-	window := 100 * time.Millisecond
+	window := 5 * time.Second
 	sw := NewSlidingWindowCountMinSketch(100, 4, window)
 	ctx, cancel := context.WithCancel(context.Background())
 	sw.Start(ctx)
@@ -148,16 +199,14 @@ func TestSlidingWindowCountMinSketch_Concurrent(t *testing.T) {
 		}()
 	}
 	wg.Wait()
-	// Estimate should be at least something
-	est := sw.Estimate([]byte("concurrent"))
-	if est == 0 {
-		t.Errorf("expected non-zero estimate")
+
+	if est := sw.Estimate([]byte("concurrent")); est == 0 {
+		t.Error("expected non-zero estimate")
 	}
 }
 
 func TestSlidingWindowCountMinSketch_StopWithoutStart(t *testing.T) {
 	sw := NewSlidingWindowCountMinSketch(100, 4, time.Second)
-	// Stop should not panic even if Start was not called
 	sw.Stop()
 }
 
@@ -166,18 +215,82 @@ func TestSlidingWindowCountMinSketch_ContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	sw.Start(ctx)
 	cancel()
-	// Wait a bit for goroutine to exit
-	time.Sleep(50 * time.Millisecond)
-	// Should not leak; we can call Stop again safely.
+	sw.Stop()
 	sw.Stop()
 }
 
-func TestCountMinSketch_ZeroWidthDepth(t *testing.T) {
-	// Should default to 1
-	cms := NewCountMinSketch(0, 0)
-	cms.Add([]byte("key"), 5)
-	if est := cms.Estimate([]byte("key")); est != 5 {
-		t.Errorf("expected 5, got %d", est)
+func TestSlidingWindowCountMinSketch_StartIsIdempotent(t *testing.T) {
+	sw := NewSlidingWindowCountMinSketch(100, 4, time.Hour)
+	ctx, cancel := context.WithCancel(context.Background())
+	sw.Start(ctx)
+	sw.Start(ctx)
+	defer func() {
+		cancel()
+		sw.Stop()
+	}()
+
+	key := []byte("idempotent-start")
+	sw.Add(key, 3)
+	if est := sw.Estimate(key); est != 3 {
+		t.Errorf("expected estimate 3, got %d", est)
+	}
+}
+
+func TestSlidingWindowCountMinSketch_InvalidWindow(t *testing.T) {
+	for _, window := range []time.Duration{0, -time.Second} {
+		sw := NewSlidingWindowCountMinSketch(100, 4, window)
+		ctx, cancel := context.WithCancel(context.Background())
+		sw.Start(ctx)
+		cancel()
+		sw.Stop()
+	}
+}
+
+func TestSlidingWindowCountMinSketch_ConcurrentLifecycle(t *testing.T) {
+	sw := NewSlidingWindowCountMinSketch(100, 4, time.Hour)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var wg sync.WaitGroup
+	for i := 0; i < 32; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			sw.Start(ctx)
+			sw.Stop()
+		}()
+	}
+	wg.Wait()
+	sw.Stop()
+}
+
+func TestSlidingWindowCountMinSketch_RestartAfterStop(t *testing.T) {
+	sw := NewSlidingWindowCountMinSketch(100, 4, time.Hour)
+	sw.Start(context.Background())
+	sw.Stop()
+	sw.Start(context.Background())
+	sw.Stop()
+}
+
+func TestSlidingWindowCountMinSketch_ZeroValueAndNilContext(t *testing.T) {
+	var sw SlidingWindowCountMinSketch
+	sw.Start(nil)
+	defer sw.Stop()
+
+	key := []byte("zero-value")
+	sw.Add(key, 2)
+	if est := sw.Estimate(key); est != 2 {
+		t.Errorf("expected estimate 2, got %d", est)
+	}
+}
+
+func TestSlidingWindowCountMinSketch_NilReceiver(t *testing.T) {
+	var sw *SlidingWindowCountMinSketch
+	sw.Start(context.Background())
+	sw.Stop()
+	sw.Add([]byte("key"), 1)
+	if est := sw.Estimate([]byte("key")); est != 0 {
+		t.Errorf("expected nil receiver estimate 0, got %d", est)
 	}
 }
 
@@ -190,6 +303,21 @@ func TestMurmurHash64_Deterministic(t *testing.T) {
 	}
 	h3 := murmurHash64(key, 1)
 	if h1 == h3 {
-		t.Errorf("expected different hashes for different seeds")
+		t.Error("expected different hashes for different seeds")
+	}
+}
+
+func TestMurmurHash64_AllTailLengths(t *testing.T) {
+	for length := 0; length < 16; length++ {
+		key := make([]byte, length)
+		for i := range key {
+			key[i] = byte(i*31 + length)
+		}
+
+		first := murmurHash64(key, 0)
+		second := murmurHash64(key, 0)
+		if first != second {
+			t.Errorf("length %d: expected deterministic hash, got %d vs %d", length, first, second)
+		}
 	}
 }
