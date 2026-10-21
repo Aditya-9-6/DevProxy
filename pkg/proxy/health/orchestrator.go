@@ -9,6 +9,12 @@ import (
 	"time"
 )
 
+const (
+	nodeHealthStatusUnknown uint64 = iota
+	nodeHealthStatusHealthy
+	nodeHealthStatusUnhealthy
+)
+
 // NodeHealthChecker monitors the health of a single upstream node.
 type NodeHealthChecker struct {
 	url              string
@@ -29,6 +35,13 @@ type NodeHealthChecker struct {
 
 // NewNodeHealthChecker creates a new NodeHealthChecker.
 func NewNodeHealthChecker(ctx context.Context, url string, client *http.Client, failureThreshold, successThreshold uint64, baseInterval time.Duration, wg *sync.WaitGroup) *NodeHealthChecker {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if client == nil {
+		client = http.DefaultClient
+	}
+
 	ctx, cancel := context.WithCancel(ctx)
 	return &NodeHealthChecker{
 		url:              url,
@@ -75,10 +88,8 @@ func (n *NodeHealthChecker) loop() {
 
 	interval := n.baseInterval
 	for {
-		select {
-		case <-n.ctx.Done():
+		if n.ctx.Err() != nil {
 			return
-		default:
 		}
 
 		start := time.Now()
@@ -86,66 +97,115 @@ func (n *NodeHealthChecker) loop() {
 		latency := time.Since(start)
 
 		if err == nil {
-			n.ring.Record(true, uint64(latency.Nanoseconds()))
-			n.consecSuc.Add(1)
-			n.consecFail.Store(0)
-
-			// Increase interval if healthy
-			if n.Status() == 1 {
-				interval *= 2
-				if interval > n.maxInterval {
-					interval = n.maxInterval
-				}
-			}
-
-			// Check if we can transition to healthy
-			if n.consecSuc.Load() >= n.successThreshold {
-				n.status.Store(1)
-			}
+			interval = n.recordSuccess(interval, latency)
 		} else {
-			n.ring.Record(false, 0)
-			n.consecFail.Add(1)
-			n.consecSuc.Store(0)
-
-			// Decrease interval if unhealthy
-			interval /= 2
-			if interval < n.minInterval {
-				interval = n.minInterval
-			}
-
-			// Check if we should transition to unhealthy
-			if n.consecFail.Load() >= n.failureThreshold {
-				n.status.Store(2)
-			}
+			interval = n.recordFailure(interval)
 		}
 
-		select {
-		case <-n.ctx.Done():
+		if !n.waitForNextProbe(interval) {
 			return
-		case <-time.After(interval):
 		}
 	}
 }
 
+func (n *NodeHealthChecker) recordSuccess(interval time.Duration, latency time.Duration) time.Duration {
+	n.ring.Record(true, healthDurationToUint64(latency))
+	n.consecSuc.Add(1)
+	n.consecFail.Store(0)
+
+	if n.Status() == nodeHealthStatusHealthy {
+		interval = increaseHealthCheckInterval(interval, n.maxInterval)
+	}
+	if n.consecSuc.Load() >= n.successThreshold {
+		n.status.Store(nodeHealthStatusHealthy)
+	}
+
+	return interval
+}
+
+func (n *NodeHealthChecker) recordFailure(interval time.Duration) time.Duration {
+	n.ring.Record(false, 0)
+	n.consecFail.Add(1)
+	n.consecSuc.Store(0)
+
+	interval = decreaseHealthCheckInterval(interval, n.minInterval)
+	if n.consecFail.Load() >= n.failureThreshold {
+		n.status.Store(nodeHealthStatusUnhealthy)
+	}
+
+	return interval
+}
+
+func (n *NodeHealthChecker) waitForNextProbe(interval time.Duration) bool {
+	timer := time.NewTimer(interval)
+	defer timer.Stop()
+
+	select {
+	case <-n.ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
+}
+
 func (n *NodeHealthChecker) probe() error {
-	ctx, cancel := context.WithTimeout(n.ctx, 2*time.Second)
+	parentCtx := n.ctx
+	if parentCtx == nil {
+		parentCtx = context.Background()
+	}
+
+	probeCtx, cancel := context.WithTimeout(parentCtx, 2*time.Second)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, n.url, nil)
+	req, err := http.NewRequestWithContext(probeCtx, http.MethodGet, n.url, nil)
 	if err != nil {
 		return err
 	}
 
-	resp, err := n.client.Do(req)
+	client := n.client
+	if client == nil {
+		client = http.DefaultClient
+	}
+
+	resp, err := client.Do(req)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+	if resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices {
 		return nil
 	}
 	return fmt.Errorf("unexpected status: %d", resp.StatusCode)
+}
+
+// healthDurationToUint64 converts a duration's nanosecond count to uint64.
+// Negative durations are clamped because time.Duration is a signed type.
+func healthDurationToUint64(duration time.Duration) uint64 {
+	if duration <= 0 {
+		return 0
+	}
+	// The guard guarantees that the signed value is non-negative and therefore
+	// fits within uint64 without losing information.
+	return uint64(duration) // #nosec G115
+}
+
+func increaseHealthCheckInterval(interval, maximum time.Duration) time.Duration {
+	if interval >= maximum {
+		return maximum
+	}
+	if maximum > 0 && interval > maximum/2 {
+		return maximum
+	}
+	return interval * 2
+}
+
+func decreaseHealthCheckInterval(interval, minimum time.Duration) time.Duration {
+	half := interval / 2
+	if half < minimum {
+		return minimum
+	}
+	return half
 }
 
 // HealthOrchestrator manages health checking for multiple upstream nodes.
@@ -180,6 +240,16 @@ func (o *HealthOrchestrator) AddNode(id, url string) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 
+	// Checking the context while holding the lock serializes AddNode with
+	// Stop, preventing a WaitGroup Add from racing with Wait.
+	if o.ctx.Err() != nil {
+		return
+	}
+
+	if previous, exists := o.nodes[id]; exists {
+		previous.Stop()
+	}
+
 	checker := NewNodeHealthChecker(o.ctx, url, o.client, o.failureThreshold, o.successThreshold, o.baseInterval, &o.wg)
 	o.nodes[id] = checker
 	checker.Start()
@@ -188,11 +258,14 @@ func (o *HealthOrchestrator) AddNode(id, url string) {
 // RemoveNode stops monitoring and removes a node.
 func (o *HealthOrchestrator) RemoveNode(id string) {
 	o.mu.Lock()
-	defer o.mu.Unlock()
-
-	if checker, ok := o.nodes[id]; ok {
-		checker.Stop()
+	checker, exists := o.nodes[id]
+	if exists {
 		delete(o.nodes, id)
+	}
+	o.mu.Unlock()
+
+	if exists {
+		checker.Stop()
 	}
 }
 
@@ -203,7 +276,7 @@ func (o *HealthOrchestrator) Status(id string) (uint64, bool) {
 
 	checker, ok := o.nodes[id]
 	if !ok {
-		return 0, false
+		return nodeHealthStatusUnknown, false
 	}
 	return checker.Status(), true
 }
@@ -222,6 +295,8 @@ func (o *HealthOrchestrator) Ring(id string) (*HealthRing, bool) {
 
 // Stop stops all monitoring and cancels the context.
 func (o *HealthOrchestrator) Stop() {
+	o.mu.Lock()
 	o.cancel()
+	o.mu.Unlock()
 	o.wg.Wait()
 }

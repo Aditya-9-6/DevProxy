@@ -34,17 +34,28 @@ func NewHealthRing() *HealthRing {
 // success indicates if the check succeeded.
 // latency is the check latency in nanoseconds.
 func (r *HealthRing) Record(success bool, latency uint64) {
-	idx := int(r.index.Add(1) % healthRingSize)
+	// The modulo operation bounds idx to the array size without converting an
+	// unbounded uint64 to int.
+	idx := r.index.Add(1) % healthRingSize
 	r.slots[idx].latency.Store(latency)
 
-	// Update bitmask
-	mask := r.bits.Load()
-	if success {
-		mask |= (1 << idx)
-	} else {
-		mask &^= (1 << idx)
+	bit := uint32(1) << idx
+	for {
+		current := r.bits.Load()
+		updated := current
+		if success {
+			updated |= bit
+		} else {
+			updated &^= bit
+		}
+
+		if updated == current {
+			return
+		}
+		if r.bits.CompareAndSwap(current, updated) {
+			return
+		}
 	}
-	r.bits.Store(mask)
 }
 
 // SuccessRate returns the fraction of successful checks in the ring (0.0 to 1.0).
@@ -56,11 +67,13 @@ func (r *HealthRing) SuccessRate() float64 {
 
 // AvgLatency returns the average latency of all recorded checks in nanoseconds.
 func (r *HealthRing) AvgLatency() float64 {
-	var total uint64
+	// Accumulating in float64 avoids overflowing uint64 when very large latency
+	// values are recorded. The result is already a float64 by contract.
+	var total float64
 	for i := 0; i < healthRingSize; i++ {
-		total += r.slots[i].latency.Load()
+		total += float64(r.slots[i].latency.Load())
 	}
-	return float64(total) / float64(healthRingSize)
+	return total / float64(healthRingSize)
 }
 
 // Latencies returns a copy of all latencies in the ring.
