@@ -120,49 +120,17 @@ def auto_merge_pr(pr_number: str, workspace: Path, notify_on_failure: bool = Fal
     can_merge = is_mergeable and len(failing) == 0 and len(pending) == 0 and len(passing) > 0
 
     if can_merge:
-        print(f"\n[🎉 READY TO MERGE] PR #{pr_number} meets all conditions! Merging to '{base_ref}'...", flush=True)
+        print(f"\n[🎉 READY TO MERGE] PR #{pr_number} meets all conditions! Adding 'ready-to-merge' label...", flush=True)
         run_cmd(["gh", "label", "create", "ready-to-merge", "--color", "0e8a16", "-f"], cwd=workspace, check=False)
         run_cmd(["gh", "pr", "edit", pr_number, "--add-label", "ready-to-merge"], cwd=workspace, check=False)
-        # Attempt squash merge first with --admin, fallback to standard squash then regular merge
-        code, stdout, stderr = run_cmd([
-            "gh", "pr", "merge", pr_number,
-            "--squash", "--delete-branch", "--admin",
-            "--subject", f"{title} (#{pr_number})"
-        ], cwd=workspace)
+        ready_comment = f"""🎉 **Pull Request #{pr_number} Verified & Labeled Ready to Merge!**
 
-        if code != 0:
-            code, stdout, stderr = run_cmd([
-                "gh", "pr", "merge", pr_number,
-                "--squash", "--delete-branch",
-                "--subject", f"{title} (#{pr_number})"
-            ], cwd=workspace)
-
-        if code != 0:
-            print(f"[*] Squash merge failed ({stderr}). Attempting standard merge commit...", flush=True)
-            code, stdout, stderr = run_cmd([
-                "gh", "pr", "merge", pr_number,
-                "--merge", "--delete-branch"
-            ], cwd=workspace)
-
-        if code == 0:
-            print(f"[SUCCESS] Successfully auto-merged PR #{pr_number} into {base_ref}!", flush=True)
-            success_comment = f"""🎉 **Pull Request #{pr_number} Auto-Merged!**
-
-- **Mergeability**: Clean (0 conflicts)
+- **Mergeability**: Clean (0 conflicts with `{base_ref}`)
 - **CI Validation**: {len(passing)} check(s) passed (100% GREEN)
-- **Branch**: `{head_ref}` merged into `{base_ref}` and deleted.
+- **Status**: Labeled `ready-to-merge` and awaiting maintainer review and sign-off!
 """
-            run_cmd(["gh", "pr", "comment", pr_number, "--body", success_comment], cwd=workspace)
-
-            # Auto-close linked issue if reference exists in title or branch
-            import re
-            m = re.search(r"#(\d+)", title)
-            if not m and "issue-" in head_ref:
-                m = re.search(r"issue-(\d+)", head_ref)
-            if m:
-                linked_iss = m.group(1)
-                run_cmd(["gh", "issue", "close", linked_iss, "--comment", f"Resolved and auto-merged via PR #{pr_number}."], cwd=workspace)
-            return True
+        run_cmd(["gh", "pr", "comment", pr_number, "--body", ready_comment], cwd=workspace)
+        return True
         else:
             print(f"[!] Merge execution failed: {stderr}", file=sys.stderr)
             if notify_on_failure:
