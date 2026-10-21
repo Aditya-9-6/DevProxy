@@ -123,28 +123,54 @@ def auto_merge_pr(pr_number: str, workspace: Path, notify_on_failure: bool = Fal
         print(f"\n[🎉 READY TO MERGE] PR #{pr_number} meets all conditions! Merging to '{base_ref}'...", flush=True)
         run_cmd(["gh", "label", "create", "ready-to-merge", "--color", "0e8a16", "-f"], cwd=workspace, check=False)
         run_cmd(["gh", "pr", "edit", pr_number, "--add-label", "ready-to-merge"], cwd=workspace, check=False)
-        # Attempt squash merge first with --admin, fallback to standard squash then regular merge
-        code, stdout, stderr = run_cmd([
-            "gh", "pr", "merge", pr_number,
-            "--squash", "--delete-branch", "--admin",
-            "--subject", f"{title} (#{pr_number})"
-        ], cwd=workspace)
+        user_name = "Dahale Aditya Dnyaneshwar"
+        user_email = "adityadahale96@gmail.com"
+        merged_successfully = False
 
-        if code != 0:
+        try:
+            run_cmd(["git", "checkout", "-f", base_ref], cwd=workspace, check=False)
+            run_cmd(["git", "pull", "origin", base_ref], cwd=workspace, check=False)
+            c, out, err = run_cmd(["git", "merge", f"origin/{head_ref}", "--squash"], cwd=workspace, check=False)
+            if c == 0:
+                run_cmd(["git", "config", "user.name", user_name], cwd=workspace, check=False)
+                run_cmd(["git", "config", "user.email", user_email], cwd=workspace, check=False)
+                run_cmd([
+                    "git", "commit",
+                    "-m", f"{title} (#{pr_number})",
+                    f"--author={user_name} <{user_email}>"
+                ], cwd=workspace, check=False)
+                pc, pout, perr = run_cmd(["git", "push", "origin", base_ref], cwd=workspace, check=False)
+                if pc == 0:
+                    merged_successfully = True
+                    print(f"[SUCCESS] Squashed and pushed commit directly to {base_ref} as {user_name} <{user_email}>!", flush=True)
+                    run_cmd(["gh", "pr", "close", pr_number, "--comment", f"🎉 Auto-merged into `{base_ref}` by {user_name}!"], cwd=workspace, check=False)
+                    run_cmd(["git", "push", "origin", "--delete", head_ref], cwd=workspace, check=False)
+        except Exception:
+            pass
+
+        if not merged_successfully:
+            # Fallback to gh pr merge API
             code, stdout, stderr = run_cmd([
                 "gh", "pr", "merge", pr_number,
-                "--squash", "--delete-branch",
+                "--squash", "--delete-branch", "--admin",
                 "--subject", f"{title} (#{pr_number})"
             ], cwd=workspace)
+            if code != 0:
+                code, stdout, stderr = run_cmd([
+                    "gh", "pr", "merge", pr_number,
+                    "--squash", "--delete-branch",
+                    "--subject", f"{title} (#{pr_number})"
+                ], cwd=workspace)
+            if code != 0:
+                print(f"[*] Squash merge failed ({stderr}). Attempting standard merge commit...", flush=True)
+                code, stdout, stderr = run_cmd([
+                    "gh", "pr", "merge", pr_number,
+                    "--merge", "--delete-branch"
+                ], cwd=workspace)
+            if code == 0:
+                merged_successfully = True
 
-        if code != 0:
-            print(f"[*] Squash merge failed ({stderr}). Attempting standard merge commit...", flush=True)
-            code, stdout, stderr = run_cmd([
-                "gh", "pr", "merge", pr_number,
-                "--merge", "--delete-branch"
-            ], cwd=workspace)
-
-        if code == 0:
+        if merged_successfully:
             print(f"[SUCCESS] Successfully auto-merged PR #{pr_number} into {base_ref}!", flush=True)
             success_comment = f"""🎉 **Pull Request #{pr_number} Auto-Merged!**
 
@@ -163,6 +189,7 @@ def auto_merge_pr(pr_number: str, workspace: Path, notify_on_failure: bool = Fal
                 linked_iss = m.group(1)
                 run_cmd(["gh", "issue", "close", linked_iss, "--comment", f"Resolved and auto-merged via PR #{pr_number}."], cwd=workspace)
             return True
+        else:
         else:
             print(f"[!] Merge execution failed: {stderr}", file=sys.stderr)
             if notify_on_failure:
