@@ -19,12 +19,10 @@ import urllib.request
 import urllib.error
 from pathlib import Path
 
-DEFAULT_MODEL = "gemini-2.0-flash"
+DEFAULT_MODEL = "gemini-3.8-flash"
 FALLBACK_MODELS = [
-    "gemini-2.0-flash",
-    "gemini-2.0-flash-lite",
-    "gemini-1.5-flash",
-    "gemini-1.5-pro",
+    "gemini-3.8-flash",
+    "gemini-flash-latest",
 ]
 
 SYSTEM_PROMPT = """You are the Principal AI Architect and Gatekeeper.

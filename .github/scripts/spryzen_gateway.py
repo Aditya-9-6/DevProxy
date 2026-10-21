@@ -431,12 +431,7 @@ class SpryzenGateway:
         tier = classify_cascade_tier(sanitized_prompt)
         target_model = preferred_model
         if preferred_model == "auto":
-            if tier == CascadeTier.FAST_ECONOMY:
-                target_model = "gemini-2.0-flash-lite"
-            elif tier == CascadeTier.FRONTIER_REASONING:
-                target_model = "gemini-2.5-pro"
-            else:
-                target_model = "gemini-2.5-flash"
+            target_model = "gemini-3.8-flash"
 
         # Step 6: Multi-Provider Execution with Failover
         response = None
@@ -447,7 +442,8 @@ class SpryzenGateway:
             response = self._call_gemini_pool(sanitized_prompt, system_prompt, target_model, temperature)
             used_model = target_model
         except Exception as gemini_err:
-            print(f"[!] [Gateway] Gemini pool exhausted: {gemini_err}. Cascading to OpenRouter...", file=sys.stderr, flush=True)
+            gem_err_clean = str(gemini_err).encode("ascii", errors="replace").decode()
+            print(f"[!] [Gateway] Gemini pool exhausted: {gem_err_clean}. Cascading to OpenRouter...", file=sys.stderr, flush=True)
 
         # Provider B: OpenRouter Fallback
         if response is None:
@@ -468,7 +464,7 @@ class SpryzenGateway:
                     print(f"[!] [Gateway] Custom gateway failed: {gw_err}", file=sys.stderr, flush=True)
 
         if response is None:
-            raise RuntimeError("❌ All AI Providers in Spryzen Gateway exhausted.")
+            raise RuntimeError("[FAILED] All AI Providers in Spryzen Gateway exhausted.")
 
         # Step 7: Agentic Guard Code Safety Inspection
         if isinstance(response, dict) and "files" in response:
@@ -490,7 +486,7 @@ class SpryzenGateway:
         if not keys:
             raise ValueError("No Gemini API keys found in pool.")
 
-        models_to_try = [model, "gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-flash-8b", "gemini-2.5-pro"]
+        models_to_try = [model, "gemini-3.8-flash", "gemini-flash-latest"]
         seen_models = []
         for m in models_to_try:
             if m not in seen_models:
@@ -499,7 +495,10 @@ class SpryzenGateway:
         last_error = None
         for key in keys:
             masked_key = f"...{key[-6:]}" if len(key) > 6 else "key"
+            key_exhausted = False
             for m in seen_models:
+                if key_exhausted:
+                    break
                 url = f"https://generativelanguage.googleapis.com/v1beta/models/{m}:generateContent?key={key}"
                 payload = {
                     "contents": [
@@ -529,10 +528,11 @@ class SpryzenGateway:
                         err_body = e.read().decode("utf-8", errors="replace")
                         last_error = f"HTTP {e.code}: {err_body[:120]}"
                         if e.code == 429:
+                            key_exhausted = True
                             break
                         if e.code == 404:
                             break
-                        time.sleep(1.5 * attempt)
+                        time.sleep(1.0 * attempt)
                     except Exception as ex:
                         last_error = str(ex)
                         time.sleep(1.0 * attempt)

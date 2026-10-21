@@ -40,3 +40,6 @@ __pycache__/
 .gossip_mesh/
 .worktrees/
 G:/**
+
+.ai_gateway_cache.json
+metrics.json
