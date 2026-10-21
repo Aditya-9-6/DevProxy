@@ -44,7 +44,7 @@ def audit_and_close_unneeded_prs(workspace: Path) -> int:
         "--repo", REPO,
         "--state", "open",
         "--limit", "100",
-        "--json", "number,title,headRefName,url"
+        "--json", "number,title,headRefName,url,labels"
     ], cwd=workspace)
     if not prs_raw:
         print("[*] No open PRs found.", flush=True)
@@ -93,6 +93,12 @@ def audit_and_close_unneeded_prs(workspace: Path) -> int:
         num = p["number"]
         head = p["headRefName"]
         title = p["title"]
+        labels = [l.get("name", "") for l in p.get("labels", [])]
+
+        # Never close valid PRs awaiting maintainer merge
+        if "ready-to-merge" in labels:
+            continue
+
         linked = None
         m_m = re.search(r"(?:solve-)?issue-(\d+)", head)
         if m_m:
@@ -108,26 +114,14 @@ def audit_and_close_unneeded_prs(workspace: Path) -> int:
         if linked:
             issue_to_prs.setdefault(linked, []).append(p)
 
-        # Check Reason A: Linked issue is already closed
-        if linked and linked in closed_issues:
-            print(f"[*] Closing PR #{num} ({head}): Linked issue #{linked} is already closed.", flush=True)
-            run_cmd([
-                "gh", "pr", "close", str(num),
-                "--repo", REPO,
-                "--comment", f"🤖 **DevProxy Gatekeeper Triage**: Automatically closing this PR because its linked issue #{linked} is already closed or obsolete.",
-                "--delete-branch"
-            ], cwd=workspace)
-            closed_count += 1
-            continue
-
-        # Check Reason B: Linked issue already resolved by merged PR
+        # Check: Linked issue already resolved by merged PR
         if linked and linked in merged_issue_to_pr:
             merged_num = merged_issue_to_pr[linked]
             print(f"[*] Closing PR #{num} ({head}): Linked issue #{linked} was already resolved by merged PR #{merged_num}.", flush=True)
             run_cmd([
                 "gh", "pr", "close", str(num),
                 "--repo", REPO,
-                "--comment", f"🤖 **DevProxy Gatekeeper Triage**: Automatically closing this PR because linked issue #{linked} has already been resolved and merged in PR #{merged_num}.",
+                "--comment", f"🛑 **DevProxy Gatekeeper Triage**: Automatically closing this PR because linked issue #{linked} has already been resolved and merged in PR #{merged_num}.",
                 "--delete-branch"
             ], cwd=workspace)
             closed_count += 1
