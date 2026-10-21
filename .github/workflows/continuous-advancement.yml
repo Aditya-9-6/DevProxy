@@ -115,3 +115,12 @@ jobs:
         with:
           name: metrics-${{ matrix.worker }}
           path: metrics.json
+
+      - name: Auto-Chain Next 24/7 Advancement Cycle
+        if: matrix.worker == 1
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          echo "[*] Worker 1 chaining next 24/7 autonomous advancement execution cycle..."
+          gh workflow run continuous-advancement.yml --ref main || true
