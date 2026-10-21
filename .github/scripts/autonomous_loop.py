@@ -296,10 +296,13 @@ def heal_and_merge_open_prs(workspace: Path, worker_id: int = 1, num_workers: in
                 run_cmd("git reset --hard HEAD", cwd=workspace, check=False)
                 run_cmd("git clean -fd", cwd=workspace, check=False)
                 run_cmd(["git", "fetch", "origin", head_ref], cwd=workspace, check=False)
-                run_cmd(["git", "checkout", "-B", head_ref, f"origin/{head_ref}"], cwd=workspace)
+                run_cmd(["git", "checkout", "-f", "-B", head_ref, f"origin/{head_ref}"], cwd=workspace, check=False)
+                run_cmd(["git", "checkout", "origin/main", "--", ".github/"], cwd=workspace, check=False)
                 merge_res = subprocess.run(["git", "merge", "origin/main", "--no-edit"], cwd=workspace, capture_output=True, text=True)
                 if merge_res.returncode != 0:
-                    run_cmd(["git", "checkout", "origin/main", "--", ".github/", "autonomous_loop.py"], cwd=workspace, check=False)
+                    run_cmd(["git", "checkout", "origin/main", "--", ".github/"], cwd=workspace, check=False)
+                    run_cmd(["git", "checkout", "--theirs", "go.mod", "go.sum"], cwd=workspace, check=False)
+                    run_cmd(["go", "mod", "tidy"], cwd=workspace, check=False)
                     run_cmd("git add -A", cwd=workspace, check=False)
                     run_cmd(["git", "commit", "-m", "merge: resolve tooling conflicts with origin/main", "--no-edit"], cwd=workspace, check=False)
             except Exception as e:
@@ -432,7 +435,7 @@ def heal_and_merge_open_prs(workspace: Path, worker_id: int = 1, num_workers: in
                 else:
                     run_cmd(["gh", "pr", "edit", str(pr_num), "--repo", REPO, "--remove-label", "ready-to-merge"], cwd=workspace, check=False)
     finally:
-        run_cmd("git checkout main", cwd=workspace, check=False)
+        run_cmd("git checkout -f main", cwd=workspace, check=False)
     return False
 
 def solve_issue(workspace: Path, issue_num: int, issue_title: str, issue_body: str):
