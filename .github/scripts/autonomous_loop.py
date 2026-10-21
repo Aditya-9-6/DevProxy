@@ -29,8 +29,8 @@ except Exception:
     pass
 
 REPO = "Aditya-9-6/DevProxy"
-USER_NAME = "Aditya Dahale"
-USER_EMAIL = "aditya-9-6@users.noreply.github.com"
+USER_NAME = "Dahale Aditya Dnyaneshwar"
+USER_EMAIL = "adityadahale96@gmail.com"
 
 # Base Key Pool - Dynamically loaded from GEMINI_KEY_POOL, individual env vars, or .gemini_keys
 DEFAULT_KEYS = []
@@ -341,6 +341,22 @@ def heal_and_merge_open_prs(workspace: Path, worker_id: int = 1, num_workers: in
                     run_cmd(["git", "push", "origin", head_ref], cwd=workspace, check=False)
                     run_cmd(["gh", "pr", "comment", str(pr_num), "--repo", REPO, "--body", f"✅ **Autonomous Fix Applied!** Diagnostics passed 100% GREEN on branch `{head_ref}`."], cwd=workspace, check=False)
 
+                if code != 0:
+                    print(f"[REJECT] PR #{pr_num} failed diagnostics and could not be repaired. Closing PR as unsuitable...", flush=True)
+                    close_comment = f"""🛑 **DevProxy Gatekeeper Validation: PR Closed (Unsuitable)**
+
+This pull request cannot be merged because automated compiler diagnostics or tests failed after self-healing repair passes.
+
+**Failure Diagnostics:**
+```text
+{error_log[:1500]}
+```
+
+Closing PR and deleting branch `{head_ref}` to maintain repository health.
+"""
+                    run_cmd(["gh", "pr", "close", str(pr_num), "--repo", REPO, "--comment", close_comment, "--delete-branch"], cwd=workspace, check=False)
+                    continue
+
             if code == 0:
                 print(f"[*] Running Reviewer on PR #{pr_num}...", flush=True)
                 rev_env = os.environ.copy()
@@ -406,32 +422,35 @@ def heal_and_merge_open_prs(workspace: Path, worker_id: int = 1, num_workers: in
                             except Exception:
                                 pass
 
+                if verdict == "REJECT" or (score > 0 and score < 60):
+                    print(f"[REJECT] PR #{pr_num} rejected by architectural audit (Score: {score}/100). Closing PR as unsuitable...", flush=True)
+                    close_comment = f"""🛑 **DevProxy Architectural Audit: PR Closed (Unsuitable)**
+
+This pull request was evaluated by the Architectural Gatekeeper and rejected with score **{score}/100** (Verdict: `REJECT`).
+
+**Audit Rationale:**
+The implementation introduces anti-patterns, violates zero-allocation invariants, or introduces concurrency hazards.
+
+Closing PR and deleting branch `{head_ref}`.
+"""
+                    run_cmd(["gh", "pr", "close", str(pr_num), "--repo", REPO, "--comment", close_comment, "--delete-branch"], cwd=workspace, check=False)
+                    continue
+
                 if verdict == "APPROVED" and score >= 90 and is_pr_clean_and_green(pr_num, workspace):
-                    print(f"[APPROVED] PR #{pr_num} APPROVED ({score}/100) with 0 conflicts and 100% green CI! Executing auto-merge...", flush=True)
+                    print(f"[APPROVED] PR #{pr_num} APPROVED ({score}/100) with 0 conflicts and 100% green CI! Marking ready-to-merge.", flush=True)
                     run_cmd(["gh", "label", "create", "ready-to-merge", "--repo", REPO, "--color", "0E8A16", "-f"], cwd=workspace, check=False)
                     run_cmd(["gh", "pr", "edit", str(pr_num), "--repo", REPO, "--add-label", "ready-to-merge"], cwd=workspace, check=False)
-                    merge_res = subprocess.run([
-                        "gh", "pr", "merge", str(pr_num),
-                        "--repo", REPO, "--squash", "--delete-branch", "--admin",
-                        "--subject", f"{title} (#{pr_num})"
-                    ], cwd=workspace, capture_output=True, text=True, encoding="utf-8", errors="replace")
-                    if merge_res.returncode != 0:
-                        merge_res = subprocess.run([
-                            "gh", "pr", "merge", str(pr_num),
-                            "--repo", REPO, "--squash", "--delete-branch",
-                            "--subject", f"{title} (#{pr_num})"
-                        ], cwd=workspace, capture_output=True, text=True, encoding="utf-8", errors="replace")
-                    if merge_res.returncode == 0:
-                        print(f"[SUCCESS] Successfully auto-merged PR #{pr_num} into main!", flush=True)
-                        if linked_issue:
-                            run_cmd(["gh", "issue", "close", str(linked_issue), "--repo", REPO, "--comment", f"Resolved and auto-merged via PR #{pr_num}."], cwd=workspace, check=False)
-                        run_cmd("git checkout main", cwd=workspace, check=False)
-                        run_cmd("git pull origin main", cwd=workspace, check=False)
-                        return True
-                    else:
-                        print(f"[!] Auto-merge for PR #{pr_num} failed: {merge_res.stderr.strip()}", flush=True)
-                        run_cmd("git checkout main", cwd=workspace, check=False)
-                        return False
+                    ready_comment = f"""🎉 **Pull Request #{pr_num} Verified & Labeled Ready to Merge!**
+
+- **Architectural Score**: **{score}/100** (`APPROVED`)
+- **CI Validation**: **100% GREEN** (Passed compiler, vet, and race-detector suites)
+- **Mergeability**: Clean (0 merge conflicts with `main`)
+- **Status**: Labeled `ready-to-merge` and awaiting maintainer sign-off!
+"""
+                    run_cmd(["gh", "pr", "comment", str(pr_num), "--repo", REPO, "--body", ready_comment], cwd=workspace, check=False)
+                    print(f"[READY] PR #{pr_num} is clean, green, and awaiting manual merge by maintainer. Leaving open.", flush=True)
+                    run_cmd("git checkout -f main", cwd=workspace, check=False)
+                    return True
                 else:
                     run_cmd(["gh", "pr", "edit", str(pr_num), "--repo", REPO, "--remove-label", "ready-to-merge"], cwd=workspace, check=False)
     finally:
@@ -493,16 +512,28 @@ def solve_issue(workspace: Path, issue_num: int, issue_title: str, issue_body: s
         vet_res = subprocess.run(["go", "vet", "./..."], cwd=workspace, capture_output=True, text=True, encoding="utf-8", errors="replace")
         check_res = subprocess.run(["go", "test", "-race", "./..."], cwd=workspace, capture_output=True, text=True, encoding="utf-8", errors="replace")
 
-    if vet_res.returncode != 0:
-        print(f"[!] go vet failed: {vet_res.stderr}", file=sys.stderr, flush=True)
+    if vet_res.returncode != 0 or check_res.returncode != 0:
+        FAILED_SOLVE_ATTEMPTS[issue_num] = FAILED_SOLVE_ATTEMPTS.get(issue_num, 0) + 1
+        err_msg = vet_res.stderr if vet_res.returncode != 0 else check_res.stderr
+        print(f"[!] Pre-commit check failed for Issue #{issue_num} (attempt {FAILED_SOLVE_ATTEMPTS[issue_num]}): {err_msg}", file=sys.stderr, flush=True)
         run_cmd("git reset --hard HEAD", cwd=workspace, check=False)
         run_cmd("git clean -fd", cwd=workspace, check=False)
-        return False
 
-    if check_res.returncode != 0:
-        print(f"[!] go test failed: {check_res.stderr}", file=sys.stderr, flush=True)
-        run_cmd("git reset --hard HEAD", cwd=workspace, check=False)
-        run_cmd("git clean -fd", cwd=workspace, check=False)
+        if FAILED_SOLVE_ATTEMPTS[issue_num] >= 2:
+            print(f"[REJECT] Issue #{issue_num} failed automated solution validation. Closing as unsuitable...", flush=True)
+            close_body = f"""🛑 **DevProxy Gatekeeper Validation: Issue Closed (Unsuitable)**
+
+Automated solution and pre-commit compiler diagnostics failed for this issue specification after multiple attempts.
+
+**Diagnostic Failure:**
+```text
+{err_msg[:1500]}
+```
+
+Closing this issue as not suitable or conflicting with existing architecture.
+"""
+            run_cmd(["gh", "issue", "close", str(issue_num), "--repo", REPO, "--comment", close_body, "--reason", "not planned"], cwd=workspace, check=False)
+            run_cmd(["gh", "issue", "edit", str(issue_num), "--repo", REPO, "--add-label", "unviable"], cwd=workspace, check=False)
         return False
 
     branch_name = f"ai/solve-issue-{issue_num}"
@@ -595,31 +626,37 @@ def solve_issue(workspace: Path, issue_num: int, issue_title: str, issue_body: s
         run_cmd(["gh", "pr", "comment", str(pr_num), "--repo", REPO, "--body-file", str(review_md_file)], cwd=workspace, check=False)
 
     if verdict == "APPROVED" and score >= 90:
-        print(f"[APPROVED] PR #{pr_num} APPROVED (Score: {score}/100) with 0 conflicts! Enabling auto-merge...", flush=True)
+        print(f"[APPROVED] PR #{pr_num} APPROVED (Score: {score}/100) with 0 conflicts! Marking ready-to-merge.", flush=True)
         run_cmd(["gh", "label", "create", "ready-to-merge", "--repo", REPO, "--color", "0E8A16", "-f"], cwd=workspace, check=False)
         run_cmd(["gh", "pr", "edit", str(pr_num), "--repo", REPO, "--add-label", "ready-to-merge"], cwd=workspace, check=False)
-        # Attempt immediate squash merge, or schedule GitHub native auto-merge
-        merge_res = subprocess.run([
-            "gh", "pr", "merge", str(pr_num),
-            "--repo", REPO, "--squash", "--delete-branch", "--admin"
-        ], cwd=workspace, capture_output=True, text=True, encoding="utf-8", errors="replace")
-        if merge_res.returncode != 0:
-            merge_res = subprocess.run([
-                "gh", "pr", "merge", str(pr_num),
-                "--repo", REPO, "--auto", "--squash", "--delete-branch"
-            ], cwd=workspace, capture_output=True, text=True, encoding="utf-8", errors="replace")
-        print(f"[*] Auto-merge status for PR #{pr_num}: {merge_res.stdout.strip() or merge_res.stderr.strip()}", flush=True)
-        run_cmd("git checkout main", cwd=workspace, check=False)
+        ready_comment = f"""🎉 **Pull Request #{pr_num} Verified Ready to Merge!**
+
+- **Architectural Score**: **{score}/100** (`APPROVED`)
+- **CI Pre-Commit Diagnostics**: **100% GREEN** (Passed compiler, vet, and race-detector)
+- **Status**: Labeled `ready-to-merge` and awaiting maintainer manual sign-off!
+"""
+        run_cmd(["gh", "pr", "comment", str(pr_num), "--repo", REPO, "--body", ready_comment], cwd=workspace, check=False)
+        print(f"[READY] PR #{pr_num} is labeled ready-to-merge. Leaving open for maintainer manual merge.", flush=True)
+        run_cmd("git checkout -f main", cwd=workspace, check=False)
         return True
     elif verdict == "REJECT" or (score > 0 and score < 60):
-        print(f"[REJECT] PR #{pr_num} rejected by architectural audit (Score: {score}/100). Closing PR.", flush=True)
+        print(f"[REJECT] PR #{pr_num} rejected by architectural audit (Score: {score}/100). Closing PR as unsuitable...", flush=True)
+        close_comment = f"""🛑 **DevProxy Architectural Audit: PR Closed (Unsuitable)**
+
+This pull request was evaluated by the Architectural Gatekeeper and rejected with score **{score}/100** (Verdict: `REJECT`).
+
+**Audit Rationale:**
+The implementation introduces anti-patterns, violates zero-allocation invariants, or introduces concurrency hazards.
+
+Closing PR and deleting branch `{branch_name}`.
+"""
         run_cmd([
             "gh", "pr", "close", str(pr_num),
             "--repo", REPO,
-            "--comment", f"🤖 **DevProxy Gatekeeper**: Automatically closing this PR because it was rejected by architectural review (Score: {score}/100, Verdict: REJECT).",
+            "--comment", close_comment,
             "--delete-branch"
         ], cwd=workspace, check=False)
-        run_cmd("git checkout main", cwd=workspace, check=False)
+        run_cmd("git checkout -f main", cwd=workspace, check=False)
         return False
     else:
         run_cmd(["gh", "pr", "edit", str(pr_num), "--repo", REPO, "--remove-label", "ready-to-merge"], cwd=workspace, check=False)
