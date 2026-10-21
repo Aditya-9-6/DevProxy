@@ -53,6 +53,22 @@ func TestHLLPositionRankExcludesIndexBits(t *testing.T) {
 	}
 }
 
+func TestHLLPositionUsesConfiguredPrecision(t *testing.T) {
+	tracker := MustNewHLL(MaxHLLPrecision)
+
+	index, _ := tracker.position(^uint64(0))
+	const wantIndex uint64 = (uint64(1) << MaxHLLPrecision) - 1
+	if index != wantIndex {
+		t.Fatalf("maximum register index: got %d, want %d", index, wantIndex)
+	}
+
+	_, rank := tracker.position(0)
+	const wantMaximumRank uint64 = MaxHLLPrecision + 1
+	if rank != wantMaximumRank {
+		t.Fatalf("maximum register rank: got %d, want %d", rank, wantMaximumRank)
+	}
+}
+
 func hllRegressionXXH64(data []byte, seed uint64) uint64 {
 	length := uint64(len(data))
 	var hash uint64

@@ -26,6 +26,45 @@ var (
 	ErrNilHyperLogLog      = errors.New("nil HyperLogLog")
 )
 
+// hllPrecisionConfig contains the typed values derived from a valid
+// precision. Keeping these values in a validated table avoids unchecked
+// integer conversions on the request hot path.
+type hllPrecisionConfig struct {
+	indexShift  uint
+	suffixShift uint
+	maximumRank uint64
+}
+
+var hllPrecisionConfigs = [MaxHLLPrecision + 1]hllPrecisionConfig{
+	4:  hllPrecisionConfig{indexShift: 60, suffixShift: 4, maximumRank: 5},
+	5:  hllPrecisionConfig{indexShift: 59, suffixShift: 5, maximumRank: 6},
+	6:  hllPrecisionConfig{indexShift: 58, suffixShift: 6, maximumRank: 7},
+	7:  hllPrecisionConfig{indexShift: 57, suffixShift: 7, maximumRank: 8},
+	8:  hllPrecisionConfig{indexShift: 56, suffixShift: 8, maximumRank: 9},
+	9:  hllPrecisionConfig{indexShift: 55, suffixShift: 9, maximumRank: 10},
+	10: hllPrecisionConfig{indexShift: 54, suffixShift: 10, maximumRank: 11},
+	11: hllPrecisionConfig{indexShift: 53, suffixShift: 11, maximumRank: 12},
+	12: hllPrecisionConfig{indexShift: 52, suffixShift: 12, maximumRank: 13},
+	13: hllPrecisionConfig{indexShift: 51, suffixShift: 13, maximumRank: 14},
+	14: hllPrecisionConfig{indexShift: 50, suffixShift: 14, maximumRank: 15},
+	15: hllPrecisionConfig{indexShift: 49, suffixShift: 15, maximumRank: 16},
+	16: hllPrecisionConfig{indexShift: 48, suffixShift: 16, maximumRank: 17},
+	17: hllPrecisionConfig{indexShift: 47, suffixShift: 17, maximumRank: 18},
+	18: hllPrecisionConfig{indexShift: 46, suffixShift: 18, maximumRank: 19},
+}
+
+// hllRankByLeadingZeros maps the result of bits.LeadingZeros64 to a
+// one-based HyperLogLog rank. The lookup avoids narrowing an int to uint64.
+var hllRankByLeadingZeros = [65]uint64{
+	1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+	11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+	21, 22, 23, 24, 25, 26, 27, 28, 29, 30,
+	31, 32, 33, 34, 35, 36, 37, 38, 39, 40,
+	41, 42, 43, 44, 45, 46, 47, 48, 49, 50,
+	51, 52, 53, 54, 55, 56, 57, 58, 59, 60,
+	61, 62, 63, 64, 65,
+}
+
 // hllRegister occupies one cache line so concurrently updated registers do not
 // cause false sharing. Only the low rank bits are used by the estimator.
 type hllRegister struct {
@@ -47,6 +86,7 @@ type HyperLogLog struct {
 	precision     int
 	registerCount int
 	suffixMask    uint64
+	config        hllPrecisionConfig
 	state         atomic.Pointer[hllState]
 }
 
@@ -88,10 +128,12 @@ func NewHyperLogLogChecked(precision int) (*HyperLogLog, error) {
 	}
 
 	registerCount := 1 << precision
+	config := hllPrecisionConfigs[precision]
 	tracker := &HyperLogLog{
 		precision:     precision,
 		registerCount: registerCount,
-		suffixMask:    (uint64(1) << uint(64-precision)) - 1,
+		suffixMask:    (uint64(1) << config.indexShift) - 1,
+		config:        config,
 	}
 	tracker.state.Store(newHLLState(registerCount))
 	return tracker, nil
@@ -186,25 +228,23 @@ func (h *HyperLogLog) ObserveAddr(addr netip.Addr) bool {
 func (h *HyperLogLog) addHash(state *hllState, hash uint64) {
 	state.observations.Add(1)
 	index, rank := h.position(hash)
-	h.updateRegister(state, index, rank)
+	h.updateRegister(state, &state.registers[index], rank)
 }
 
-func (h *HyperLogLog) position(hash uint64) (uint32, uint64) {
-	index := hash >> uint(64-h.precision)
+func (h *HyperLogLog) position(hash uint64) (uint64, uint64) {
+	index := hash >> h.config.indexShift
 	suffix := hash & h.suffixMask
 
 	// Shift the suffix into the high bits so LeadingZeros64 counts only the
 	// non-index portion of the hash. LeadingZeros64 is a compiler intrinsic.
-	rank := uint64(bits.LeadingZeros64(suffix<<uint(h.precision))) + 1
-	maximumRank := uint64(h.precision + 1)
-	if rank > maximumRank {
-		rank = maximumRank
+	rank := hllRankByLeadingZeros[bits.LeadingZeros64(suffix<<h.config.suffixShift)]
+	if rank > h.config.maximumRank {
+		rank = h.config.maximumRank
 	}
-	return uint32(index), rank
+	return index, rank
 }
 
-func (h *HyperLogLog) updateRegister(state *hllState, index uint32, rank uint64) {
-	register := &state.registers[index]
+func (h *HyperLogLog) updateRegister(state *hllState, register *hllRegister, rank uint64) {
 	for {
 		current := register.value.Load()
 		if current >= rank {
@@ -360,7 +400,7 @@ func (h *HyperLogLog) Merge(other *HyperLogLog) error {
 	}
 
 	for index := range state.registers {
-		h.updateRegister(state, uint32(index), otherState.registers[index].value.Load())
+		h.updateRegister(state, &state.registers[index], otherState.registers[index].value.Load())
 	}
 	return nil
 }
@@ -393,9 +433,8 @@ func (h *HyperLogLog) MergeSnapshot(values []uint64) error {
 		return fmt.Errorf("invalid HyperLogLog snapshot length %d, expected %d", len(values), h.registerCount)
 	}
 
-	maximumRank := uint64(h.precision + 1)
 	for _, value := range values {
-		if value > maximumRank {
+		if value > h.config.maximumRank {
 			return fmt.Errorf("invalid HyperLogLog register rank %d", value)
 		}
 	}
@@ -405,7 +444,7 @@ func (h *HyperLogLog) MergeSnapshot(values []uint64) error {
 		return ErrNilHyperLogLog
 	}
 	for index, value := range values {
-		h.updateRegister(state, uint32(index), value)
+		h.updateRegister(state, &state.registers[index], value)
 	}
 	return nil
 }
