@@ -95,8 +95,6 @@ jobs:
           echo "title=$TITLE" >> $GITHUB_OUTPUT
           echo "skip=false" >> $GITHUB_OUTPUT
 
-          gh pr comment "$PR_NUM" --body "🤖 **DevProxy CI Auto-Fixer & Conflict Resolver** is analyzing branch \`$HEAD_REF\` against latest \`main\`..."
-
       - name: Checkout PR Branch
         if: steps.meta.outputs.skip != 'true'
         uses: actions/checkout@v4
@@ -243,11 +241,7 @@ jobs:
           COMMIT_SHA: ${{ steps.push.outputs.commit_sha }}
         run: |
           if [ "$HAS_CHANGES" = "true" ] && [ "$PUSHED" = "true" ]; then
-            if [ -f "ci_fix_summary.md" ]; then
-              gh pr comment "$PR_NUM" --body-file "ci_fix_summary.md"
-            else
-              gh pr comment "$PR_NUM" --body "✅ **CI Fix Applied!** Pushed commit \`$COMMIT_SHA\` to \`$HEAD_REF\` and re-triggered CI validation."
-            fi
+            echo "Successfully pushed $COMMIT_SHA to $HEAD_REF."
           elif [ "$PUSH_FAILED" = "true" ]; then
             gh pr comment "$PR_NUM" --body "⚠️ **CI Auto-Fixer Warning**: Fix was generated locally, but git push to \`$HEAD_REF\` was rejected by GitHub (check workflow/branch permissions)."
           fi

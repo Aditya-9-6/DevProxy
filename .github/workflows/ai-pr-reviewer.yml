@@ -129,11 +129,13 @@ jobs:
         run: |
           if [ -f "ai_pr_review.md" ]; then
             if grep -q "Temporarily Rate-Limited" ai_pr_review.md; then
-              PREV=$(gh pr view "$PR_NUM" --json comments --jq '[.comments[].body | select(contains("Temporarily Rate-Limited"))] | length')
-              if [ "$PREV" -gt 0 ]; then
-                echo "Rate-limited comment already exists on PR #$PR_NUM ($PREV found). Skipping post."
-                exit 0
-              fi
+              echo "Rate-limited review. Skipping comment to prevent spam."
+              exit 0
+            fi
+            EXISTING=$(gh pr view "$PR_NUM" --json comments --jq '[.comments[].body | select(contains("Autonomous Architectural Review"))] | length' 2>/dev/null || echo "0")
+            if [ "$EXISTING" != "0" ] && [ -n "$EXISTING" ]; then
+              echo "Review comment already exists on PR #$PR_NUM ($EXISTING found). Skipping duplicate comment."
+              exit 0
             fi
             gh pr comment "$PR_NUM" --body-file "ai_pr_review.md"
           fi
@@ -239,8 +241,6 @@ jobs:
             git commit -m "refactor(ai): architectural repair from reviewer audit [ai-repair-cycle ${NEXT_CYCLE}]" -m "Co-authored-by: Aditya Dahale <aditya-9-6@users.noreply.github.com>"
             git remote set-url origin "https://x-access-token:${AUTH_TOKEN}@github.com/${GH_REPO}.git"
             git push origin "HEAD:${HEAD_REF}"
-
-            gh pr comment "$PR_NUM" --body "🔄 **Self-Healing Loop**: PR Fixer Agent refactored the code to resolve reviewer findings (Cycle ${NEXT_CYCLE}/3). Pushed updates to \`${HEAD_REF}\`. The AI Reviewer will now re-audit."
           else
             echo "No file changes produced during repair cycle."
           fi
@@ -252,4 +252,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
           PR_NUM: ${{ steps.meta.outputs.pr_num }}
         run: |
-          gh pr comment "$PR_NUM" --body "⚠️ **Autonomous Repair Limit Reached**: 3 self-healing cycles completed. Maintainer review is requested from @Aditya-9-6 for final manual adjustments."
+          PREV=$(gh pr view "$PR_NUM" --json comments --jq '[.comments[].body | select(contains("Autonomous Repair Limit Reached"))] | length' 2>/dev/null || echo "0")
+          if [ "$PREV" = "0" ] || [ -z "$PREV" ]; then
+            gh pr comment "$PR_NUM" --body "⚠️ **Autonomous Repair Limit Reached**: 3 self-healing cycles completed. Maintainer review is requested from @Aditya-9-6 for final manual adjustments."
+          fi

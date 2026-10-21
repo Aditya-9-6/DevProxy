@@ -88,6 +88,7 @@ class KeyPool:
 
 GLOBAL_POOL = KeyPool(DEFAULT_KEYS)
 FAILED_SOLVE_ATTEMPTS: dict[int, int] = {}
+PR_EVALUATION_ATTEMPTS: dict[int, int] = {}
 
 def run_cmd(cmd, cwd=None, check=True):
     """Runs a shell command and returns stdout."""
@@ -283,6 +284,25 @@ def heal_and_merge_open_prs(workspace: Path, worker_id: int = 1, num_workers: in
             title = pr["title"]
             print(f"\n[*] Evaluating PR #{pr_num}: {title} (branch: {head_ref})...", flush=True)
 
+            # 1. Skip if already labeled ready-to-merge to prevent spam
+            labels = [l.get("name", "") for l in pr.get("labels", [])]
+            if "ready-to-merge" in labels:
+                print(f"[*] PR #{pr_num} is already labeled ready-to-merge. Skipping to avoid duplicate comments.", flush=True)
+                continue
+
+            # 2. Track evaluation attempts to prevent endless loops & comment spam
+            PR_EVALUATION_ATTEMPTS[pr_num] = PR_EVALUATION_ATTEMPTS.get(pr_num, 0) + 1
+            if PR_EVALUATION_ATTEMPTS[pr_num] > 2:
+                print(f"[REJECT] PR #{pr_num} exceeded maximum repair attempts (2). Closing as unsuitable...", flush=True)
+                close_comment = f"""🛑 **DevProxy Gatekeeper Validation: PR Closed (Unsuitable)**
+
+This pull request could not satisfy architectural and diagnostic criteria after 2 automated repair passes.
+
+Closing PR and deleting branch `{head_ref}` to maintain repository health and prevent comment spam.
+"""
+                run_cmd(["gh", "pr", "close", str(pr_num), "--repo", REPO, "--comment", close_comment, "--delete-branch"], cwd=workspace, check=False)
+                continue
+
             # Determine linked issue number
             linked_issue = None
             if "issue-" in head_ref:
@@ -324,7 +344,16 @@ def heal_and_merge_open_prs(workspace: Path, worker_id: int = 1, num_workers: in
                 continue
 
             code, error_log = run_diagnostics(workspace)
-            has_fix_request = any("/fix" in c.get("body", "") for c in pr.get("comments", []))
+
+            # Only check if the LATEST non-bot comment requested a /fix
+            has_fix_request = False
+            comments = pr.get("comments", [])
+            if comments:
+                last_comment = comments[-1]
+                author_login = last_comment.get("author", {}).get("login", "")
+                if not author_login.endswith("[bot]") and author_login != "github-actions":
+                    if "/fix" in last_comment.get("body", "").lower():
+                        has_fix_request = True
 
             if code != 0 or has_fix_request:
                 print(f"[*] PR #{pr_num} requires repair (exit code: {code}, /fix requested: {has_fix_request}). Launching autonomous fixer...", flush=True)
@@ -353,7 +382,6 @@ def heal_and_merge_open_prs(workspace: Path, worker_id: int = 1, num_workers: in
                         "-m", f"Co-authored-by: {USER_NAME} <{USER_EMAIL}>"
                     ], cwd=workspace, check=False)
                     run_cmd(["git", "push", "origin", head_ref], cwd=workspace, check=False)
-                    run_cmd(["gh", "pr", "comment", str(pr_num), "--repo", REPO, "--body", f"✅ **Autonomous Fix Applied!** Diagnostics passed 100% GREEN on branch `{head_ref}`."], cwd=workspace, check=False)
 
                 if code != 0:
                     print(f"[REJECT] PR #{pr_num} failed diagnostics and could not be repaired. Closing PR as unsuitable...", flush=True)
@@ -467,6 +495,16 @@ Closing PR and deleting branch `{head_ref}`.
                     return True
                 else:
                     run_cmd(["gh", "pr", "edit", str(pr_num), "--repo", REPO, "--remove-label", "ready-to-merge"], cwd=workspace, check=False)
+                    if PR_EVALUATION_ATTEMPTS.get(pr_num, 0) >= 2:
+                        print(f"[REJECT] PR #{pr_num} failed to reach approval after 2 evaluation cycles. Closing as unsuitable...", flush=True)
+                        close_comment = f"""🛑 **DevProxy Gatekeeper Validation: PR Closed (Unsuitable)**
+
+This pull request could not satisfy architectural and diagnostic criteria (Score: {score}/100, Verdict: `{verdict}`) after 2 automated evaluation cycles.
+
+Closing PR and deleting branch `{head_ref}` to maintain repository health and prevent comment spam.
+"""
+                        run_cmd(["gh", "pr", "close", str(pr_num), "--repo", REPO, "--comment", close_comment, "--delete-branch"], cwd=workspace, check=False)
+                        continue
     finally:
         run_cmd("git checkout -f main", cwd=workspace, check=False)
     return False
@@ -636,20 +674,21 @@ Closing this issue as not suitable or conflicting with existing architecture.
             pass
 
     review_md_file = workspace / "ai_pr_review.md"
-    if review_md_file.exists():
-        run_cmd(["gh", "pr", "comment", str(pr_num), "--repo", REPO, "--body-file", str(review_md_file)], cwd=workspace, check=False)
+    if review_md_file.exists() and "Rate-Limited" not in review_md_file.read_text(encoding="utf-8", errors="replace"):
+        code_c, comments_out = run_cmd(["gh", "pr", "view", str(pr_num), "--repo", REPO, "--json", "comments"], cwd=workspace, check=False)
+        has_review = False
+        if code_c == 0 and comments_out:
+            try:
+                has_review = any("Autonomous Architectural Review" in c.get("body", "") for c in json.loads(comments_out).get("comments", []))
+            except Exception:
+                pass
+        if not has_review:
+            run_cmd(["gh", "pr", "comment", str(pr_num), "--repo", REPO, "--body-file", str(review_md_file)], cwd=workspace, check=False)
 
     if verdict == "APPROVED" and score >= 90:
         print(f"[APPROVED] PR #{pr_num} APPROVED (Score: {score}/100) with 0 conflicts! Marking ready-to-merge.", flush=True)
         run_cmd(["gh", "label", "create", "ready-to-merge", "--repo", REPO, "--color", "0E8A16", "-f"], cwd=workspace, check=False)
         run_cmd(["gh", "pr", "edit", str(pr_num), "--repo", REPO, "--add-label", "ready-to-merge"], cwd=workspace, check=False)
-        ready_comment = f"""🎉 **Pull Request #{pr_num} Verified Ready to Merge!**
-
-- **Architectural Score**: **{score}/100** (`APPROVED`)
-- **CI Pre-Commit Diagnostics**: **100% GREEN** (Passed compiler, vet, and race-detector)
-- **Status**: Labeled `ready-to-merge` and awaiting maintainer manual sign-off!
-"""
-        run_cmd(["gh", "pr", "comment", str(pr_num), "--repo", REPO, "--body", ready_comment], cwd=workspace, check=False)
         print(f"[READY] PR #{pr_num} is labeled ready-to-merge. Leaving open for maintainer manual merge.", flush=True)
         run_cmd("git checkout -f main", cwd=workspace, check=False)
         return True

@@ -879,7 +879,7 @@ Instructions:
     if post_code == 0:
         print("[🎉 100% GREEN] CI suite passed cleanly.")
         sys.exit(0)
-    elif all_repaired_files or initial_conflicted:
+    elif all_repaired_files or conflicts_resolved:
         print("[+] Fixes applied and/or conflicts resolved. Exiting cleanly to push changes.")
         sys.exit(0)
     else:

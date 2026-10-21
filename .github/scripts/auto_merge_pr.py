@@ -29,7 +29,7 @@ def get_pr_details(pr_number: str, workspace: Path) -> dict:
     for attempt in range(1, 5):
         code, stdout, stderr = run_cmd([
             "gh", "pr", "view", pr_number,
-            "--json", "number,title,state,isDraft,mergeable,headRefName,baseRefName"
+            "--json", "number,title,state,isDraft,mergeable,headRefName,baseRefName,labels"
         ], cwd=workspace)
         if code != 0:
             print(f"[!] Failed to view PR #{pr_number}: {stderr}", file=sys.stderr)
@@ -102,6 +102,11 @@ def auto_merge_pr(pr_number: str, workspace: Path, notify_on_failure: bool = Fal
     mergeable = (pr.get("mergeable") or "UNKNOWN").upper()
     head_ref = pr.get("headRefName", "")
     base_ref = pr.get("baseRefName", "main")
+    labels = [l.get("name", "") for l in pr.get("labels", [])] if isinstance(pr.get("labels"), list) else []
+
+    if "ready-to-merge" in labels:
+        print(f"[*] PR #{pr_number} is already labeled ready-to-merge. Skipping to avoid duplicate comments.", flush=True)
+        return True
 
     if state != "OPEN":
         print(f"[*] PR #{pr_number} is not OPEN (current state: {state}). Skipping merge.", flush=True)
@@ -131,12 +136,6 @@ def auto_merge_pr(pr_number: str, workspace: Path, notify_on_failure: bool = Fal
 """
         run_cmd(["gh", "pr", "comment", pr_number, "--body", ready_comment], cwd=workspace)
         return True
-        else:
-            print(f"[!] Merge execution failed: {stderr}", file=sys.stderr)
-            if notify_on_failure:
-                err_comment = f"⚠️ **Auto-Merge Failed**: GitHub rejected merge command:\n```text\n{stderr}\n```"
-                run_cmd(["gh", "pr", "comment", pr_number, "--body", err_comment], cwd=workspace)
-            return False
 
     # PR cannot be merged at this time - strip ready-to-merge if present
     run_cmd(["gh", "pr", "edit", pr_number, "--remove-label", "ready-to-merge"], cwd=workspace, check=False)
