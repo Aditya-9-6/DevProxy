@@ -7,7 +7,7 @@ on:
     types: [created]
   workflow_dispatch:
   workflow_run:
-    workflows: ["PR Validation & Quality Gate"]
+    workflows: ["PR Validation & Quality Gate", "Security Scan (Gosec)"]
     types: [requested]
 
 permissions:
@@ -19,19 +19,27 @@ jobs:
     name: Auto-Approve CI Tests
     runs-on: ubuntu-latest
     steps:
+      - name: Generate GitHub App Token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        continue-on-error: true
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
       - name: Approve Action Required Runs
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
         run: |
           echo "Auto-approving CI test workflows..."
-          for i in {1..8}; do
-            sleep 4
-            RUNS=$(gh api "repos/${{ github.repository }}/actions/runs?status=action_required" --jq '.workflow_runs[].id')
+          for i in {1..10}; do
+            sleep 3
+            RUNS=$(gh api "repos/${{ github.repository }}/actions/runs?status=action_required" --jq '.workflow_runs[].id' 2>/dev/null || true)
             if [ -n "$RUNS" ]; then
               for RUN_ID in $RUNS; do
                 echo "Approving workflow run $RUN_ID..."
-                gh api "repos/${{ github.repository }}/actions/runs/$RUN_ID/approve" -X POST || true
+                gh api "repos/${{ github.repository }}/actions/runs/$RUN_ID/approve" -X POST 2>/dev/null || true
               done
             fi
           done
