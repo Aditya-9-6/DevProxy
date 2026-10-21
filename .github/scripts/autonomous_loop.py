@@ -29,8 +29,8 @@ except Exception:
     pass
 
 REPO = "Aditya-9-6/DevProxy"
-USER_NAME = "Aditya Dahale"
-USER_EMAIL = "aditya-9-6@users.noreply.github.com"
+USER_NAME = "Dahale Aditya Dnyaneshwar"
+USER_EMAIL = "adityadahale96@gmail.com"
 
 # Base Key Pool - Dynamically loaded from GEMINI_KEY_POOL, individual env vars, or .gemini_keys
 DEFAULT_KEYS = []
@@ -410,27 +410,58 @@ def heal_and_merge_open_prs(workspace: Path, worker_id: int = 1, num_workers: in
                     print(f"[APPROVED] PR #{pr_num} APPROVED ({score}/100) with 0 conflicts and 100% green CI! Executing auto-merge...", flush=True)
                     run_cmd(["gh", "label", "create", "ready-to-merge", "--repo", REPO, "--color", "0E8A16", "-f"], cwd=workspace, check=False)
                     run_cmd(["gh", "pr", "edit", str(pr_num), "--repo", REPO, "--add-label", "ready-to-merge"], cwd=workspace, check=False)
-                    merge_res = subprocess.run([
-                        "gh", "pr", "merge", str(pr_num),
-                        "--repo", REPO, "--squash", "--delete-branch", "--admin",
-                        "--subject", f"{title} (#{pr_num})"
-                    ], cwd=workspace, capture_output=True, text=True, encoding="utf-8", errors="replace")
-                    if merge_res.returncode != 0:
+                    merged_successfully = False
+                    try:
+                        # Attempt direct squash merge on main to guarantee contribution graph credit
+                        run_cmd("git checkout -f main", cwd=workspace, check=False)
+                        run_cmd("git pull origin main", cwd=workspace, check=False)
+                        s_merge = subprocess.run(["git", "merge", f"origin/{head_ref}", "--squash"], cwd=workspace, capture_output=True, text=True)
+                        if s_merge.returncode == 0:
+                            run_cmd(["git", "config", "user.name", USER_NAME], cwd=workspace, check=False)
+                            run_cmd(["git", "config", "user.email", USER_EMAIL], cwd=workspace, check=False)
+                            commit_msg = f"{title} (#{pr_num})"
+                            if linked_issue:
+                                commit_msg += f"\n\nCloses #{linked_issue}"
+                            run_cmd([
+                                "git", "commit",
+                                "-m", commit_msg,
+                                f"--author={USER_NAME} <{USER_EMAIL}>"
+                            ], cwd=workspace, check=False)
+                            push_res = subprocess.run(["git", "push", "origin", "main"], cwd=workspace, capture_output=True, text=True)
+                            if push_res.returncode == 0:
+                                merged_successfully = True
+                                print(f"[SUCCESS] Squashed and pushed commit directly to main as {USER_NAME} <{USER_EMAIL}>!", flush=True)
+                                run_cmd(["gh", "pr", "close", str(pr_num), "--repo", REPO, "--comment", f"🎉 Auto-merged into `main` by {USER_NAME}!"], cwd=workspace, check=False)
+                                run_cmd(["git", "push", "origin", "--delete", head_ref], cwd=workspace, check=False)
+                    except Exception as me:
+                        print(f"[*] Direct squash merge notice: {me}", flush=True)
+
+                    if not merged_successfully:
+                        # Fallback to gh pr merge API
                         merge_res = subprocess.run([
                             "gh", "pr", "merge", str(pr_num),
-                            "--repo", REPO, "--squash", "--delete-branch",
+                            "--repo", REPO, "--squash", "--delete-branch", "--admin",
                             "--subject", f"{title} (#{pr_num})"
                         ], cwd=workspace, capture_output=True, text=True, encoding="utf-8", errors="replace")
-                    if merge_res.returncode == 0:
+                        if merge_res.returncode != 0:
+                            merge_res = subprocess.run([
+                                "gh", "pr", "merge", str(pr_num),
+                                "--repo", REPO, "--squash", "--delete-branch",
+                                "--subject", f"{title} (#{pr_num})"
+                            ], cwd=workspace, capture_output=True, text=True, encoding="utf-8", errors="replace")
+                        if merge_res.returncode == 0:
+                            merged_successfully = True
+
+                    if merged_successfully:
                         print(f"[SUCCESS] Successfully auto-merged PR #{pr_num} into main!", flush=True)
                         if linked_issue:
                             run_cmd(["gh", "issue", "close", str(linked_issue), "--repo", REPO, "--comment", f"Resolved and auto-merged via PR #{pr_num}."], cwd=workspace, check=False)
-                        run_cmd("git checkout main", cwd=workspace, check=False)
+                        run_cmd("git checkout -f main", cwd=workspace, check=False)
                         run_cmd("git pull origin main", cwd=workspace, check=False)
                         return True
                     else:
-                        print(f"[!] Auto-merge for PR #{pr_num} failed: {merge_res.stderr.strip()}", flush=True)
-                        run_cmd("git checkout main", cwd=workspace, check=False)
+                        print(f"[!] Auto-merge for PR #{pr_num} failed.", flush=True)
+                        run_cmd("git checkout -f main", cwd=workspace, check=False)
                         return False
                 else:
                     run_cmd(["gh", "pr", "edit", str(pr_num), "--repo", REPO, "--remove-label", "ready-to-merge"], cwd=workspace, check=False)
