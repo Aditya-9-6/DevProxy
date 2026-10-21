@@ -2,6 +2,7 @@ package security
 
 import (
 	"fmt"
+	"net"
 	"sync"
 	"testing"
 )
@@ -9,13 +10,50 @@ import (
 func TestBloomFilter(t *testing.T) {
 	t.Parallel()
 	bf := NewBloomFilter(1024, 3)
-	bf.Add([]byte("1.2.3.4"))
+	ip := net.ParseIP("192.168.1.1").To4()
 
-	if !bf.Contains([]byte("1.2.3.4")) {
-		t.Error("Expected 1.2.3.4 to be in filter")
+	if bf.Contains(ip) {
+		t.Error("Expected false for non-existent IP")
 	}
-	if bf.Contains([]byte("5.6.7.8")) {
-		// False positive is possible but unlikely with this small set
+
+	bf.Add(ip)
+
+	if !bf.Contains(ip) {
+		t.Error("Expected true for added IP")
+	}
+}
+
+func TestBlacklistManagerTable(t *testing.T) {
+	t.Parallel()
+	m := NewBlacklistManager()
+
+	tests := []struct {
+		name      string
+		ipString  string
+		shouldAdd bool
+		expected  bool
+	}{
+		{"IPv4 Present", "10.0.0.1", true, true},
+		{"IPv4 Absent", "10.0.0.2", false, false},
+		{"IPv6 Present", "2001:db8::1", true, true},
+		{"IPv6 Absent", "2001:db8::2", false, false},
+		{"Nil IP", "", false, false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var ip net.IP
+			if tc.ipString != "" {
+				ip = net.ParseIP(tc.ipString)
+			}
+			if tc.shouldAdd {
+				m.AddToBlacklist(ip)
+			}
+			got := m.IsBlacklisted(ip)
+			if got != tc.expected {
+				t.Errorf("IsBlacklisted(%s) = %v, want %v", tc.ipString, got, tc.expected)
+			}
+		})
 	}
 }
 
@@ -23,17 +61,39 @@ func TestBloomFilterConcurrency(t *testing.T) {
 	t.Parallel()
 	bf := NewBloomFilter(10000, 5)
 	var wg sync.WaitGroup
-	for i := 0; i < 100; i++ {
+	workers := 20
+	iterations := 50
+
+	for i := 0; i < workers; i++ {
 		wg.Add(1)
-		go func(val int) {
+		go func(workerID int) {
 			defer wg.Done()
-			bf.Add([]byte(fmt.Sprintf("ip-%d", val)))
+			for j := 0; j < iterations; j++ {
+				ip := net.ParseIP(fmt.Sprintf("192.168.%d.%d", workerID, j)).To4()
+				bf.Add(ip)
+			}
 		}(i)
 	}
 	wg.Wait()
-	for i := 0; i < 100; i++ {
-		if !bf.Contains([]byte(fmt.Sprintf("ip-%d", i))) {
-			t.Errorf("Expected ip-%d to be present", i)
+
+	for i := 0; i < workers; i++ {
+		for j := 0; j < iterations; j++ {
+			ip := net.ParseIP(fmt.Sprintf("192.168.%d.%d", i, j)).To4()
+			if !bf.Contains(ip) {
+				t.Fatalf("Expected concurrent inserted IP 192.168.%d.%d to be present", i, j)
+			}
 		}
+	}
+}
+
+func BenchmarkBloomFilterContains(b *testing.B) {
+	bf := NewBloomFilter(65536, 4)
+	ip := net.ParseIP("192.168.1.100").To16()
+	bf.Add(ip)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_ = bf.Contains(ip)
 	}
 }

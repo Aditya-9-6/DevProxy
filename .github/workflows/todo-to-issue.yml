@@ -20,13 +20,20 @@ jobs:
         with:
           fetch-depth: 0
 
+      - uses: actions/create-github-app-token@v1
+        id: app-token
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+        continue-on-error: true
+
       - name: "Scan for TODO and ADVANCEMENT comments"
         uses: "alstr/todo-to-issue-action@v5"
         with:
-          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TOKEN: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
           CLOSE_ISSUES: true
           AUTO_ASSIGN: false
           IDENTIFIERS: '[{"name": "TODO", "labels": ["enhancement"]}, {"name": "ADVANCEMENT", "labels": ["enhancement", "hacktoberfest"]}, {"name": "FIXME", "labels": ["bug"]}, {"name": "OPTIMIZE", "labels": ["performance"]}]'
           IGNORE: '\.github/.*,web/.*,node_modules/.*,dist/.*,.*\.md'
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}

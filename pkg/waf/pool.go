@@ -9,7 +9,8 @@ var BufferPool = sync.Pool{
 	},
 }
 
-var bufferPool = sync.Pool{
+// wafAltBufferPool is used for smaller operations to reduce memory overhead.
+var wafAltBufferPool = sync.Pool{
 	New: func() interface{} {
 		return make([]byte, 4096)
 	},
@@ -17,10 +18,10 @@ var bufferPool = sync.Pool{
 
 // GetBuffer retrieves a 4KB buffer from the internal pool.
 func GetBuffer() []byte {
-	return bufferPool.Get().([]byte)
+	return wafAltBufferPool.Get().([]byte)
 }
 
 // PutBuffer returns a 4KB buffer to the internal pool.
 func PutBuffer(b []byte) {
-	bufferPool.Put(b)
+	wafAltBufferPool.Put(b)
 }
