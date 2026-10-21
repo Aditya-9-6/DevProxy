@@ -725,7 +725,7 @@ def run_loop_iteration(workspace: Path, worker_id: int = 1, num_workers: int = 1
             # Auto-approve any pending CI runs waiting for approval
             runs_out = run_cmd(["gh", "api", f"repos/{REPO}/actions/runs?status=action_required", "--jq", ".workflow_runs[].id"], cwd=workspace, check=False)
             if runs_out:
-                for r_id in runs_out.split():
+                for r_id in runs_out.split()[:3]:
                     r_id = r_id.strip()
                     if r_id:
                         print(f"[*] Auto-approving CI workflow run {r_id}...", flush=True)

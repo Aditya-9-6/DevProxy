@@ -275,6 +275,73 @@ def call_nvidia_nim(api_key: str, prompt: str) -> dict:
             continue
     raise RuntimeError(f"NVIDIA NIM calls failed: {last_err}")
 
+def call_cohere(api_key: str, prompt: str, system_prompt: str = REVIEWER_SYSTEM_PROMPT) -> dict:
+    """Calls Cohere Chat API as resilient fallback."""
+    if not api_key:
+        raise ValueError("Missing COHERE_API_KEY")
+    url = "https://api.cohere.com/v2/chat"
+    models = ["command-r-plus-08-2024", "command-r-08-2024", "command-r-plus", "command-r"]
+    last_err = None
+    for model in models:
+        payload = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": prompt}
+            ],
+            "response_format": {"type": "json_object"}
+        }
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json", "User-Agent": "DevProxy-CI/1.0"},
+            method="POST"
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                content = data.get("message", {}).get("content", [])
+                if content and isinstance(content, list):
+                    text = content[0].get("text", "")
+                    return extract_json_response(text)
+        except Exception as e:
+            last_err = str(e)
+            continue
+    raise RuntimeError(f"Cohere calls failed: {last_err}")
+
+def call_huggingface(api_key: str, prompt: str, system_prompt: str = REVIEWER_SYSTEM_PROMPT) -> dict:
+    """Calls Hugging Face Inference Router API as resilient fallback."""
+    if not api_key:
+        raise ValueError("Missing HUGGINGFACE_API_KEY")
+    url = "https://router.huggingface.co/hf-inference/v1/chat/completions"
+    models = ["Qwen/Qwen2.5-Coder-32B-Instruct", "meta-llama/Llama-3.3-70B-Instruct"]
+    last_err = None
+    for model in models:
+        payload = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": prompt}
+            ],
+            "temperature": 0.1,
+            "response_format": {"type": "json_object"}
+        }
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            method="POST"
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                text = data["choices"][0]["message"]["content"]
+                return extract_json_response(text)
+        except Exception as e:
+            last_err = str(e)
+            continue
+    raise RuntimeError(f"HuggingFace calls failed: {last_err}")
+
 def call_ai_reviewer(primary_key: str, prompt: str, fallback_key: str = "") -> dict:
     # 1. Try Gemini
     try:
@@ -282,7 +349,23 @@ def call_ai_reviewer(primary_key: str, prompt: str, fallback_key: str = "") -> d
     except Exception as e:
         print(f"[!] Gemini reviewer attempt failed: {e}. Trying secondary providers...", file=sys.stderr)
 
-    # 2. Try NVIDIA NIM
+    # 2. Try Cohere
+    cohere_key = os.environ.get("COHERE_API_KEY", "").strip()
+    if cohere_key:
+        try:
+            return call_cohere(cohere_key, prompt)
+        except Exception as e:
+            print(f"[!] Cohere reviewer failed: {e}", file=sys.stderr)
+
+    # 3. Try Hugging Face
+    hf_key = os.environ.get("HUGGINGFACE_API_KEY", "").strip()
+    if hf_key:
+        try:
+            return call_huggingface(hf_key, prompt)
+        except Exception as e:
+            print(f"[!] HuggingFace reviewer failed: {e}", file=sys.stderr)
+
+    # 4. Try NVIDIA NIM
     for nv_key in [os.environ.get("NVIDIA_API_KEY", "").strip(), os.environ.get("NVIDIA_API_KEY_2", "").strip()]:
         if nv_key:
             try:
@@ -290,7 +373,7 @@ def call_ai_reviewer(primary_key: str, prompt: str, fallback_key: str = "") -> d
             except Exception as e:
                 print(f"[!] NVIDIA NIM reviewer failed: {e}", file=sys.stderr)
 
-    # 3. Try OpenRouter
+    # 5. Try OpenRouter
     openrouter_key = os.environ.get("OPENROUTER_API_KEY", "").strip()
     if openrouter_key:
         try:
@@ -298,7 +381,7 @@ def call_ai_reviewer(primary_key: str, prompt: str, fallback_key: str = "") -> d
         except Exception as e:
             print(f"[!] OpenRouter reviewer failed: {e}", file=sys.stderr)
 
-    raise RuntimeError("All AI model providers (Gemini, NVIDIA NIM, OpenRouter) exhausted for PR review.")
+    raise RuntimeError("All AI model providers (Gemini, Cohere, HuggingFace, NVIDIA NIM, OpenRouter) exhausted for PR review.")
 
 def get_pr_diff(workspace: Path) -> str:
     """Gets git diff against origin/main."""

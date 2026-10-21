@@ -242,7 +242,216 @@ def call_gemini(api_key: str, prompt: str, model: str = DEFAULT_MODEL, system_pr
                         continue
                     break
 
-    raise RuntimeError(f"Failed to obtain solution from Gemini API across models {models_to_try}. Last error: {last_err}")
+    print(f"[!] Gemini pool exhausted: {last_err}. Cascading to secondary providers...", file=sys.stderr, flush=True)
+
+    # 1. Try Cohere
+    cohere_key = os.environ.get("COHERE_API_KEY", "").strip()
+    if cohere_key:
+        try:
+            return call_cohere(cohere_key, prompt, system_prompt=active_sys_prompt)
+        except Exception as e:
+            print(f"[!] Cohere fallback failed: {e}. Trying next provider...", file=sys.stderr, flush=True)
+
+    # 2. Try Hugging Face
+    hf_key = os.environ.get("HUGGINGFACE_API_KEY", "").strip()
+    if hf_key:
+        try:
+            return call_huggingface(hf_key, prompt, system_prompt=active_sys_prompt)
+        except Exception as e:
+            print(f"[!] HuggingFace fallback failed: {e}. Trying next provider...", file=sys.stderr, flush=True)
+
+    # 3. Try NVIDIA NIM
+    for nv_key in [os.environ.get("NVIDIA_API_KEY", "").strip(), os.environ.get("NVIDIA_API_KEY_2", "").strip()]:
+        if nv_key:
+            try:
+                return call_nvidia_nim(nv_key, prompt, system_prompt=active_sys_prompt)
+            except Exception as e:
+                print(f"[!] NVIDIA NIM fallback failed: {e}. Trying next provider...", file=sys.stderr, flush=True)
+
+    # 4. Try OpenRouter
+    openrouter_key = os.environ.get("OPENROUTER_API_KEY", "").strip()
+    if openrouter_key:
+        try:
+            return call_openrouter(openrouter_key, prompt, system_prompt=active_sys_prompt)
+        except Exception as e:
+            print(f"[!] OpenRouter fallback failed: {e}. Trying next provider...", file=sys.stderr, flush=True)
+
+    raise RuntimeError(f"All AI providers (Gemini, Cohere, HuggingFace, NVIDIA NIM, OpenRouter) exhausted without successful response. Last error: {last_err}")
+
+def extract_json_response(raw_text: str) -> dict:
+    """Extracts JSON object from model response, stripping markdown code blocks if present."""
+    raw_text = raw_text.strip()
+    try:
+        return json.loads(raw_text, strict=False)
+    except json.JSONDecodeError:
+        pass
+    if raw_text.startswith("```"):
+        lines = raw_text.splitlines()
+        if lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].startswith("```"):
+            lines = lines[:-1]
+        raw_text = "\n".join(lines).strip()
+        try:
+            return json.loads(raw_text, strict=False)
+        except json.JSONDecodeError:
+            pass
+    start = raw_text.find("{")
+    end = raw_text.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        return json.loads(raw_text[start:end+1], strict=False)
+    raise ValueError(f"Could not parse valid JSON from response: {raw_text[:200]}")
+
+def call_openrouter(api_key: str, prompt: str, system_prompt: str = SYSTEM_PROMPT) -> dict:
+    """Calls OpenRouter API as fallback."""
+    if not api_key:
+        raise ValueError("Missing OPENROUTER_API_KEY")
+    url = "https://openrouter.ai/api/v1/chat/completions"
+    models = ["deepseek/deepseek-chat", "meta-llama/llama-3.3-70b-instruct", "google/gemini-2.5-flash", "mistralai/mistral-large-2411"]
+    last_err = None
+    for model in models:
+        print(f"[*] [OpenRouter] Querying {model}...", flush=True)
+        payload = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": prompt}
+            ],
+            "temperature": 0.1,
+            "response_format": {"type": "json_object"}
+        }
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            method="POST"
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                text = data["choices"][0]["message"]["content"]
+                return extract_json_response(text)
+        except Exception as e:
+            print(f"[!] [OpenRouter] Model {model} failed: {e}", file=sys.stderr)
+            last_err = str(e)
+            continue
+    raise RuntimeError(f"OpenRouter calls failed. Last error: {last_err}")
+
+def call_cohere(api_key: str, prompt: str, system_prompt: str = SYSTEM_PROMPT) -> dict:
+    """Calls Cohere Chat API as resilient fallback."""
+    if not api_key:
+        raise ValueError("Missing COHERE_API_KEY")
+    url = "https://api.cohere.com/v2/chat"
+    models = ["command-r-plus-08-2024", "command-r-08-2024", "command-r-plus", "command-r"]
+    last_err = None
+    for model in models:
+        print(f"[*] [Cohere] Querying {model}...", flush=True)
+        payload = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": prompt}
+            ],
+            "response_format": {"type": "json_object"}
+        }
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+                "User-Agent": "DevProxy-CI/1.0"
+            },
+            method="POST"
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                content = data.get("message", {}).get("content", [])
+                if content and isinstance(content, list):
+                    text = content[0].get("text", "")
+                    return extract_json_response(text)
+        except Exception as e:
+            print(f"[!] [Cohere] Model {model} failed: {e}", file=sys.stderr)
+            last_err = str(e)
+            continue
+    raise RuntimeError(f"Cohere calls failed. Last error: {last_err}")
+
+def call_huggingface(api_key: str, prompt: str, system_prompt: str = SYSTEM_PROMPT) -> dict:
+    """Calls Hugging Face Inference Router API as resilient fallback."""
+    if not api_key:
+        raise ValueError("Missing HUGGINGFACE_API_KEY")
+    url = "https://router.huggingface.co/hf-inference/v1/chat/completions"
+    models = ["Qwen/Qwen2.5-Coder-32B-Instruct", "meta-llama/Llama-3.3-70B-Instruct"]
+    last_err = None
+    for model in models:
+        print(f"[*] [HuggingFace] Querying {model}...", flush=True)
+        payload = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": prompt}
+            ],
+            "temperature": 0.1,
+            "response_format": {"type": "json_object"}
+        }
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            method="POST"
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                text = data["choices"][0]["message"]["content"]
+                return extract_json_response(text)
+        except Exception as e:
+            print(f"[!] [HuggingFace] Model {model} failed: {e}", file=sys.stderr)
+            last_err = str(e)
+            continue
+    raise RuntimeError(f"HuggingFace calls failed. Last error: {last_err}")
+
+def call_nvidia_nim(api_key: str, prompt: str, system_prompt: str = SYSTEM_PROMPT) -> dict:
+    """Calls NVIDIA NIM API as fallback."""
+    if not api_key:
+        raise ValueError("Missing NVIDIA_API_KEY")
+    url = "https://integrate.api.nvidia.com/v1/chat/completions"
+    models = ["nvidia/llama-3.1-nemotron-70b-instruct", "meta/llama-3.1-8b-instruct", "meta/llama-3.1-70b-instruct", "deepseek-ai/deepseek-r1"]
+    last_err = None
+    for model in models:
+        print(f"[*] [NVIDIA NIM] Querying {model}...", flush=True)
+        payload = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": prompt}
+            ],
+            "temperature": 0.1,
+            "response_format": {"type": "json_object"}
+        }
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            method="POST"
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                text = data["choices"][0]["message"]["content"]
+                return extract_json_response(text)
+        except Exception as e:
+            print(f"[!] [NVIDIA NIM] Model {model} failed: {e}", file=sys.stderr)
+            last_err = str(e)
+            continue
+    raise RuntimeError(f"NVIDIA NIM calls failed. Last error: {last_err}")
 
 def main():
     parser = argparse.ArgumentParser(description="DevProxy AI Issue Solver")
