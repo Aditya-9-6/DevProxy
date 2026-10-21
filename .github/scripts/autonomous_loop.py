@@ -96,20 +96,6 @@ def run_cmd(cmd, cwd=None, check=True):
         raise RuntimeError(f"Command failed ({res.returncode}): {cmd}\nStderr: {res.stderr}\nStdout: {res.stdout}")
     return res.stdout.strip()
 
-def safe_run(cmd, cwd=None, env=None, check=False):
-    """Runs a subprocess safely with UTF-8 encoding and replaced decoding errors."""
-    return subprocess.run(
-        cmd,
-        cwd=cwd,
-        shell=isinstance(cmd, str),
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        env=env,
-        check=check,
-    )
-
 def get_open_advancement_issues(workspace: Path) -> list:
     """
     Fetches open advancement issues, strictly filtering out any that
@@ -194,19 +180,19 @@ def generate_new_issue(workspace: Path):
 def run_diagnostics(workspace: Path) -> tuple[int, str]:
     """Runs Go compiler diagnostics, vet, and unit tests."""
     out_lines = []
-    safe_run(["go", "mod", "tidy"], cwd=workspace)
+    subprocess.run(["go", "mod", "tidy"], cwd=workspace, capture_output=True, text=True)
 
-    fmt_res = safe_run(["gofmt", "-l", "."], cwd=workspace)
+    fmt_res = subprocess.run(["gofmt", "-l", "."], cwd=workspace, capture_output=True, text=True)
     if fmt_res.stdout.strip():
         out_lines.append("=== GOFMT FORMATTING ERRORS ===")
         out_lines.append(fmt_res.stdout.strip())
 
-    vet_res = safe_run(["go", "vet", "./..."], cwd=workspace)
+    vet_res = subprocess.run(["go", "vet", "./..."], cwd=workspace, capture_output=True, text=True)
     if vet_res.returncode != 0:
         out_lines.append("=== GO VET COMPILATION ERRORS ===")
         out_lines.append(vet_res.stderr.strip() or vet_res.stdout.strip())
 
-    test_res = safe_run(["go", "test", "-v", "./..."], cwd=workspace)
+    test_res = subprocess.run(["go", "test", "-v", "./..."], cwd=workspace, capture_output=True, text=True)
     if test_res.returncode != 0:
         out_lines.append("=== GO TEST FAILURES ===")
         out_lines.append((test_res.stdout + "\n" + test_res.stderr).strip())
@@ -312,7 +298,7 @@ def heal_and_merge_open_prs(workspace: Path, worker_id: int = 1, num_workers: in
                 run_cmd(["git", "fetch", "origin", head_ref], cwd=workspace, check=False)
                 run_cmd(["git", "checkout", "-f", "-B", head_ref, f"origin/{head_ref}"], cwd=workspace, check=False)
                 run_cmd(["git", "checkout", "origin/main", "--", ".github/"], cwd=workspace, check=False)
-                merge_res = safe_run(["git", "merge", "origin/main", "--no-edit"], cwd=workspace)
+                merge_res = subprocess.run(["git", "merge", "origin/main", "--no-edit"], cwd=workspace, capture_output=True, text=True)
                 if merge_res.returncode != 0:
                     run_cmd(["git", "checkout", "origin/main", "--", ".github/"], cwd=workspace, check=False)
                     run_cmd(["git", "checkout", "--theirs", "go.mod", "go.sum"], cwd=workspace, check=False)
@@ -332,7 +318,7 @@ def heal_and_merge_open_prs(workspace: Path, worker_id: int = 1, num_workers: in
                 fix_env["GEMINI_SOLVER_KEY"] = GLOBAL_POOL.next_key()
                 fix_env["GH_REPO"] = REPO
 
-                safe_run([
+                subprocess.run([
                     sys.executable, ".github/scripts/ai_ci_fixer.py",
                     "--pr-number", str(pr_num),
                     "--workspace", str(workspace),
@@ -376,7 +362,7 @@ Closing PR and deleting branch `{head_ref}` to maintain repository health.
                 rev_env = os.environ.copy()
                 rev_env["GEMINI_REVIEWER_KEY"] = GLOBAL_POOL.next_key()
                 rev_env["GH_REPO"] = REPO
-                safe_run([
+                subprocess.run([
                     sys.executable, ".github/scripts/ai_pr_reviewer.py",
                     "--pr-number", str(pr_num),
                     "--workspace", str(workspace)
@@ -399,7 +385,7 @@ Closing PR and deleting branch `{head_ref}` to maintain repository health.
                     fix_env["GEMINI_SOLVER_KEY"] = GLOBAL_POOL.next_key()
                     fix_env["GH_REPO"] = REPO
 
-                    safe_run([
+                    subprocess.run([
                         sys.executable, ".github/scripts/ai_ci_fixer.py",
                         "--pr-number", str(pr_num),
                         "--workspace", str(workspace),
@@ -422,7 +408,7 @@ Closing PR and deleting branch `{head_ref}` to maintain repository health.
 
                         # Re-run reviewer to verify approval
                         rev_env["GEMINI_REVIEWER_KEY"] = GLOBAL_POOL.next_key()
-                        safe_run([
+                        subprocess.run([
                             sys.executable, ".github/scripts/ai_pr_reviewer.py",
                             "--pr-number", str(pr_num),
                             "--workspace", str(workspace)
