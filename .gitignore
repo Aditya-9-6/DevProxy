@@ -1,0 +1,14 @@
+# Ignore virtual environment and large artefacts
+.venv/
+devproxy.db
+metrics.db
+*.log
+__pycache__/
+*.pyc
+.env*
+# IDE files
+.vscode/
+.idea/
+# OS files
+.DS_Store
+Thumbs.db
