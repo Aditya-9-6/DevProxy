@@ -18,7 +18,9 @@ class Organization(SQLModel, table=True):
     monthly_pr_limit: int = Field(default=25)
     prs_used_this_month: int = Field(default=0)
     github_installation_id: Optional[int] = Field(default=None)
-    target_repo_full_name: Optional[str] = Field(default=None)  # e.g. "acme-corp/backend-api"
+    target_repo_full_name: Optional[str] = Field(
+        default=None
+    )  # e.g. "acme-corp/backend-api"
     auto_merge_non_breaking: bool = Field(default=False)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -40,7 +42,9 @@ class Incident(SQLModel, table=True):
     __tablename__ = "incidents"
     id: str = Field(default_factory=generate_uuid, primary_key=True)
     org_id: str = Field(foreign_key="organizations.id", index=True)
-    fingerprint: str = Field(index=True)  # SHA-256(org_id + method + route + status + error_head)
+    fingerprint: str = Field(
+        index=True
+    )  # SHA-256(org_id + method + route + status + error_head)
     http_method: str
     route_path: str
     status_code: int
@@ -53,7 +57,9 @@ class Incident(SQLModel, table=True):
     redacted_response_body: str
     latency_ms: float
     occurrence_count: int = Field(default=1)
-    status: str = Field(default="queued")  # queued, analyzing, pr_opened, failed, ignored
+    status: str = Field(
+        default="queued"
+    )  # queued, analyzing, pr_opened, failed, ignored
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     last_seen_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 

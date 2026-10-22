@@ -1,7 +1,6 @@
 # PR Comment Bot for DevProxy
 # Generates a rich markdown card for a PR when a fix is opened.
 
-import os
 from fastapi import APIRouter, Depends, HTTPException
 from devproxy_agent.saas.database import get_session
 from devproxy_agent.saas.models import Incident, Organization, ProxyNode
@@ -10,11 +9,12 @@ from GossipMesh.gossipmesh_agent.key_pool import rate_limits_saved_total
 
 router = APIRouter()
 
+
 @router.post("/v1/pr_comment")
 async def post_pr_comment(
     payload: dict,
     auth: tuple[Organization, ProxyNode] = Depends(authenticate_node),
-    session = Depends(get_session),
+    session=Depends(get_session),
 ):
     """Create a rich PR diagnostic card.
     Expected payload: {"incident_id": "<id>", "pr_url": "https://github.com/.../pull/123"}
