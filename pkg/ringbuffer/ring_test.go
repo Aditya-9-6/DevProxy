@@ -9,95 +9,95 @@ import (
 )
 
 func TestBatchFlusher_ConcurrentFlush(t *testing.T) {
+	t.Parallel()
+
 	rb := NewRingBuffer(1024)
 	defer rb.Close()
 	flusher := NewBatchFlusher(rb)
 
-	var wg sync.WaitGroup
-	producers := 4
-	consumers := 4
-
-	// Start producers
-	for i := 0; i < producers; i++ {
-		wg.Add(1)
-		go func(pid int) {
-			defer wg.Done()
-			for j := 0; j < 250; j++ {
-				rb.Push(&TrafficEvent{
-					ID:   fmt.Sprintf("p%d-e%d", pid, j),
-					Host: "localhost",
-				})
-			}
-		}(i)
+	var producers sync.WaitGroup
+	for producer := 0; producer < 4; producer++ {
+		producers.Add(1)
+		go func(producerID int) {
+			defer producers.Done()
+			produceRingEvents(rb, producerID, 250)
+		}(producer)
 	}
 
-	// Start consumers flushing batches
-	var totalFlushed atomic.Int64
-	for i := 0; i < consumers; i++ {
-		wg.Add(1)
+	var totalFlushed int64
+	var consumers sync.WaitGroup
+	for consumer := 0; consumer < 4; consumer++ {
+		consumers.Add(1)
 		go func() {
-			defer wg.Done()
-			for k := 0; k < 50; k++ {
-				time.Sleep(2 * time.Millisecond)
-				batch := flusher.Flush()
-				if batch != nil {
-					totalFlushed.Add(int64(len(batch)))
-					flusher.Recycle(batch)
-				}
-			}
+			defer consumers.Done()
+			flushRingBatches(flusher, &totalFlushed)
 		}()
 	}
 
-	wg.Wait()
+	producers.Wait()
+	consumers.Wait()
 
-	// Final flush to catch remainder
-	finalBatch := flusher.Flush()
-	if finalBatch != nil {
-		totalFlushed.Add(int64(len(finalBatch)))
-		flusher.Recycle(finalBatch)
+	if batch := flusher.Flush(); batch != nil {
+		atomic.AddInt64(&totalFlushed, int64(len(batch)))
+		flusher.Recycle(batch)
 	}
-
-	if totalFlushed.Load() == 0 {
-		t.Errorf("Expected events to be flushed via BatchFlusher, got 0")
+	if atomic.LoadInt64(&totalFlushed) == 0 {
+		t.Error("Expected events to be flushed via BatchFlusher, got 0")
 	}
 }
 
 func TestRingBuffer_PushAndPop(t *testing.T) {
-	rb := NewRingBuffer(64)
-	defer rb.Close()
+	t.Parallel()
 
-	event := &TrafficEvent{
-		ID:       "req-1",
-		Host:     "localhost",
-		Method:   "GET",
-		URL:      "http://localhost:8080/test",
-		Duration: 5 * time.Millisecond,
+	tests := []struct {
+		name string
+		id   string
+	}{
+		{name: "ordinary identifier", id: "req-1"},
+		{name: "empty identifier", id: ""},
+		{name: "unicode identifier", id: "请求-✓"},
 	}
 
-	if !rb.Push(event) {
-		t.Fatalf("Push failed")
-	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			rb := NewRingBuffer(4)
+			defer rb.Close()
 
-	popped := rb.Pop()
-	if popped == nil || popped.ID != "req-1" {
-		t.Fatalf("Expected event req-1, got %v", popped)
+			event := &TrafficEvent{
+				ID:       test.id,
+				Host:     "localhost",
+				Method:   "GET",
+				URL:      "http://localhost:8080/test",
+				Duration: 5 * time.Millisecond,
+			}
+			if !rb.Push(event) {
+				t.Fatal("Push failed")
+			}
+
+			popped := rb.Pop()
+			if popped == nil || popped.ID != test.id {
+				t.Fatalf("Expected event %q, got %v", test.id, popped)
+			}
+		})
 	}
 }
 
 func TestRingBuffer_SaturationNonBlocking(t *testing.T) {
+	t.Parallel()
+
 	rb := NewRingBuffer(16)
 	defer rb.Close()
 
-	for i := 0; i < 16; i++ {
-		pushed := rb.Push(&TrafficEvent{ID: fmt.Sprintf("req-%d", i)})
-		if !pushed {
-			t.Fatalf("Expected push %d to succeed", i)
+	for index := 0; index < 16; index++ {
+		if !rb.Push(&TrafficEvent{ID: fmt.Sprintf("req-%d", index)}) {
+			t.Fatalf("Expected push %d to succeed", index)
 		}
 	}
 
-	pushed := rb.Push(&TrafficEvent{ID: "overflow-1"})
-	if pushed {
-		t.Fatalf("Expected overflow push to be dropped")
+	if rb.Push(&TrafficEvent{ID: "overflow-1"}) {
+		t.Fatal("Expected overflow push to be dropped")
 	}
 
 	queued, dropped, total := rb.Stats()
@@ -113,61 +113,79 @@ func TestRingBuffer_SaturationNonBlocking(t *testing.T) {
 }
 
 func TestRingBuffer_ConcurrentLoad(t *testing.T) {
+	t.Parallel()
+
 	rb := NewRingBuffer(1024)
 	defer rb.Close()
 
-	var wg sync.WaitGroup
-	producers := 8
-	itemsPerProducer := 500
-
-	for p := 0; p < producers; p++ {
-		wg.Add(1)
-		go func(pid int) {
-			defer wg.Done()
-			for i := 0; i < itemsPerProducer; i++ {
-				rb.Push(&TrafficEvent{
-					ID:     fmt.Sprintf("p%d-item%d", pid, i),
-					Method: "GET",
-				})
-			}
-		}(p)
+	var producers sync.WaitGroup
+	for producer := 0; producer < 8; producer++ {
+		producers.Add(1)
+		go func(producerID int) {
+			defer producers.Done()
+			produceRingEvents(rb, producerID, 500)
+		}(producer)
 	}
 
-	var consumedCount atomic.Int64
-	done := make(chan bool)
-	var consumerWg sync.WaitGroup
-	consumerWg.Add(1)
-
+	var consumed int64
+	done := make(chan struct{})
+	var consumer sync.WaitGroup
+	consumer.Add(1)
 	go func() {
-		defer consumerWg.Done()
-		for {
-			item := rb.TryPop()
-			if item != nil {
-				consumedCount.Add(1)
-				continue
-			}
-			select {
-			case <-done:
-				for rb.TryPop() != nil {
-					consumedCount.Add(1)
-				}
-				return
-			default:
-				time.Sleep(10 * time.Microsecond)
-			}
-		}
+		defer consumer.Done()
+		consumeRingEvents(rb, done, &consumed)
 	}()
 
-	wg.Wait()
+	producers.Wait()
 	time.Sleep(10 * time.Millisecond)
 	close(done)
-	consumerWg.Wait()
+	consumer.Wait()
 
 	_, dropped, total := rb.Stats()
 	if total == 0 {
-		t.Fatalf("Expected events to be pushed, got 0")
+		t.Fatal("Expected events to be pushed, got 0")
 	}
-	t.Logf("Concurrent Test: Pushed=%d, Dropped=%d, Consumed=%d", total, dropped, consumedCount.Load())
+	t.Logf("Concurrent Test: Pushed=%d, Dropped=%d, Consumed=%d", total, dropped, atomic.LoadInt64(&consumed))
+}
+
+func produceRingEvents(rb *RingBuffer, producerID, count int) {
+	for index := 0; index < count; index++ {
+		rb.Push(&TrafficEvent{
+			ID:     fmt.Sprintf("p%d-item%d", producerID, index),
+			Method: "GET",
+		})
+	}
+}
+
+func flushRingBatches(flusher *BatchFlusher, total *int64) {
+	for iteration := 0; iteration < 50; iteration++ {
+		time.Sleep(2 * time.Millisecond)
+		batch := flusher.Flush()
+		if batch == nil {
+			continue
+		}
+		atomic.AddInt64(total, int64(len(batch)))
+		flusher.Recycle(batch)
+	}
+}
+
+func consumeRingEvents(rb *RingBuffer, done <-chan struct{}, consumed *int64) {
+	for {
+		if event := rb.TryPop(); event != nil {
+			atomic.AddInt64(consumed, 1)
+			continue
+		}
+
+		select {
+		case <-done:
+			for rb.TryPop() != nil {
+				atomic.AddInt64(consumed, 1)
+			}
+			return
+		default:
+			time.Sleep(10 * time.Microsecond)
+		}
+	}
 }
 
 func BenchmarkRingBuffer_PushTryPop(b *testing.B) {
@@ -182,7 +200,7 @@ func BenchmarkRingBuffer_PushTryPop(b *testing.B) {
 
 	b.ResetTimer()
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for index := 0; index < b.N; index++ {
 		if rb.Push(event) {
 			_ = rb.TryPop()
 		}
@@ -196,8 +214,8 @@ func BenchmarkRingBuffer_ParallelPush(b *testing.B) {
 
 	b.ResetTimer()
 	b.ReportAllocs()
-	b.RunParallel(func(pb *testing.PB) {
-		for pb.Next() {
+	b.RunParallel(func(parallel *testing.PB) {
+		for parallel.Next() {
 			rb.Push(event)
 			_ = rb.TryPop()
 		}
@@ -217,21 +235,18 @@ func FuzzRingBuffer(f *testing.F) {
 		rb := NewRingBuffer(capacity)
 		defer rb.Close()
 
-		ev := &TrafficEvent{
+		event := &TrafficEvent{
 			ID:   string(payload),
 			Host: "fuzz.host",
 		}
-
-		for i := 0; i < 32; i++ {
-			rb.Push(&TrafficEvent{ID: fmt.Sprintf("%s-%d", payload, i), Host: "fuzz.host"})
+		for index := 0; index < 32; index++ {
+			rb.Push(&TrafficEvent{ID: fmt.Sprintf("%s-%d", payload, index), Host: "fuzz.host"})
 		}
-
-		for i := 0; i < 32; i++ {
+		for index := 0; index < 32; index++ {
 			_ = rb.TryPop()
 		}
 
-		pushed := rb.Push(ev)
-		if pushed {
+		if rb.Push(event) {
 			popped := rb.TryPop()
 			if popped != nil && popped.ID != string(payload) {
 				t.Fatalf("mismatched payload in ringbuffer: expected %s, got %s", payload, popped.ID)
