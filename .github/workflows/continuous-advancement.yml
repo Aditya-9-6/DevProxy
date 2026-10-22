@@ -10,7 +10,7 @@ on:
       iterations:
         description: 'Number of autonomous development cycles to run'
         required: false
-        default: '30'
+        default: '40'
 
 permissions:
   contents: write
@@ -24,9 +24,9 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        worker: [1, 2, 3, 4, 5, 6, 7, 8]
+        worker: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
       fail-fast: false
-      max-parallel: 8
+      max-parallel: 15
     concurrency:
       group: continuous-advancement-worker-${{ matrix.worker }}
       cancel-in-progress: true
@@ -100,7 +100,7 @@ jobs:
             --max-cycles ${{ inputs.iterations || '30' }} \
             --timeout-mins 180 \
             --worker-id ${{ matrix.worker }} \
-            --num-workers 8
+            --num-workers 15
 
       - name: Export Metrics
         if: always()
