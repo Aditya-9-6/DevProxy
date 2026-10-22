@@ -1,6 +1,7 @@
 import os
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+
 class Settings(BaseSettings):
     PROJECT_NAME: str = "DevProxy Agent"
     VERSION: str = "0.1.0"
@@ -29,7 +30,9 @@ class Settings(BaseSettings):
     DEFAULT_INITIAL_CREDITS: int = int(os.getenv("DEFAULT_INITIAL_CREDITS", "1000"))
     ERROR_RATE_THRESHOLD: float = float(os.getenv("ERROR_RATE_THRESHOLD", "0.25"))
     PROVIDER_API_KEYS: list[str] = (
-        os.getenv("PROVIDER_API_KEYS", "").split(",") if os.getenv("PROVIDER_API_KEYS") else []
+        os.getenv("PROVIDER_API_KEYS", "").split(",")
+        if os.getenv("PROVIDER_API_KEYS")
+        else []
     )
     GITHUB_CLIENT_SECRET: str | None = None
 
@@ -45,7 +48,9 @@ class Settings(BaseSettings):
 
     @property
     def REDIS_URI(self) -> str:
-        return os.getenv("REDIS_URL") or f"redis://{self.REDIS_HOST}:{self.REDIS_PORT}/0"
+        return (
+            os.getenv("REDIS_URL") or f"redis://{self.REDIS_HOST}:{self.REDIS_PORT}/0"
+        )
 
     # SaaS‑specific configuration
     SAAS_MODE: bool = True
@@ -58,6 +63,7 @@ class Settings(BaseSettings):
         case_sensitive=True,
         extra="ignore",
     )
+
 
 # Instantiate a single Settings object for the whole application
 settings = Settings()  # type: ignore

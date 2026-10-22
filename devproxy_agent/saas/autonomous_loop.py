@@ -7,7 +7,6 @@ import json
 import os
 import subprocess
 import tempfile
-from typing import Dict, Any
 
 from sqlmodel import Session
 from devproxy_agent.saas.database import engine
@@ -27,39 +26,12 @@ def _generate_pytest(incident: Incident, workspace: str) -> str:
 
     Returns the name of the created test file.
     """
-    # Write tests to a persistent location under the project root
-    project_root = os.path.abspath(os.path.join(workspace, '..', '..'))
+    project_root = os.path.abspath(os.path.join(workspace, "..", ".."))
     tests_dir = os.path.join(project_root, "tests")
     os.makedirs(tests_dir, exist_ok=True)
     filename = f"test_incident_{incident.fingerprint[:6]}.py"
     filepath = os.path.join(tests_dir, filename)
 
-    test_code = f"""
-import requests
-
-def test_incident_{incident.fingerprint[:6]}():
-    resp = requests.request(
-        method={json.dumps(incident.captured_method)},
-        url=f'http://127.0.0.1:8000{incident.route_path}',
-        headers={json.dumps(incident.captured_headers)},
-        json={json.dumps(incident.captured_body)},
-        timeout=10,
-    )
-    assert resp.status_code < 500, f"Unexpected status {{resp.status_code}}"
-"""
-    with open(filepath, "w", encoding="utf-8") as f:
-        f.write(test_code.strip() + "\n")
-    return filename
-    """Create a pytest file that replays the captured request.
-
-    Returns the path of the created test file.
-    """
-    tests_dir = os.path.join(workspace, "tests")
-    os.makedirs(tests_dir, exist_ok=True)
-    filename = f"test_incident_{incident.fingerprint[:6]}.py"
-    filepath = os.path.join(tests_dir, filename)
-
-    # Simple pytest that uses requests to replay the captured request
     test_code = f"""
 import requests
 
@@ -84,7 +56,7 @@ def run_autonomous_loop(org_id: str, incident_id: str) -> None:
     Executes the LLM agent, captures the generated diff, stores it on the Incident,
     creates an auto‑generated pytest, updates the PR record, and marks the run.
     """
-    start_time = __import__('time').time()
+    start_time = __import__("time").time()
     with Session(engine) as session:
         org: Organization = session.get(Organization, org_id)
         incident: Incident = session.get(Incident, incident_id)
@@ -100,31 +72,47 @@ def run_autonomous_loop(org_id: str, incident_id: str) -> None:
         gh_token = get_installation_access_token(org.github_installation_id or 0)
         repo_url = (
             f"https://x-access-token:{gh_token}@github.com/{org.target_repo_full_name}.git"
-            if gh_token else None
+            if gh_token
+            else None
         )
 
         with tempfile.TemporaryDirectory(prefix=f"devproxy_{org.id}_") as ws:
             # Clone repo
             if repo_url:
-                subprocess.run(["git", "clone", "--depth", "1", repo_url, ws], check=True, capture_output=True)
+                subprocess.run(
+                    ["git", "clone", "--depth", "1", repo_url, ws],
+                    check=True,
+                    capture_output=True,
+                )
             # Prepare incident context for the agent CLI
             incident_ctx_path = os.path.join(ws, ".devproxy_incident.json")
             with open(incident_ctx_path, "w", encoding="utf-8") as f:
-                json.dump({
-                    "incident_id": incident.id,
-                    "http_method": incident.http_method,
-                    "route_path": incident.route_path,
-                    "status_code": incident.status_code,
-                    "request_payload": incident.redacted_request_payload,
-                    "response_body": incident.redacted_response_body,
-                    "latency_ms": incident.latency_ms,
-                    "captured_method": incident.captured_method,
-                    "captured_headers": incident.captured_headers,
-                    "captured_body": incident.captured_body,
-                }, f, indent=2)
+                json.dump(
+                    {
+                        "incident_id": incident.id,
+                        "http_method": incident.http_method,
+                        "route_path": incident.route_path,
+                        "status_code": incident.status_code,
+                        "request_payload": incident.redacted_request_payload,
+                        "response_body": incident.redacted_response_body,
+                        "latency_ms": incident.latency_ms,
+                        "captured_method": incident.captured_method,
+                        "captured_headers": incident.captured_headers,
+                        "captured_body": incident.captured_body,
+                    },
+                    f,
+                    indent=2,
+                )
 
             # Run the agent CLI (assumes devproxy_agent.run_agent entry point exists)
-            cmd = ["python", "-m", "devproxy_agent.run_agent", "--once", "--workspace", ws]
+            cmd = [
+                "python",
+                "-m",
+                "devproxy_agent.run_agent",
+                "--once",
+                "--workspace",
+                ws,
+            ]
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
 
             # Extract diff from stdout – we look for lines starting with "diff --git"
@@ -141,19 +129,20 @@ def run_autonomous_loop(org_id: str, incident_id: str) -> None:
                 _save_generated_diff(session, incident, diff_text)
 
             # Generate pytest file
-            test_filename = _generate_pytest(incident, ws)
-    # Store test filename for later use (optional field could be added)
-
-            # Store test filename for later use (optional field could be added)
+            _generate_pytest(incident, ws)
 
             # Commit changes (optional – we just keep diff for UI)
             subprocess.run(["git", "add", "."], cwd=ws, capture_output=True)
-            subprocess.run(["git", "commit", "-m", "Auto‑generated fix for incident"], cwd=ws, capture_output=True)
+            subprocess.run(
+                ["git", "commit", "-m", "Auto‑generated fix for incident"],
+                cwd=ws,
+                capture_output=True,
+            )
 
             # Determine PR URL (placeholder – in real flow the agent would create PR)
             pr_url = "PR_CREATED_DUMMY"
 
-        duration = round(__import__('time').time() - start_time, 2)
+        duration = round(__import__("time").time() - start_time, 2)
         # Update records
         run_record.status = "succeeded"
         run_record.pr_url = pr_url

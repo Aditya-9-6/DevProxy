@@ -1,8 +1,12 @@
-import pytest, sys, pathlib
+import pytest
+import sys
+import pathlib
+
 sys.path.append(str(pathlib.Path(__file__).resolve().parents[1]))
 from fastapi.testclient import TestClient
 from devproxy_agent.saas.control_plane import app
 from devproxy_agent.saas.database import init_db
+
 
 @pytest.fixture(autouse=True)
 def setup_database():
@@ -10,7 +14,9 @@ def setup_database():
     init_db()
     yield
 
+
 client = TestClient(app)
+
 
 def test_full_saas_workflow():
     # 1️⃣ Organization creation
@@ -57,7 +63,10 @@ def test_full_saas_workflow():
     pr = client.post(
         "/webhooks/pr/v1/pr_comment",
         headers=headers,
-        json={"incident_id": incident_id, "pr_url": "https://github.com/example/repo/pull/1"},
+        json={
+            "incident_id": incident_id,
+            "pr_url": "https://github.com/example/repo/pull/1",
+        },
     )
     assert pr.status_code == 200
     pr_data = pr.json()
