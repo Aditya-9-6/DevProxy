@@ -1,0 +1,58 @@
+name: "Advancement & Roadmap Issue Generator"
+
+on:
+  schedule:
+    - cron: "0 */2 * * *" # Runs every 2 hours automatically
+  workflow_dispatch:
+    inputs:
+      count:
+        description: "Number of high-impact advancement issues to generate (1-5)"
+        required: false
+        default: "1"
+      force:
+        description: "Bypass freeze timer cooldown? (true/false)"
+        required: false
+        default: "false"
+
+permissions:
+  issues: write
+  contents: write
+
+concurrency:
+  group: advancement-generator
+  cancel-in-progress: false
+
+jobs:
+  generate-issues:
+    name: "Generate Structured Advancement Issues"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Generate GitHub App Token (Higher Rate Limits)
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        continue-on-error: true
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run Advancement Issue Generator Engine
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          GEMINI_ISSUE_KEY: ${{ secrets.GEMINI_ISSUE_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_ISSUE_KEY || secrets.GEMINI_API_KEY }}
+          INPUT_COUNT: ${{ github.event.inputs.count || '1' }}
+          FORCE_SUBMIT: ${{ github.event.inputs.force || 'false' }}
+          MIN_COOLDOWN_MINUTES: "30"
+        run: |
+          python3 .github/scripts/generate_advancement_issue.py

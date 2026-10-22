@@ -1,0 +1,27 @@
+version = 1
+
+test_patterns = [
+  "**/*_test.go"
+]
+
+exclude_patterns = [
+  ".system_generated/**",
+  "web/**",
+  "testdata/**",
+  "docker-compose.yml"
+]
+
+[[analyzers]]
+name = "go"
+enabled = true
+
+  [analyzers.meta]
+  import_root = "github.com/Aditya-9-6/DevProxy"
+
+[[analyzers]]
+name = "test-coverage"
+enabled = true
+
+[[transformers]]
+name = "gofmt"
+enabled = true

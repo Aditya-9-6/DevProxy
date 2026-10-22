@@ -1,14 +1,29 @@
-# Ignore virtual environment and large artefacts
-.venv/
-devproxy.db
-metrics.db
-*.log
-__pycache__/
-*.pyc
-.env*
-# IDE files
-.vscode/
-.idea/
-# OS files
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+bin/
+dist/
+
+# Test artifacts & keys
+*.crt
+*.key
+*.pem
+*.test
+
+# OS & IDE
 .DS_Store
 Thumbs.db
+.vscode/
+.idea/
+
+# Autonomous AI Agent temporary artifacts
+ai_pr_*.md
+ai_pr_*.json
+ai_review_*.json
+ai_review_*.md
+ci_fix_*.md
+ci_fix_*.json
+.github/advancement_backlog.json

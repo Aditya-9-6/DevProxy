@@ -1,0 +1,142 @@
+name: AI CI Test Fixer Bot
+
+on:
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "Pull Request number to fix"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: ai-fixer-${{ github.event.issue.number || github.event.inputs.pr_number }}
+  cancel-in-progress: false
+
+jobs:
+  fix-ci:
+    name: Autonomous CI Fixer
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.issue.pull_request &&
+       contains('["OWNER", "COLLABORATOR", "MEMBER"]', github.event.comment.author_association) && (
+        startsWith(github.event.comment.body, '/fix') ||
+        startsWith(github.event.comment.body, '/fix-ci') ||
+        startsWith(github.event.comment.body, '@devproxy-bot fix') ||
+        startsWith(github.event.comment.body, '@devproxy-bot fix-ci')
+      ))
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate GitHub App Token (Higher Rate Limits)
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        continue-on-error: true
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
+      - name: Resolve PR Metadata
+        id: meta
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            PR_NUM="${{ github.event.inputs.pr_number }}"
+          else
+            PR_NUM="${{ github.event.issue.number }}"
+          fi
+
+          echo "Fetching details for PR #$PR_NUM..."
+          PR_DATA=$(gh pr view "$PR_NUM" --json headRefName,headRepositoryOwner,title)
+          HEAD_REF=$(echo "$PR_DATA" | jq -r .headRefName)
+          TITLE=$(echo "$PR_DATA" | jq -r .title)
+
+          echo "pr_num=$PR_NUM" >> $GITHUB_OUTPUT
+          echo "head_ref=$HEAD_REF" >> $GITHUB_OUTPUT
+          echo "title=$TITLE" >> $GITHUB_OUTPUT
+
+          gh pr comment "$PR_NUM" --body "🤖 **DevProxy CI Auto-Fixer** is analyzing test and compiler diagnostics on branch \`$HEAD_REF\`..."
+
+      - name: Checkout PR Branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.meta.outputs.head_ref }}
+          fetch-depth: 0
+
+      - name: Ensure Latest AI Fixer Script Present
+        run: |
+          git checkout origin/main -- .github/scripts/ai_ci_fixer.py || true
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run Autonomous CI Repair Agent
+        id: repair
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_SOLVER_KEY || secrets.GEMINI_API_KEY }}
+          GEMINI_FALLBACK_KEY: ${{ secrets.GEMINI_REVIEWER_KEY || secrets.GEMINI_ISSUE_KEY }}
+          PR_NUM: ${{ steps.meta.outputs.pr_num }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          python3 .github/scripts/ai_ci_fixer.py \
+            --pr-number "$PR_NUM" \
+            --workspace .
+
+      - name: Verify Go Compilation & Format
+        run: |
+          gofmt -w .
+          go vet ./... || true
+
+      - name: Commit and Push Fix
+        env:
+          HEAD_REF: ${{ steps.meta.outputs.head_ref }}
+          PR_NUM: ${{ steps.meta.outputs.pr_num }}
+          AUTH_TOKEN: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
+        run: |
+          git config --global user.name "Aditya Dahale"
+          git config --global user.email "aditya-9-6@users.noreply.github.com"
+
+          if git diff --quiet && git diff --staged --quiet; then
+            echo "No changes needed or produced."
+            echo "has_changes=false" >> $GITHUB_ENV
+          else
+            git rm --cached -f ai_pr_*.md ai_review_*.json ci_fix_*.md 2>/dev/null || true
+            git add -A
+            git reset -- ai_pr_*.md ai_review_*.json ci_fix_*.md 2>/dev/null || true
+            git commit -m "fix(ci): autonomous repair for failing CI tests on PR #${PR_NUM}" -m "Co-authored-by: Aditya Dahale <aditya-9-6@users.noreply.github.com>"
+            git remote set-url origin "https://x-access-token:${AUTH_TOKEN}@github.com/${{ github.repository }}.git"
+            git push origin "$HEAD_REF"
+            COMMIT_SHA=$(git rev-parse --short HEAD)
+            echo "has_changes=true" >> $GITHUB_ENV
+            echo "commit_sha=$COMMIT_SHA" >> $GITHUB_ENV
+          fi
+
+      - name: Comment Resolution on PR
+        if: always()
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUM: ${{ steps.meta.outputs.pr_num }}
+          HEAD_REF: ${{ steps.meta.outputs.head_ref }}
+        run: |
+          if [ -f "ci_fix_summary.md" ]; then
+            gh pr comment "$PR_NUM" --body-file "ci_fix_summary.md"
+          elif [ "$has_changes" = "true" ]; then
+            gh pr comment "$PR_NUM" --body "✅ **CI Fix Applied!** Pushed commit \`$commit_sha\` to \`$HEAD_REF\`."
+          fi

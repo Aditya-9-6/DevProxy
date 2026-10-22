@@ -1,0 +1,51 @@
+name-template: 'v$RESOLVED_VERSION'
+tag-template: 'v$RESOLVED_VERSION'
+categories:
+  - title: '🚀 Features & Enhancements'
+    labels:
+      - 'feature'
+      - 'enhancement'
+      - 'area/proxy'
+      - 'area/dashboard'
+  - title: '🔒 Security & Hardening'
+    labels:
+      - 'security'
+      - 'area/security'
+  - title: '🐛 Bug Fixes'
+    labels:
+      - 'fix'
+      - 'bug'
+  - title: '📦 Dependency Updates'
+    labels:
+      - 'dependencies'
+  - title: '🧰 Maintenance & CI'
+    labels:
+      - 'area/ci'
+      - 'area/maintenance'
+      - 'documentation'
+      - 'area/docs'
+
+change-template: '- $TITLE (#$NUMBER) by @$AUTHOR'
+change-title-escapes: '\<*_&'
+version-resolver:
+  major:
+    labels:
+      - 'major'
+  minor:
+    labels:
+      - 'feature'
+      - 'enhancement'
+  patch:
+    labels:
+      - 'fix'
+      - 'bug'
+      - 'security'
+      - 'dependencies'
+  default: patch
+
+template: |
+  ## What's Changed
+
+  $CHANGES
+
+  **Full Changelog**: https://github.com/Aditya-9-6/DevProxy/compare/$PREVIOUS_TAG...v$RESOLVED_VERSION

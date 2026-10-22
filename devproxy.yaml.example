@@ -1,0 +1,33 @@
+# ==============================================================================
+# DevProxy Custom Security Rules Configuration Example
+# ==============================================================================
+# Place as 'devproxy.yaml' in your working directory, or specify via:
+#   devproxy -rules /path/to/rules.yaml
+
+rules:
+  # Rule 1: Internal Corporate Secret Token
+  - name: "Internal OAuth Token"
+    category: "EXPOSED_SECRET"
+    severity: "CRITICAL"
+    regex: "corp_sec_[0-9a-zA-Z]{16,40}"
+    description: "Detected internal corporate secret token in transmission"
+    remediation: "Revoke token immediately and inject securely via Vault or environment variables"
+    location: "all" # options: "all", "request_body", "response_body", "headers", "url"
+
+  # Rule 2: Unmasked Credit Card Number (PCI-DSS Leak)
+  - name: "Unmasked Credit Card Number"
+    category: "PII_LEAK"
+    severity: "HIGH"
+    regex: "\\b(?:4[0-9]{12}(?:[0-9]{3})?|5[1-5][0-9]{14}|3[47][0-9]{13})\\b"
+    description: "Detected unmasked credit card primary account number in payload"
+    remediation: "Ensure payment card numbers are tokenized or masked before transmission"
+    location: "response_body"
+
+  # Rule 3: Restricted Corporate Domain / Internal Metadata Access
+  - name: "Restricted Internal Subdomain Access"
+    category: "RESTRICTED_ACCESS"
+    severity: "MEDIUM"
+    regex: ".*\\.internal\\.company\\.net"
+    description: "Outbound request made to internal company test cluster"
+    remediation: "Ensure internal subdomains are not accessed directly from public client bundles"
+    location: "url"
