@@ -143,17 +143,6 @@ async def ingest_error_trace(
         captured_body=payload.redacted_request_body,
         status="analyzing",
     )
-        org_id=org.id,
-        fingerprint=fingerprint,
-        http_method=payload.method,
-        route_path=payload.path,
-        status_code=payload.status_code,
-        error_summary=error_head,
-        redacted_request_payload={"headers": payload.redacted_headers, "body": payload.redacted_request_body},
-        redacted_response_body=payload.redacted_response_body,
-        latency_ms=payload.latency_ms,
-        status="analyzing",
-    )
     session.add(incident)
     session.commit()
     try:
