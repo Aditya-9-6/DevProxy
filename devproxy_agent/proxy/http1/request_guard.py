@@ -1,5 +1,6 @@
 from devproxy_agent.security.httpframing.parser import HTTPFramingParser
-from devproxy_agent.security.httpframing.verdict import Verdict, FramingResult
+from devproxy_agent.security.httpframing.verdict import FramingResult
+
 
 class HTTP1RequestGuard:
     @staticmethod

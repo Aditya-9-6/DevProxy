@@ -1,6 +1,7 @@
 import re
-from typing import Dict, List, Tuple
+from typing import Dict, List
 from devproxy_agent.security.httpframing.verdict import Verdict, FramingResult
+
 
 class HTTPFramingParser:
     _FIELD_NAME_REGEX = re.compile(r"^[!#$%&'*+\-.^_`|~0-9a-zA-Z]+$")
@@ -62,7 +63,9 @@ class HTTPFramingParser:
                 return FramingResult(Verdict.REJECT, "invalid_content_length")
             for cl in cl_values:
                 if cl != first_cl:
-                    return FramingResult(Verdict.REJECT, "conflicting_content_length_multiplicity")
+                    return FramingResult(
+                        Verdict.REJECT, "conflicting_content_length_multiplicity"
+                    )
             try:
                 parsed_cl = int(first_cl)
             except ValueError:
@@ -87,15 +90,23 @@ class HTTPFramingParser:
 
         # Dual-interpretation smuggling checks (CL.TE vs TE.CL)
         if parsed_cl is not None and has_te:
-            return FramingResult(Verdict.AMBIGUOUS, "cl_te_ambiguity", parsed_cl, has_te, is_chunked)
+            return FramingResult(
+                Verdict.AMBIGUOUS, "cl_te_ambiguity", parsed_cl, has_te, is_chunked
+            )
 
         if has_te and not is_chunked:
-            return FramingResult(Verdict.AMBIGUOUS, "unsupported_transfer_encoding", parsed_cl, has_te, is_chunked)
+            return FramingResult(
+                Verdict.AMBIGUOUS,
+                "unsupported_transfer_encoding",
+                parsed_cl,
+                has_te,
+                is_chunked,
+            )
 
         return FramingResult(
             verdict=Verdict.ALLOW,
             reason="ok",
             content_length=parsed_cl,
             has_transfer_encoding=has_te,
-            is_chunked=is_chunked
+            is_chunked=is_chunked,
         )

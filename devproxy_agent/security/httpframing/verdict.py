@@ -1,16 +1,17 @@
-from enum import Enum
 from dataclasses import dataclass
-from typing import Optional
+from enum import Enum, auto
 
-class Verdict(str, Enum):
-    ALLOW = "ALLOW"
-    REJECT = "REJECT"
-    AMBIGUOUS = "AMBIGUOUS"
+
+class Verdict(Enum):
+    ALLOW = auto()
+    REJECT = auto()
+    AMBIGUOUS = auto()
+
 
 @dataclass(frozen=True)
 class FramingResult:
     verdict: Verdict
     reason: str
-    content_length: Optional[int] = None
+    content_length: int | None = None
     has_transfer_encoding: bool = False
     is_chunked: bool = False
