@@ -15,9 +15,10 @@ const (
 	PacketType1RTT      PacketType = 3
 )
 
-// Header represents a parsed QUIC packet header before HP removal.
-parseError := errors.New("malformed packet header")
+// ParseError is a standard error for malformed packet headers.
+var ParseError = errors.New("malformed packet header")
 
+// Header represents a parsed QUIC packet header before HP removal.
 type Header struct {
 	IsLong          bool
 	Type            PacketType
@@ -33,8 +34,6 @@ type Header struct {
 }
 
 // ParseVarInt parses a variable-length integer per RFC 9000 section 16.
-func ParseVarInt(r *bytes.Reader) (uint64, int, error }
-
 func ParseVarInt(r *bytes.Reader) (uint64, int, error) {
 	b, err := r.ReadByte()
 	if err != nil {
@@ -74,14 +73,20 @@ func SplitCoalescedDatagrams(datagram []byte) ([][]byte, error) {
 		}
 
 		// Long header: read version (4 bytes) and lengths
-		r.Seek(4, io.SeekCurrent) // skip version
-		dcidLenVal, _, err := r.ReadByte()
+		_, err = r.Seek(4, io.SeekCurrent) // skip version
+		if err != nil {
+			return nil, err
+		}
+		dcidLenVal, err := r.ReadByte()
 		if err != nil {
 			return nil, err
 		}
 		
-		r.Seek(int6dcinLenVal := int(dcidLenVal), io.SeekCurrent)
-		_, _, err = r.ReadByte() // scid len
+		_, err = r.Seek(int(dcidLenVal), io.SeekCurrent)
+		if err != nil {
+			return nil, err
+		}
+		_, err = r.ReadByte() // scid len
 		if err != nil {
 			return nil, err
 		}

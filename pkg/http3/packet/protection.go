@@ -2,7 +2,6 @@ package packet
 
 import (
 	"crypto/aes"
-	"crypto/cipher"
 	"errors"
 )
 
@@ -39,30 +38,4 @@ func RemoveHeaderProtection(hpKey []byte, sample []byte, firstByte *byte, packet
 	}
 
 	return nil
-}
-
-// DecryptPayload decrypts the QUIC packet payload using AES-GCM.
-func DecryptPayload(key, iv []byte, packetNumber uint64, header, ciphertext []byte) ([]byte, error) {
-	if len(key) == 0 || len(iv) == 0 {
-		return nil, errors.New("invalid AEAD keys")
-	}
-
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return nil, err
-	}
-
-	aead, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, err
-	}
-
-	// Construct nonce by XORing packet number into IV
-	nonce := make([]byte, len(iv))
-	copy(nonce, iv)
-	for i := 0; i < 8 && i < len(nonce); i++ {
-		nonce[len(nonce)-1-i] ^= byte(packetNumber >> (8 * i))
-	}
-
-	return aead.Open(nil, nonce, ciphertext, header)
 }
