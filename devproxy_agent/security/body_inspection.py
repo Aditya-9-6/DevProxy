@@ -1,6 +1,7 @@
-from typing import Dict, Any
+from typing import Dict
 from devproxy_agent.security.contentcodec import ContentCodecDecoder
 from devproxy_agent.security.decompguard import DecompGuard
+
 
 class WAFBodyInspector:
     def __init__(self, guard: DecompGuard | None = None):

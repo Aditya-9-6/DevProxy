@@ -1,8 +1,8 @@
 import gzip
 import zlib
-from io import BytesIO
-from typing import List, Generator
+from typing import List
 from devproxy_agent.security.decompguard import DecompGuard
+
 
 class ContentCodecDecoder:
     def __init__(self, guard: DecompGuard | None = None):
@@ -48,7 +48,7 @@ class ContentCodecDecoder:
                 compressed_bytes=compressed_size,
                 expanded_bytes=expanded_size,
                 nesting_depth=nesting - idx,
-                work_units=work_units
+                work_units=work_units,
             )
 
         return current_data
