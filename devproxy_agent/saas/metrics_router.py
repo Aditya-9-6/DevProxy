@@ -1,8 +1,8 @@
-import os
 from fastapi import APIRouter
 from devproxy_agent.metrics import count_cycles_last, estimate_prs_per_day
 
 router = APIRouter()
+
 
 @router.get("/metrics")
 async def get_metrics():
