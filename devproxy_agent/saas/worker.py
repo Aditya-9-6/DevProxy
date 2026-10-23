@@ -8,6 +8,7 @@ from devproxy_agent.saas.database import engine
 from devproxy_agent.saas.models import Organization, Incident, AgentRun
 from devproxy_agent.saas.github_app import get_installation_access_token
 
+
 def execute_sandboxed_autonomous_loop(org_id: str, incident_id: str):
     """Execute the autonomous loop in an isolated workspace.
     This function is intended to be called as a background task from FastAPI.
@@ -31,39 +32,50 @@ def execute_sandboxed_autonomous_loop(org_id: str, incident_id: str):
 
             # 2. Clone the repository into a temporary workspace
             with tempfile.TemporaryDirectory(prefix=f"devproxy_{org.id}_") as workspace:
-                subprocess.run([
-                    "git", "clone", "--depth", "50", repo_url, workspace
-                ], check=True, capture_output=True)
+                subprocess.run(
+                    ["git", "clone", "--depth", "50", repo_url, workspace],
+                    check=True,
+                    capture_output=True,
+                )
 
                 # 3. Write incident context for the autonomous loop
-                incident_context_path = os.path.join(workspace, ".devproxy_incident.json")
+                incident_context_path = os.path.join(
+                    workspace, ".devproxy_incident.json"
+                )
                 with open(incident_context_path, "w") as f:
-                    json.dump({
-                        "incident_id": incident.id,
-                        "http_method": incident.http_method,
-                        "route_path": incident.route_path,
-                        "status_code": incident.status_code,
-                        "request_payload": incident.redacted_request_payload,
-                        "response_body": incident.redacted_response_body,
-                        "latency_ms": incident.latency_ms,
-                        "instructions": (
-                            "Reproduce this exact HTTP failure in a unit test, "
-                            "fix the underlying bug without modifying protected auth/env files, "
-                            "verify all tests pass, and open a Pull Request."
-                        )
-                    }, f, indent=2)
+                    json.dump(
+                        {
+                            "incident_id": incident.id,
+                            "http_method": incident.http_method,
+                            "route_path": incident.route_path,
+                            "status_code": incident.status_code,
+                            "request_payload": incident.redacted_request_payload,
+                            "response_body": incident.redacted_response_body,
+                            "latency_ms": incident.latency_ms,
+                            "instructions": (
+                                "Reproduce this exact HTTP failure in a unit test, "
+                                "fix the underlying bug without modifying protected auth/env files, "
+                                "verify all tests pass, and open a Pull Request."
+                            ),
+                        },
+                        f,
+                        indent=2,
+                    )
 
                 # 4. Run the agent CLI inside the workspace
                 cmd = [
-                    "python", "-m", "devproxy_agent.run_agent",
+                    "python",
+                    "-m",
+                    "devproxy_agent.run_agent",
                     "--once",
-                    "--workspace", workspace
+                    "--workspace",
+                    workspace,
                 ]
                 result = subprocess.run(
                     cmd,
                     capture_output=True,
                     text=True,
-                    timeout=600  # 10‑minute hard cap per cycle
+                    timeout=600,  # 10‑minute hard cap per cycle
                 )
 
                 duration = round(time.time() - start_time, 2)
@@ -92,6 +104,7 @@ def execute_sandboxed_autonomous_loop(org_id: str, incident_id: str):
             session.add(run_record)
             session.add(incident)
             session.commit()
+
 
 def _extract_pr_url(stdout: str) -> str:
     """Parse stdout for a GitHub Pull Request URL.
