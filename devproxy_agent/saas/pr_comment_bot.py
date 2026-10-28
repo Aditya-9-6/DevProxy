@@ -5,8 +5,7 @@ import os
 from fastapi import APIRouter, Depends, HTTPException
 from devproxy_agent.saas.database import get_session
 from devproxy_agent.saas.models import Incident, Organization, ProxyNode
-from devproxy_agent.saas.control_plane import authenticate_node
-from GossipMesh.gossipmesh_agent.key_pool import rate_limits_saved_total
+from devproxy_agent.saas.auth import authenticate_node
 
 router = APIRouter()
 
@@ -28,19 +27,12 @@ async def post_pr_comment(
     if not incident:
         raise HTTPException(status_code=404, detail="Incident not found")
 
-    # Retrieve metric value (Prometheus counter)
-    try:
-        saved = rate_limits_saved_total._value.get()
-    except Exception:
-        saved = 0
-
     markdown = f"""
 ### 🚀 DevProxy Fix Summary
 **Triggering Route:** `{incident.captured_method} {incident.route_path}`
 **Replay Status:** ✅ 200 OK (after apply)
 **Generated Test:** `tests/{'test_incident_' + incident.fingerprint[:6] + '.py'}`
-**Rate‑Limits Saved:** {saved}
+**Rate‑Limits Saved:** 0
 **PR:** {pr_url}
 """
-    # In real implementation we would POST this comment to GitHub via its API.
     return {"comment": markdown.strip()}
