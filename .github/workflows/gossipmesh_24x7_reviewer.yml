@@ -51,6 +51,11 @@ jobs:
           pip install -r .gossipmesh/requirements.txt
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
+      - name: Configure Git Committer Identity
+        run: |
+          git config --global user.name "Dahale Aditya Dnyaneshwar"
+          git config --global user.email "adityadahale96@gmail.com"
+
       - name: Verify GitHub CLI Authentication
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -62,6 +67,10 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
           GITHUB_REPOSITORY: ${{ github.repository }}
+          GIT_AUTHOR_NAME: "Dahale Aditya Dnyaneshwar"
+          GIT_AUTHOR_EMAIL: "adityadahale96@gmail.com"
+          GIT_COMMITTER_NAME: "Dahale Aditya Dnyaneshwar"
+          GIT_COMMITTER_EMAIL: "adityadahale96@gmail.com"
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GEMINI_REVIEWER_KEY: ${{ secrets.GEMINI_REVIEWER_KEY }}
           GEMINI_SOLVER_KEY: ${{ secrets.GEMINI_SOLVER_KEY }}
