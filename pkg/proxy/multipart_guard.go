@@ -2,7 +2,7 @@ package proxy
 
 import (
 	"io"
-	"github.com/gossipmesh/gossipmesh/pkg/security/multipart"
+	"github.com/Aditya-9-6/DevProxy/pkg/security/multipart"
 )
 
 type MultipartGuard struct {

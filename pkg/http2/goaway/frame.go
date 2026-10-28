@@ -3,7 +3,6 @@ package goaway
 import (
 	"encoding/binary"
 	"errors"
-	"io"
 	"sync"
 )
 

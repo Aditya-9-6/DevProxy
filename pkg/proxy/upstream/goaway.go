@@ -3,7 +3,7 @@ package upstream
 import (
 	"context"
 	"errors"
-	"github.com/gossipmesh/devproxy/pkg/http2/goaway"
+	"github.com/Aditya-9-6/DevProxy/pkg/http2/goaway"
 )
 
 var ErrUpstreamDraining = errors.New("upstream proxy connection is draining")

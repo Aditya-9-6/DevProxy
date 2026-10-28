@@ -2,7 +2,7 @@ package analysis
 
 import (
 	"sync/atomic"
-	"github.com/gossipmesh/devproxy/pkg/http2/goaway"
+	"github.com/Aditya-9-6/DevProxy/pkg/http2/goaway"
 )
 
 // Observer tracks aggregate phase and error counters for GOAWAY events without retaining debug data.

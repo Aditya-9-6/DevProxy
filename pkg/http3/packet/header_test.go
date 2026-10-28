@@ -6,7 +6,7 @@ import (
 )
 
 func TestParseVarInt(t *testing.T) {
-	buf := []byte{0x25, 0x85}
+	buf := []byte{0x65, 0x85}
 	r := bytes.NewReader(buf)
 	val, n, err := ParseVarInt(r)
 	if err != nil {

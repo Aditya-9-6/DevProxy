@@ -82,7 +82,7 @@ func SplitCoalescedDatagrams(datagram []byte) ([][]byte, error) {
 			return nil, err
 		}
 		
-		_, err = r.Seek(int(dcidLenVal), io.SeekCurrent)
+		_, err = r.Seek(int64(dcidLenVal), io.SeekCurrent)
 		if err != nil {
 			return nil, err
 		}
