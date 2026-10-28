@@ -11,7 +11,7 @@ def hash_api_key(raw_key: str) -> str:
 
 async def authenticate_node(
     authorization: str = Header(...),
-    session = Depends(get_session),
+    session=Depends(get_session),
 ) -> tuple[Organization, ProxyNode]:
     if not authorization.startswith("Bearer dp_live_"):
         raise HTTPException(status_code=401, detail="Invalid Devproxy token format")
@@ -21,7 +21,9 @@ async def authenticate_node(
         select(ProxyNode).where(ProxyNode.api_key_hash == token_hash)
     ).first()
     if not node or not node.is_active:
-        raise HTTPException(status_code=401, detail="Unauthorized or inactive proxy node")
+        raise HTTPException(
+            status_code=401, detail="Unauthorized or inactive proxy node"
+        )
     org = session.get(Organization, node.org_id)
     if not org:
         raise HTTPException(status_code=401, detail="Organization not found")
