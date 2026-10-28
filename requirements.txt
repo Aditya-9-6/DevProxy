@@ -9,3 +9,7 @@ sqlalchemy>=2.0.0
 aiosqlite>=0.20.0
 redis>=5.0.0
 prometheus-client>=0.20.0
+PyJWT>=2.8.0
+cryptography>=42.0.0
+requests>=2.31.0
+stripe>=8.0.0
