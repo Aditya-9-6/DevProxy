@@ -1,17 +1,16 @@
-FROM python:3.12-slim
+FROM python:3.11-slim
 
-# Set workdir
 WORKDIR /app
 
-# Copy requirements (if any) and install uv
-COPY requirements.txt .
-RUN pip install --no-cache-dir uv && uv pip install -r requirements.txt
+RUN groupadd -r appuser && useradd -r -g appuser appuser
 
-# Copy source code
+COPY requirements.txt .-
+RUN pip install --no-cache-dir -r requirements.txt || true
+
 COPY . .
 
-# Expose port
-EXPOSE 8002
+RUN chown -R appuser:appuser /app
+USER appuser
 
-# Run FastAPI
-CMD ["uvicorn", "devproxy_agent.saas.control_plane:app", "--host", "0.0.0.0", "--port", "8002"]
+EXPOSE 8000
+CMD ["python", "main.py"]
