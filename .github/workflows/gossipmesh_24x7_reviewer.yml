@@ -1,0 +1,106 @@
+name: GossipMesh 24/7 Dual-Pool Engine (PRs & Issues)
+
+on:
+  schedule:
+    # 24/7 continuous autonomous processing every 10 minutes
+    - cron: '*/10 * * * *'
+  pull_request:
+    types: [opened, synchronize, reopened]
+  issues:
+    types: [opened, labeled]
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+
+concurrency:
+  group: gossipmesh-devproxy-${{ github.event.pull_request.number || github.event.issue.number || github.run_id }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  statuses: write
+
+jobs:
+  dual-pool-runner:
+    name: GossipMesh 50/50 Dual-Pool (4 PR + 4 Issue Workers)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout DevProxy
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Checkout GossipMesh Engine
+        uses: actions/checkout@v4
+        with:
+          repository: Aditya-9-6/GossipMesh
+          path: .gossipmesh
+
+      - name: Install Reviewer & Solver Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r .gossipmesh/requirements.txt
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+      - name: Configure Git Committer Identity
+        run: |
+          git config --global user.name "Dahale Aditya Dnyaneshwar"
+          git config --global user.email "adityadahale96@gmail.com"
+
+      - name: Verify GitHub CLI Authentication
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh auth status
+
+      - name: Run GossipMesh Dual-Pool Autonomous Workers
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GIT_AUTHOR_NAME: "Dahale Aditya Dnyaneshwar"
+          GIT_AUTHOR_EMAIL: "adityadahale96@gmail.com"
+          GIT_COMMITTER_NAME: "Dahale Aditya Dnyaneshwar"
+          GIT_COMMITTER_EMAIL: "adityadahale96@gmail.com"
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_REVIEWER_KEY: ${{ secrets.GEMINI_REVIEWER_KEY }}
+          GEMINI_SOLVER_KEY: ${{ secrets.GEMINI_SOLVER_KEY }}
+          GEMINI_KEY_POOL: ${{ secrets.GEMINI_KEY_POOL }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NVIDIA_API_KEY_2: ${{ secrets.NVIDIA_API_KEY_2 }}
+          COHERE_API_KEY: ${{ secrets.COHERE_API_KEY }}
+          HUGGINGFACE_API_KEY: ${{ secrets.HUGGINGFACE_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            PR_NUM="${{ github.event.pull_request.number }}"
+            echo "[*] Triggered on PR #$PR_NUM. Running AI Architectural & Security Review..."
+            PYTHONPATH=.gossipmesh python .gossipmesh/scripts/ai_pr_reviewer.py --pr-number "$PR_NUM" --workspace .
+          elif [ "${{ github.event_name }}" = "issues" ]; then
+            ISSUE_NUM="${{ github.event.issue.number }}"
+            ISSUE_TITLE="${{ github.event.issue.title }}"
+            echo "[*] Triggered on Issue #$ISSUE_NUM. Evaluating and resolving..."
+            BODY=$(gh issue view "$ISSUE_NUM" --json body -q .body)
+            PYTHONPATH=.gossipmesh python .gossipmesh/scripts/ai_issue_solver.py --issue-number "$ISSUE_NUM" --issue-title "$ISSUE_TITLE" --issue-body "$BODY" --workspace .
+          elif [ "${{ github.event_name }}" = "issue_comment" ] && [ -n "${{ github.event.issue.pull_request }}" ]; then
+            PR_NUM="${{ github.event.issue.number }}"
+            echo "[*] Triggered by comment on PR #$PR_NUM. Re-evaluating review..."
+            PYTHONPATH=.gossipmesh python .gossipmesh/scripts/ai_pr_reviewer.py --pr-number "$PR_NUM" --workspace .
+          else
+            echo "[*] Running 24/7 50/50 Dual-Pool Engine (4 PR Workers + 4 Issue Workers in parallel)..."
+            PYTHONPATH=.gossipmesh python .gossipmesh/scripts/batch_dual_engine.py --repo "${{ github.repository }}" --workspace . --pr-workers 4 --issue-workers 4
+          fi

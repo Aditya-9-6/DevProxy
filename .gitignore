@@ -12,3 +12,16 @@ __pycache__/
 # OS files
 .DS_Store
 Thumbs.db
+
+# GossipMesh Engine, Review & Cache Artefacts
+.gossipmesh/
+.gossipmesh
+.gossip_mesh/
+ai_pr_*.md
+ai_review_*.json
+ci_fix_*.md
+verification_report.*
+G:*/
+G:\*
+memes.json
+GossipMesh/
