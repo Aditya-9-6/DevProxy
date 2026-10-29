@@ -3,6 +3,7 @@ import os
 import subprocess
 import tempfile
 from datetime import datetime, timezone
+from typing import Any
 
 import redis.asyncio as redis
 import requests
@@ -19,14 +20,12 @@ from fastapi import (
 )
 from pydantic import BaseModel
 from redis.exceptions import ConnectionError as RedisConnectionError
-from sqlmodel import select
+from sqlmodel import Session, select
 
-from devproxy_agent.saas.database import get_session
-from devproxy_agent.saas.models import AgentRun, Incident, Organization, ProxyNode
-
-# Import routers (stubs will be created)
 from devproxy_agent.saas.admin import router as admin_router
+from devproxy_agent.saas.database import get_session
 from devproxy_agent.saas.metrics_router import router as metrics_router
+from devproxy_agent.saas.models import AgentRun, Incident, Organization, ProxyNode
 from devproxy_agent.saas.payment import router as payment_router
 from devproxy_agent.saas.pr_comment_bot import router as pr_comment_bot_router
 
@@ -48,17 +47,17 @@ redis_client = redis.from_url(
 
 # Simple WebSocket manager for panel connections
 class PanelConnectionManager:
-    def __init__(self):
+    def __init__(self) -> None:
         self.active_connections: set[WebSocket] = set()
 
-    async def connect(self, websocket: WebSocket):
+    async def connect(self, websocket: WebSocket) -> None:
         await websocket.accept()
         self.active_connections.add(websocket)
 
-    def disconnect(self, websocket: WebSocket):
+    def disconnect(self, websocket: WebSocket) -> None:
         self.active_connections.discard(websocket)
 
-    async def broadcast(self, message: str):
+    async def broadcast(self, message: str) -> None:
         for connection in list(self.active_connections):
             try:
                 await connection.send_text(message)
@@ -78,7 +77,7 @@ class TelemetryIngestPayload(BaseModel):
     method: str
     path: str
     status_code: int
-    redacted_headers: dict
+    redacted_headers: dict[str, Any]
     redacted_request_body: str
     redacted_response_body: str
     latency_ms: float
@@ -90,7 +89,7 @@ def hash_api_key(raw_key: str) -> str:
 
 async def authenticate_node(
     authorization: str = Header(...),
-    session=Depends(get_session),
+    session: Session = Depends(get_session),
 ) -> tuple[Organization, ProxyNode]:
     if not authorization.startswith("Bearer dp_live_"):
         raise HTTPException(status_code=401, detail="Invalid Devproxy token format")
@@ -113,7 +112,7 @@ async def authenticate_node(
 async def node_heartbeat(
     payload: HeartbeatPayload,
     auth: tuple[Organization, ProxyNode] = Depends(authenticate_node),
-    session=Depends(get_session),
+    session: Session = Depends(get_session),
 ):
     org, node = auth
     node.last_heartbeat_at = datetime.now(timezone.utc)
@@ -132,7 +131,7 @@ async def ingest_error_trace(
     payload: TelemetryIngestPayload,
     background_tasks: BackgroundTasks,
     auth: tuple[Organization, ProxyNode] = Depends(authenticate_node),
-    session=Depends(get_session),
+    session: Session = Depends(get_session),
 ):
     org, _ = auth
     error_head = payload.redacted_response_body[:160]
@@ -173,9 +172,6 @@ async def ingest_error_trace(
         },
         redacted_response_body=payload.redacted_response_body,
         latency_ms=payload.latency_ms,
-        captured_method=payload.method,
-        captured_headers=payload.redacted_headers,
-        captured_body=payload.redacted_request_body,
         status="analyzing",
     )
 
@@ -192,7 +188,7 @@ async def ingest_error_trace(
 async def get_incident_detail(
     incident_id: str,
     auth: tuple[Organization, ProxyNode] = Depends(authenticate_node),
-    session=Depends(get_session),
+    session: Session = Depends(get_session),
 ):
     incident = session.get(Incident, incident_id)
     if not incident:
@@ -201,13 +197,13 @@ async def get_incident_detail(
         "incident_id": incident.id,
         "generated_diff": incident.generated_diff,
         "route_path": incident.route_path,
-        "method": incident.captured_method,
+        "method": getattr(incident, "captured_method", None) or incident.http_method,
     }
 
 
 @app.get("/v1/metrics/prometheus")
 async def prometheus_metrics(
-    session=Depends(get_session),
+    session: Session = Depends(get_session),
 ):
     org = session.exec(select(Organization)).first()
     if not org:
@@ -241,11 +237,61 @@ async def prometheus_metrics(
     return Response(content="\n".join(lines) + "\n", media_type="text/plain")
 
 
+def _execute_git_patch(target_dir: str, diff_text: str) -> tuple[bool, str | None]:
+    try:
+        subprocess.run(
+            ["git", "apply", "-"],
+            input=diff_text.encode(),
+            cwd=target_dir,
+            check=True,
+            capture_output=True,
+        )
+    except subprocess.CalledProcessError as e:
+        return False, e.stderr.decode()
+
+    subprocess.run(["git", "add", "."], cwd=target_dir, capture_output=True)
+    subprocess.run(
+        ["git", "commit", "-m", "Apply fix from DevProxy"],
+        cwd=target_dir,
+        capture_output=True,
+    )
+    return True, None
+
+
+def _replay_incident_request(incident: Incident) -> tuple[bool, int | None, str | None]:
+    try:
+        req_payload = incident.redacted_request_payload or {}
+        headers = getattr(incident, "captured_headers", None)
+        if headers is None:
+            headers = (
+                req_payload.get("headers", {}) if isinstance(req_payload, dict) else {}
+            )
+
+        body = getattr(incident, "captured_body", None)
+        if body is None:
+            body = req_payload.get("body") if isinstance(req_payload, dict) else None
+
+        method = getattr(incident, "captured_method", None) or getattr(
+            incident, "http_method", "GET"
+        )
+
+        replay_resp = requests.request(
+            method=method,
+            url=f"http://127.0.0.1:8000{incident.route_path}",
+            headers=headers,
+            json=body,
+            timeout=10,
+        )
+        return True, replay_resp.status_code, None
+    except Exception as exc:
+        return False, None, str(exc)
+
+
 @app.post("/v1/panel/apply_fix")
 async def apply_fix(
-    payload: dict = Body(...),
+    payload: dict[str, Any] = Body(...),
     auth: tuple[Organization, ProxyNode] = Depends(authenticate_node),
-    session=Depends(get_session),
+    session: Session = Depends(get_session),
 ):
     org, _ = auth
     incident_id = payload.get("incident_id")
@@ -269,53 +315,33 @@ async def apply_fix(
     )
 
     with tempfile.TemporaryDirectory(prefix=f"devproxy_apply_{org.id}_") as ws:
+        target_dir = ws
         if repo_url:
             subprocess.run(
-                ["git", "clone", "--depth", "1", repo_url, ws],
+                ["git", "clone", "--depth", "1", repo_url, target_dir],
                 check=True,
                 capture_output=True,
             )
         else:
-            ws = os.getcwd()
-        try:
-            subprocess.run(
-                ["git", "apply", "-"],
-                input=diff_text.encode(),
-                cwd=ws,
-                check=True,
-                capture_output=True,
-            )
-        except subprocess.CalledProcessError as e:
-            return {"apply_success": False, "error": e.stderr.decode()}
+            target_dir = os.getcwd()
 
-        subprocess.run(["git", "add", "."], cwd=ws, capture_output=True)
-        subprocess.run(
-            ["git", "commit", "-m", "Apply fix from DevProxy"],
-            cwd=ws,
-            capture_output=True,
-        )
+        success, err = _execute_git_patch(target_dir, diff_text)
+        if not success:
+            return {"apply_success": False, "error": err}
 
-        try:
-            replay_resp = requests.request(
-                method=incident.captured_method,
-                url=f"http://127.0.0.1:8000{incident.route_path}",
-                headers=incident.captured_headers,
-                json=incident.captured_body,
-                timeout=10,
-            )
-            replay_status = replay_resp.status_code
-        except Exception as exc:
-            return {"apply_success": True, "replay_success": False, "error": str(exc)}
+        replay_ok, status_code, replay_err = _replay_incident_request(incident)
+        if not replay_ok:
+            return {"apply_success": True, "replay_success": False, "error": replay_err}
 
         return {
             "apply_success": True,
             "replay_success": True,
-            "replay_status": replay_status,
+            "replay_status": status_code,
         }
 
 
 @app.websocket("/ws/panel")
-async def websocket_panel_endpoint(websocket: WebSocket):
+async def websocket_panel_endpoint(websocket: WebSocket) -> None:
     await panel_ws_manager.connect(websocket)
     try:
         while True:
