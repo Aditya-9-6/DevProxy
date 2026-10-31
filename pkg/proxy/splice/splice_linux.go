@@ -9,6 +9,8 @@ import (
 	"syscall"
 )
 
+const spliceFNonblock = 0x2
+
 // SpliceCopy copies data using the Linux splice(2) syscall when available,
 // falling back gracefully if non-TCP or TLS-wrapped.
 func SpliceCopy(ctx context.Context, dst net.Conn, src net.Conn) (int64, error) {
@@ -46,9 +48,9 @@ func SpliceCopy(ctx context.Context, dst net.Conn, src net.Conn) (int64, error) 
 		default:
 		}
 
-		n, err := syscall.Splice(int(srcFile.Fd()), nil, pipeFds[1], nil, 65536, syscall.SPLICE_F_NONBLOCK)
+		n, err := syscall.Splice(int(srcFile.Fd()), nil, pipeFds[1], nil, 65536, spliceFNonblock)
 		if n > 0 {
-			_, wErr := syscall.Splice(pipeFds[0], nil, int(dstFile.Fd()), nil, int(n), syscall.SPLICE_F_NONBLOCK)
+			_, wErr := syscall.Splice(pipeFds[0], nil, int(dstFile.Fd()), nil, int(n), spliceFNonblock)
 			if wErr != nil && wErr != syscall.EAGAIN {
 				return total, wErr
 			}
