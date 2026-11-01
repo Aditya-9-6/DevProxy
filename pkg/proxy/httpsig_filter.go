@@ -1,15 +1,28 @@
 package proxy
 
 import (
-	"github.com/Aditya-9-6/DevProxy/pkg/security/httpsig"
+	"context"
+	"net/http"
+
+	"github.com/gossipmesh/gossipmesh/pkg/security/httpsig"
 )
 
-// HTTPSigFilter represents a proxy filter for verifying signatures.
+// HTTPSigFilter provides proxy-level request authentication and signature enforcement using GossipMesh native httpsig.
 type HTTPSigFilter struct {
 	verifier *httpsig.Verifier
 }
 
-// NewHTTPSigFilter creates a new filter.
-func NewHTTPSigFilter(v *httpsig.Verifier) *HTTPSigFilter {
-	return &HTTPSigFilter{verifier: v}
+// NewHTTPSigFilter creates a proxy signature filter.
+func NewHTTPSigFilter(verifier *httpsig.Verifier) *HTTPSigFilter {
+	return &HTTPSigFilter{
+		verifier: verifier,
+	}
+}
+
+// Authenticate inspects inbound proxy requests and verifies signatures according to RFC 9421.
+func (f *HTTPSigFilter) Authenticate(ctx context.Context, req *http.Request, sigHeader string, components []string, params map[string]string) error {
+	if f.verifier == nil {
+		return nil
+	}
+	return f.verifier.Verify(req, sigHeader, components, params)
 }
