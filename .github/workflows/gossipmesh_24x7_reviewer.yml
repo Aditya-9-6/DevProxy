@@ -53,6 +53,7 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+          cache: 'pip'
 
       - name: Set up Go 1.23
         uses: actions/setup-go@v5
@@ -124,10 +125,14 @@ jobs:
           fi
 
   issue-worker:
-    name: 🚀 Issue Solver & Synthesis Lane
+    name: 🚀 Issue Solver Lane (Shard ${{ matrix.shard }})
     if: github.event_name != 'pull_request' && (github.event_name != 'issue_comment' || !github.event.issue.pull_request)
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1]
 
     steps:
       - name: Checkout DevProxy
@@ -139,6 +144,7 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+          cache: 'pip'
 
       - name: Set up Go 1.23
         uses: actions/setup-go@v5
@@ -169,7 +175,7 @@ jobs:
         run: |
           gh auth status
 
-      - name: Run Dedicated Issue Solver & Auto-PR Synthesis
+      - name: Run Dedicated Issue Solver & Auto-PR Synthesis (Shard ${{ matrix.shard }})
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
@@ -195,19 +201,26 @@ jobs:
         run: |
           if [ "${{ github.event_name }}" = "issues" ]; then
             ISSUE_NUM="${{ github.event.issue.number }}"
-            ISSUE_TITLE="${{ github.event.issue.title }}"
-            echo "[*] Triggered on Issue #$ISSUE_NUM. Evaluating and resolving..."
-            BODY=$(gh issue view "$ISSUE_NUM" --json body -q .body)
-            PYTHONPATH=.gossipmesh python .gossipmesh/scripts/ai_issue_solver.py --issue-number "$ISSUE_NUM" --issue-title "$ISSUE_TITLE" --issue-body "$BODY" --workspace .
+            if [ "$(( ISSUE_NUM % 2 ))" -eq "${{ matrix.shard }}" ]; then
+              ISSUE_TITLE="${{ github.event.issue.title }}"
+              echo "[*] Triggered on Issue #$ISSUE_NUM (Matches Shard ${{ matrix.shard }}). Resolving..."
+              BODY=$(gh issue view "$ISSUE_NUM" --json body -q .body)
+              PYTHONPATH=.gossipmesh python .gossipmesh/scripts/ai_issue_solver.py --issue-number "$ISSUE_NUM" --issue-title "$ISSUE_TITLE" --issue-body "$BODY" --workspace .
+            else
+              echo "[*] Issue #$ISSUE_NUM belongs to other shard. Skipping."
+            fi
           elif [ "${{ github.event.inputs.mode }}" = "fallback-all" ]; then
-            echo "[*] Fallback mode active: handled by primary runner."
+            if [ "${{ matrix.shard }}" -eq 0 ]; then
+              echo "[*] Fallback mode active: handled by primary runner."
+              PYTHONPATH=.gossipmesh python .gossipmesh/scripts/batch_dual_engine.py --repo "${{ github.repository }}" --workspace . --mode all
+            fi
           else
-            echo "[*] Running Dedicated Issue Solver Lane (Max 12 Issues per run)..."
-            PYTHONPATH=.gossipmesh python .gossipmesh/scripts/batch_dual_engine.py --repo "${{ github.repository }}" --workspace . --mode issue-only --max-issues 12
+            echo "[*] Running Dedicated Issue Solver Lane Shard ${{ matrix.shard }}/2 (Max 12 Issues per run)..."
+            PYTHONPATH=.gossipmesh python .gossipmesh/scripts/batch_dual_engine.py --repo "${{ github.repository }}" --workspace . --mode issue-only --shard-id ${{ matrix.shard }} --num-shards 2 --max-issues 12
           fi
 
       - name: Turbo Autonomous Re-dispatch Loop (Bypass Cron Delays)
-        if: always() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.event_name == 'push')
+        if: always() && matrix.shard == 0 && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.event_name == 'push')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
