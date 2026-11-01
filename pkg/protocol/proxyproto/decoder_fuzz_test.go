@@ -1,0 +1,22 @@
+package proxyproto
+
+import (
+	"bytes"
+	"testing"
+)
+
+func FuzzDecoder(f *testing.F) {
+	f.Add([]byte{
+		0x0D, 0x0A, 0x0D, 0x0A, 0x00, 0x0D, 0x0A, 0x51, 0x55, 0x49, 0x54, 0x0A,
+		0x21, 0x11, 0x00, 0x0C,
+		192, 168, 1, 1,
+		10, 0, 0, 1,
+		0x04, 0xD2,
+		0x00, 0x50,
+	})
+
+	f.Fuzz(func(t *testing.T, data []byte) {
+		decoder := NewDecoder()
+		_, _, _ = decoder.Decode(bytes.NewReader(data))
+	})
+}
