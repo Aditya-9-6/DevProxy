@@ -2,10 +2,9 @@ name: GossipMesh 24/7 Dual-Pool Engine (PRs & Issues)
 
 on:
   schedule:
-    # 24/7 continuous autonomous processing every 5 minutes (Guaranteed Fallback)
-    - cron: '*/5 * * * *'
-  push:
-    branches: [main]
+    # Quiet Standby Fallback (Priority given to Skelion)
+    - cron: '0 */6 * * *'
+  # push trigger disabled to yield all runner bandwidth to Skelion
   pull_request:
     types: [opened, synchronize, reopened]
   issues:
@@ -220,7 +219,7 @@ jobs:
           fi
 
       - name: Turbo Autonomous Re-dispatch Loop (Bypass Cron Delays)
-        if: always() && matrix.shard == 0 && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.event_name == 'push')
+        if: false # Disabled to yield all runner bandwidth exclusively to Skelion
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
