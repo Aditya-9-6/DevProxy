@@ -2,6 +2,7 @@ import hashlib
 import os
 import subprocess
 import tempfile
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Any
 
@@ -29,23 +30,22 @@ from devproxy_agent.saas.models import AgentRun, Incident, Organization, ProxyNo
 from devproxy_agent.saas.payment import router as payment_router
 from devproxy_agent.saas.pr_comment_bot import router as pr_comment_bot_router
 
-app = FastAPI(title="Devproxy SaaS Control Plane", version="1.0.0")
 
-
-# Initialize DB on startup
-@app.on_event("startup")
-async def on_startup():
+@asynccontextmanager
+async def lifespan(app: FastAPI):
     from devproxy_agent.saas.database import init_db
 
     init_db()
+    yield
 
+
+app = FastAPI(title="Devproxy SaaS Control Plane", version="1.0.0", lifespan=lifespan)
 
 redis_client = redis.from_url(
     os.getenv("REDIS_URL", "redis://localhost:6379/0"), decode_responses=True
 )
 
 
-# Simple WebSocket manager for panel connections
 class PanelConnectionManager:
     def __init__(self) -> None:
         self.active_connections: set[WebSocket] = set()
