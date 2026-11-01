@@ -2,7 +2,7 @@ name: GossipMesh 24/7 Dual-Pool Engine (PRs & Issues)
 
 on:
   schedule:
-    # 24/7 continuous autonomous processing every 5 minutes
+    # 24/7 continuous autonomous processing every 5 minutes (Guaranteed Fallback)
     - cron: '*/5 * * * *'
   push:
     branches: [main]
@@ -13,9 +13,20 @@ on:
   issue_comment:
     types: [created]
   workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Execution Mode'
+        required: false
+        default: 'parallel'
+        type: choice
+        options:
+          - parallel
+          - fallback-all
+          - pr-only
+          - issue-only
 
 concurrency:
-  group: gossipmesh-devproxy-${{ github.event.pull_request.number || github.event.issue.number || github.run_id }}
+  group: devproxy-${{ github.workflow }}-${{ github.event.pull_request.number || github.event.issue.number || github.run_id }}
   cancel-in-progress: false
 
 permissions:
@@ -23,10 +34,12 @@ permissions:
   pull-requests: write
   issues: write
   statuses: write
+  actions: write
 
 jobs:
-  dual-pool-runner:
-    name: GossipMesh 50/50 Dual-Pool (4 PR + 4 Issue Workers)
+  pr-worker:
+    name: ⚡ PR Reviewer & Auto-Merger Lane
+    if: github.event_name != 'issues'
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -41,13 +54,19 @@ jobs:
         with:
           python-version: '3.12'
 
+      - name: Set up Go 1.23
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+          cache: true
+
       - name: Checkout GossipMesh Engine
         uses: actions/checkout@v4
         with:
           repository: Aditya-9-6/GossipMesh
           path: .gossipmesh
 
-      - name: Install Reviewer & Solver Dependencies
+      - name: Install Reviewer Dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r .gossipmesh/requirements.txt
@@ -64,7 +83,7 @@ jobs:
         run: |
           gh auth status
 
-      - name: Run GossipMesh Dual-Pool Autonomous Workers
+      - name: Run Dedicated PR Reviewer & Auto-Merger
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
@@ -92,17 +111,113 @@ jobs:
             PR_NUM="${{ github.event.pull_request.number }}"
             echo "[*] Triggered on PR #$PR_NUM. Running AI Architectural & Security Review..."
             PYTHONPATH=.gossipmesh python .gossipmesh/scripts/ai_pr_reviewer.py --pr-number "$PR_NUM" --workspace .
-          elif [ "${{ github.event_name }}" = "issues" ]; then
+          elif [ "${{ github.event_name }}" = "issue_comment" ] && [ -n "${{ github.event.issue.pull_request }}" ]; then
+            PR_NUM="${{ github.event.issue.number }}"
+            echo "[*] Triggered by comment on PR #$PR_NUM. Re-evaluating review..."
+            PYTHONPATH=.gossipmesh python .gossipmesh/scripts/ai_pr_reviewer.py --pr-number "$PR_NUM" --workspace .
+          elif [ "${{ github.event.inputs.mode }}" = "fallback-all" ]; then
+            echo "[*] Running Fallback Dual-Pool Mode (All)..."
+            PYTHONPATH=.gossipmesh python .gossipmesh/scripts/batch_dual_engine.py --repo "${{ github.repository }}" --workspace . --mode all
+          else
+            echo "[*] Running Dedicated PR Reviewer Lane (Max 8 PRs)..."
+            PYTHONPATH=.gossipmesh python .gossipmesh/scripts/batch_dual_engine.py --repo "${{ github.repository }}" --workspace . --mode pr-only --max-prs 8
+          fi
+
+  issue-worker:
+    name: 🚀 Issue Solver & Synthesis Lane
+    if: github.event_name != 'pull_request' && (github.event_name != 'issue_comment' || !github.event.issue.pull_request)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout DevProxy
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Set up Go 1.23
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+          cache: true
+
+      - name: Checkout GossipMesh Engine
+        uses: actions/checkout@v4
+        with:
+          repository: Aditya-9-6/GossipMesh
+          path: .gossipmesh
+
+      - name: Install Solver Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r .gossipmesh/requirements.txt
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+      - name: Configure Git Committer Identity
+        run: |
+          git config --global user.name "Dahale Aditya Dnyaneshwar"
+          git config --global user.email "adityadahale96@gmail.com"
+
+      - name: Verify GitHub CLI Authentication
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh auth status
+
+      - name: Run Dedicated Issue Solver & Auto-PR Synthesis
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GIT_AUTHOR_NAME: "Dahale Aditya Dnyaneshwar"
+          GIT_AUTHOR_EMAIL: "adityadahale96@gmail.com"
+          GIT_COMMITTER_NAME: "Dahale Aditya Dnyaneshwar"
+          GIT_COMMITTER_EMAIL: "adityadahale96@gmail.com"
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_REVIEWER_KEY: ${{ secrets.GEMINI_REVIEWER_KEY }}
+          GEMINI_SOLVER_KEY: ${{ secrets.GEMINI_SOLVER_KEY }}
+          GEMINI_KEY_POOL: ${{ secrets.GEMINI_KEY_POOL }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NVIDIA_API_KEY_2: ${{ secrets.NVIDIA_API_KEY_2 }}
+          COHERE_API_KEY: ${{ secrets.COHERE_API_KEY }}
+          HUGGINGFACE_API_KEY: ${{ secrets.HUGGINGFACE_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+        run: |
+          if [ "${{ github.event_name }}" = "issues" ]; then
             ISSUE_NUM="${{ github.event.issue.number }}"
             ISSUE_TITLE="${{ github.event.issue.title }}"
             echo "[*] Triggered on Issue #$ISSUE_NUM. Evaluating and resolving..."
             BODY=$(gh issue view "$ISSUE_NUM" --json body -q .body)
             PYTHONPATH=.gossipmesh python .gossipmesh/scripts/ai_issue_solver.py --issue-number "$ISSUE_NUM" --issue-title "$ISSUE_TITLE" --issue-body "$BODY" --workspace .
-          elif [ "${{ github.event_name }}" = "issue_comment" ] && [ -n "${{ github.event.issue.pull_request }}" ]; then
-            PR_NUM="${{ github.event.issue.number }}"
-            echo "[*] Triggered by comment on PR #$PR_NUM. Re-evaluating review..."
-            PYTHONPATH=.gossipmesh python .gossipmesh/scripts/ai_pr_reviewer.py --pr-number "$PR_NUM" --workspace .
+          elif [ "${{ github.event.inputs.mode }}" = "fallback-all" ]; then
+            echo "[*] Fallback mode active: handled by primary runner."
           else
-            echo "[*] Running 24/7 50/50 Dual-Pool Engine (4 PR Workers + 4 Issue Workers in parallel)..."
-            PYTHONPATH=.gossipmesh python .gossipmesh/scripts/batch_dual_engine.py --repo "${{ github.repository }}" --workspace . --pr-workers 4 --issue-workers 4
+            echo "[*] Running Dedicated Issue Solver Lane (Max 12 Issues per run)..."
+            PYTHONPATH=.gossipmesh python .gossipmesh/scripts/batch_dual_engine.py --repo "${{ github.repository }}" --workspace . --mode issue-only --max-issues 12
+          fi
+
+      - name: Turbo Autonomous Re-dispatch Loop (Bypass Cron Delays)
+        if: always() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.event_name == 'push')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          OPEN_ISSUES=$(gh issue list --state open --limit 1 --json number --jq '.[].number' 2>/dev/null || true)
+          OPEN_PRS=$(gh pr list --state open --limit 1 --json number --jq '.[].number' 2>/dev/null || true)
+          if [ -n "$OPEN_ISSUES" ] || [ -n "$OPEN_PRS" ]; then
+            echo "[⚡ TURBO RE-DISPATCH] Active items remain in backlog (Issues: $OPEN_ISSUES, PRs: $OPEN_PRS)."
+            echo "Re-dispatching next engine cycle immediately to bypass GitHub Actions cron queue lag..."
+            sleep 10
+            gh workflow run gossipmesh_24x7_reviewer.yml --ref main || true
+          else
+            echo "[✓] Backlog clear. Falling back to 5-minute cron schedule."
           fi
